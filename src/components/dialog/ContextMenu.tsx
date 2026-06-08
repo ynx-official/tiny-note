@@ -1,4 +1,4 @@
-import { useEffect, useRef } from "react";
+import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 
 export interface ContextMenuItem {
@@ -16,8 +16,32 @@ interface ContextMenuProps {
   onClose: () => void;
 }
 
+const VIEWPORT_PADDING = 8;
+
 export function ContextMenu({ x, y, items, onClose }: ContextMenuProps) {
   const ref = useRef<HTMLDivElement>(null);
+  const [position, setPosition] = useState({ left: x, top: y, maxHeight: window.innerHeight - VIEWPORT_PADDING * 2 });
+
+  useLayoutEffect(() => {
+    const updatePosition = () => {
+      const menu = ref.current;
+      if (!menu) return;
+
+      const { width, height } = menu.getBoundingClientRect();
+      const maxLeft = window.innerWidth - width - VIEWPORT_PADDING;
+      const maxTop = window.innerHeight - height - VIEWPORT_PADDING;
+
+      setPosition({
+        left: Math.max(VIEWPORT_PADDING, Math.min(x, maxLeft)),
+        top: Math.max(VIEWPORT_PADDING, Math.min(y, maxTop)),
+        maxHeight: window.innerHeight - VIEWPORT_PADDING * 2,
+      });
+    };
+
+    updatePosition();
+    window.addEventListener("resize", updatePosition);
+    return () => window.removeEventListener("resize", updatePosition);
+  }, [x, y, items]);
 
   useEffect(() => {
     const handler = (e: MouseEvent) => {
@@ -36,8 +60,11 @@ export function ContextMenu({ x, y, items, onClose }: ContextMenuProps) {
   }, [onClose]);
 
   return createPortal(
-    <div ref={ref} className="fixed z-50 bg-cloud rounded-lg border border-paper-deep shadow-lg py-1 min-w-[140px]"
-      style={{ top: y, left: x }}>
+    <div
+      ref={ref}
+      className="fixed z-50 bg-cloud rounded-lg border border-paper-deep shadow-lg py-1 min-w-[140px] overflow-y-auto"
+      style={{ top: position.top, left: position.left, maxHeight: position.maxHeight }}
+    >
       {items.map((item, i) => (
         <button
           key={i}
