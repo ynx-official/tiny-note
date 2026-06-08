@@ -28,6 +28,17 @@ const parseKovaContext = (content: string): ParsedContext | null => {
   return { folders, notes, userText: tail };
 };
 
+const sanitizeMessageContent = (content: string) => {
+  const parsedContext = parseKovaContext(content);
+  const withoutContext = parsedContext ? parsedContext.userText : content;
+  const { main } = parseThinkingContent(withoutContext);
+  return main
+    .replace(/<!--\s*KOVA_THINKING:[\s\S]*?-->/g, "")
+    .replace(/<kova_context>[\s\S]*?<\/kova_context>/g, "")
+    .replace(/^\s*用户请求：\s*/u, "")
+    .trim();
+};
+
 interface MessageBubbleProps {
   msg: ChatMessage;
   index: number;
@@ -59,7 +70,8 @@ export function MessageBubble({ msg, index, totalMessages, loading, hasLastUserM
 
   const isUser = msg.role === "user";
   const parsedContext = isUser ? parseKovaContext(msg.content) : null;
-  const { thinking, main } = isUser ? { thinking: null, main: parsedContext?.userText ?? msg.content } : parseThinkingContent(msg.content);
+  const cleanContent = sanitizeMessageContent(msg.content);
+  const { thinking, main } = isUser ? { thinking: null, main: parsedContext?.userText ?? cleanContent } : parseThinkingContent(msg.content);
 
   return (
     <div key={msg.id} className={`group/msg flex flex-col ${isUser ? "items-end" : "items-start"} mb-3`}>
@@ -120,7 +132,7 @@ export function MessageBubble({ msg, index, totalMessages, loading, hasLastUserM
         <div className={`flex items-center gap-0.5 mt-1 opacity-0 group-hover/msg:opacity-100 transition-opacity ${isUser ? "justify-end" : "justify-start"}`}>
           <button
             type="button"
-            onClick={() => onCopy(msg.content)}
+            onClick={() => onCopy(cleanContent)}
             className="flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] text-ink-ghost hover:text-accent hover:bg-accent-mist/50 transition-colors"
             title="复制"
           >
@@ -131,7 +143,7 @@ export function MessageBubble({ msg, index, totalMessages, loading, hasLastUserM
             <>
               <button
                 type="button"
-                onClick={() => onCreateNote(msg.content)}
+                onClick={() => onCreateNote(cleanContent)}
                 className="flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] text-ink-ghost hover:text-accent hover:bg-accent-mist/50 transition-colors"
                 title="创建笔记"
               >
