@@ -121,6 +121,11 @@ fn export_note_txt(id: String, dest_dir: String) -> Result<String, String> {
 }
 
 #[tauri::command]
+fn export_note_pdf(id: String, dest_dir: String, watermark: String, password: Option<String>) -> Result<String, String> {
+    db().export_note_as_pdf(&id, &dest_dir, &watermark, password)
+}
+
+#[tauri::command]
 fn backup_data(dest_dir: String) -> Result<String, String> {
     db().backup(&dest_dir)
 }
@@ -579,7 +584,7 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             create_note, get_notes, update_note, delete_note,
             create_folder, get_folders, update_folder, delete_folder, move_note_to_folder,
-            get_data_dir, set_data_dir, import_md_file, import_file, export_note, export_note_html, export_note_txt,
+            get_data_dir, set_data_dir, import_md_file, import_file, export_note, export_note_html, export_note_txt, export_note_pdf,
             backup_data, restore_data, abort_ai, toggle_conversation_pinned, export_conversation, write_file, read_file, copy_file, download_font, get_window_size, save_quick_window_size,
             toggle_window, get_cursor_position, create_quick_window, update_quick_shortcut,
             ai_chat, ai_chat_stream, create_conversation, get_conversations, update_conversation_title, delete_conversation,

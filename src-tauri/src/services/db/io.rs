@@ -1,4 +1,6 @@
 use std::fs;
+use std::fs::File;
+use std::io::BufWriter;
 use std::path::PathBuf;
 use rusqlite::params;
 use uuid::Uuid;
@@ -149,6 +151,116 @@ hr {{ border: none; border-top: 1px solid #eee; margin: 2em 0; }}
         let file_path = dest.join(format!("{}_{}.txt", Uuid::new_v4(), safe_name));
         fs::write(&file_path, &full_content).map_err(|e| e.to_string())?;
         Ok(file_path.to_string_lossy().to_string())
+    }
+
+    pub fn export_note_as_pdf(&self, id: &str, dest_dir: &str, watermark: &str, password: Option<String>) -> Result<String, String> {
+        let conn = self.conn.lock().map_err(|e| e.to_string())?;
+        let (title, content): (String, String) = conn.query_row(
+            "SELECT title, content FROM notes WHERE id = ?1", params![id],
+            |row| Ok((row.get(0)?, row.get(1)?)),
+        ).map_err(|e| format!("Note not found: {}", e))?;
+        drop(conn);
+
+        let display_title = if title.is_empty() { "无标题笔记".to_string() } else { title.clone() };
+        let safe_name = Self::safe_filename(&display_title);
+        let dest = PathBuf::from(dest_dir);
+        fs::create_dir_all(&dest).map_err(|e| e.to_string())?;
+        let file_path = dest.join(format!("{}_{}.pdf", Uuid::new_v4(), safe_name));
+
+        self.write_pdf_file(&file_path, &display_title, &content, watermark)?;
+        if let Some(pass) = password.map(|p| p.trim().to_string()).filter(|p| !p.is_empty()) {
+            self.encrypt_pdf_file(&file_path, &pass)?;
+        }
+        Ok(file_path.to_string_lossy().to_string())
+    }
+
+    fn write_pdf_file(&self, file_path: &PathBuf, title: &str, content: &str, watermark: &str) -> Result<(), String> {
+        use printpdf::{BuiltinFont, Mm, PdfDocument};
+
+        let page_w = Mm(210.0);
+        let page_h = Mm(297.0);
+        let margin_x = Mm(18.0);
+        let top_y = 274.0;
+        let bottom_y = 20.0;
+        let line_h = 6.2;
+        let max_chars = 58;
+        let (doc, page, layer) = PdfDocument::new(title, page_w, page_h, "正文");
+        let font = match Self::open_pdf_font().and_then(|file| doc.add_external_font(file).ok()) {
+            Some(font) => font,
+            None => doc.add_builtin_font(BuiltinFont::Helvetica).map_err(|e| e.to_string())?,
+        };
+        let mut current_layer = doc.get_page(page).get_layer(layer);
+        Self::draw_pdf_watermark(&current_layer, watermark, &font);
+        current_layer.use_text(title, 18.0, margin_x, Mm(top_y), &font);
+
+        let mut y = top_y - 12.0;
+        for line in Self::wrap_pdf_text(content, max_chars) {
+            if y < bottom_y {
+                let (next_page, next_layer) = doc.add_page(page_w, page_h, "正文");
+                current_layer = doc.get_page(next_page).get_layer(next_layer);
+                Self::draw_pdf_watermark(&current_layer, watermark, &font);
+                y = top_y;
+            }
+            current_layer.use_text(line, 11.0, margin_x, Mm(y), &font);
+            y -= line_h;
+        }
+
+        doc.save(&mut BufWriter::new(File::create(file_path).map_err(|e| e.to_string())?)).map_err(|e| e.to_string())
+    }
+
+    fn draw_pdf_watermark(layer: &printpdf::PdfLayerReference, watermark: &str, font: &printpdf::IndirectFontRef) {
+        use printpdf::{Color, Mm, Rgb};
+        layer.set_fill_color(Color::Rgb(Rgb::new(0.82, 0.82, 0.82, None)));
+        layer.use_text(watermark, 34.0, Mm(52.0), Mm(148.0), font);
+        layer.set_fill_color(Color::Rgb(Rgb::new(0.08, 0.08, 0.08, None)));
+    }
+
+    fn wrap_pdf_text(text: &str, max_chars: usize) -> Vec<String> {
+        let mut lines = Vec::new();
+        for raw_line in text.replace('\t', "    ").lines() {
+            if raw_line.is_empty() {
+                lines.push(String::new());
+                continue;
+            }
+            let chars: Vec<char> = raw_line.chars().collect();
+            for chunk in chars.chunks(max_chars) {
+                lines.push(chunk.iter().collect());
+            }
+        }
+        if lines.is_empty() {
+            lines.push(String::new());
+        }
+        lines
+    }
+
+    fn open_pdf_font() -> Option<File> {
+        let candidates = [
+            r"C:\Windows\Fonts\NotoSansSC-VF.ttf",
+            r"C:\Windows\Fonts\msyh.ttc",
+            r"C:\Windows\Fonts\simhei.ttf",
+            r"C:\Windows\Fonts\simsun.ttc",
+            r"C:\Windows\Fonts\arial.ttf",
+        ];
+        candidates.iter().find_map(|path| File::open(path).ok())
+    }
+
+    fn encrypt_pdf_file(&self, file_path: &PathBuf, password: &str) -> Result<(), String> {
+        use lopdf::encryption::{EncryptionState, EncryptionVersion, Permissions};
+        use lopdf::Document;
+        use std::convert::TryFrom;
+
+        let mut doc = Document::load(file_path).map_err(|e| e.to_string())?;
+        let owner_password = format!("kova-owner-{}", Uuid::new_v4());
+        let state = EncryptionState::try_from(EncryptionVersion::V2 {
+            document: &doc,
+            owner_password: &owner_password,
+            user_password: password,
+            key_length: 128,
+            permissions: Permissions::all(),
+        }).map_err(|e| e.to_string())?;
+        doc.encrypt(&state).map_err(|e| e.to_string())?;
+        doc.save(file_path).map_err(|e| e.to_string())?;
+        Ok(())
     }
 
     fn safe_filename(title: &str) -> String {

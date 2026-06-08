@@ -32,6 +32,11 @@ export function NoteList({ notes, selectedId, selectedIds, onSelectedIdsChange, 
   } | null>(null);
   const [showFolderPicker, setShowFolderPicker] = useState(false);
   const [moveNoteIds, setMoveNoteIds] = useState<string[]>([]);
+  const [pdfExportState, setPdfExportState] = useState<{
+    noteIds: string[];
+    watermark: string;
+    password: string;
+  } | null>(null);
 
   const containerRef = useRef<HTMLDivElement>(null);
   const prevPositions = useRef<Map<string, number>>(new Map());
@@ -163,6 +168,33 @@ export function NoteList({ notes, selectedId, selectedIds, onSelectedIdsChange, 
     });
   };
 
+  const openPdfExportDialog = (note: Note) => {
+    const effectiveIds = new Set(selectedIds);
+    if (selectedId) effectiveIds.add(selectedId);
+    if (effectiveIds.size === 0) effectiveIds.add(note.id);
+    setPdfExportState({ noteIds: [...effectiveIds], watermark: "", password: "" });
+  };
+
+  const handleExportPdf = async () => {
+    if (!pdfExportState) return;
+    const watermark = pdfExportState.watermark.trim();
+    if (!watermark) return;
+    const destDir = await open({ directory: true });
+    if (!destDir) return;
+    const paths: string[] = [];
+    for (const id of pdfExportState.noteIds) {
+      const path = await db.exportNotePdf(id, destDir as string, watermark, pdfExportState.password);
+      paths.push(path);
+    }
+    setPdfExportState(null);
+    setConfirmState({
+      title: "导出成功",
+      message: `已导出 ${paths.length} 条 PDF 到：\n${destDir}`,
+      confirmLabel: "确定",
+      onConfirm: () => setConfirmState(null),
+    });
+  };
+
   const handleDeleteSelected = (menuNote: Note) => {
     const effectiveIds = new Set(selectedIds);
     if (selectedId) effectiveIds.add(selectedId);
@@ -276,6 +308,11 @@ export function NoteList({ notes, selectedId, selectedIds, onSelectedIdsChange, 
         onClick: () => handleExportSelected("txt"),
       },
       {
+        label: count > 1 ? `导出 PDF（${count} 条）` : "导出 PDF",
+        icon: <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" /><polyline points="14 2 14 8 20 8" /><path d="M9 13h1.5a1.5 1.5 0 0 1 0 3H9v-6h1.5a1.5 1.5 0 0 1 0 3H9" /><path d="M14 10h2a2 2 0 0 1 0 4h-2v2" /></svg>,
+        onClick: () => openPdfExportDialog(note),
+      },
+      {
         label: count > 1 ? `删除（${count} 条）` : "删除",
         danger: true,
         icon: <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><polyline points="3 6 5 6 21 6" /><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2" /></svg>,
@@ -364,6 +401,43 @@ export function NoteList({ notes, selectedId, selectedIds, onSelectedIdsChange, 
       )}
 
       {propNote && <NoteProperties note={propNote} onClose={() => setPropNote(null)} />}
+
+      {pdfExportState && (
+        <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/20" onClick={() => setPdfExportState(null)}>
+          <div className="bg-cloud rounded-xl border border-paper-deep shadow-xl w-[340px] animate-view-fade" onClick={(e) => e.stopPropagation()}>
+            <div className="flex items-center h-10 px-4 border-b border-paper-deep/25">
+              <h3 className="text-[13px] font-medium text-ink-soft">导出 PDF</h3>
+            </div>
+            <div className="px-4 py-4 space-y-3">
+              <label className="block">
+                <span className="block text-xs text-ink-soft mb-1.5">水印文本</span>
+                <input
+                  type="text"
+                  value={pdfExportState.watermark}
+                  onChange={(e) => setPdfExportState({ ...pdfExportState, watermark: e.target.value })}
+                  autoFocus
+                  className="w-full h-8 rounded-lg bg-paper border border-paper-deep/40 px-3 text-xs text-ink-soft outline-none focus:border-accent"
+                  placeholder="请输入水印文本"
+                />
+              </label>
+              <label className="block">
+                <span className="block text-xs text-ink-soft mb-1.5">打开密码（选填）</span>
+                <input
+                  type="password"
+                  value={pdfExportState.password}
+                  onChange={(e) => setPdfExportState({ ...pdfExportState, password: e.target.value })}
+                  className="w-full h-8 rounded-lg bg-paper border border-paper-deep/40 px-3 text-xs text-ink-soft outline-none focus:border-accent"
+                  placeholder="不填写则不加密码"
+                />
+              </label>
+            </div>
+            <div className="px-4 py-2.5 border-t border-paper-deep/25 flex justify-end gap-2">
+              <button type="button" onClick={() => setPdfExportState(null)} className="px-4 py-1.5 text-xs text-ink-soft bg-paper-warm/60 border border-paper-deep/30 rounded-lg hover:bg-paper-warm transition-colors">取消</button>
+              <button type="button" disabled={!pdfExportState.watermark.trim()} onClick={handleExportPdf} className="px-4 py-1.5 text-xs text-white bg-accent hover:bg-accent-light disabled:opacity-40 disabled:hover:bg-accent rounded-lg transition-colors">导出</button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {confirmState && (
         <ConfirmDialog
