@@ -152,29 +152,39 @@ export function Sidebar({
     setFolderConfirm({ title: "导出成功", message: `已导出 ${paths.length} 条笔记到：\n${destDir}`, onConfirm: () => setFolderConfirm(null) });
   };
 
+  const buildSelectedFolderAttachments = async (): Promise<AIContextAttachment[]> => {
+    if (!folderMenuNode) return [];
+    const effectiveIds = new Set(selectedFolderIds);
+    if (selectedFolderId) effectiveIds.add(selectedFolderId);
+    if (effectiveIds.size === 0) effectiveIds.add(folderMenuNode.id);
+
+    const selectedFolders = [...effectiveIds]
+      .map((id) => folders.find((folder) => folder.id === id))
+      .filter((folder): folder is Folder => Boolean(folder));
+
+    const attachments: AIContextAttachment[] = [];
+    for (const folder of selectedFolders) {
+      const notes = await db.list(undefined, folder.id);
+      attachments.push({
+        type: "folder",
+        id: folder.id,
+        name: folder.name,
+        noteCount: notes.length,
+        notes: notes.map((note) => ({ id: note.id, title: note.title || note.content.split("\n")[0] || "无标题笔记" })),
+      });
+    }
+    return attachments;
+  };
+
   const handleAddFolderToAIContext = async () => {
-    if (!folderMenuNode) return;
-    const notes = await db.list(undefined, folderMenuNode.id);
-    const attachments: AIContextAttachment[] = [{
-      type: "folder",
-      id: folderMenuNode.id,
-      name: folderMenuNode.name,
-      noteCount: notes.length,
-      notes: notes.map((note) => ({ id: note.id, title: note.title || note.content.split("\n")[0] || "无标题笔记" })),
-    }];
+    const attachments = await buildSelectedFolderAttachments();
+    if (attachments.length === 0) return;
     onAddToAIContext(attachments);
   };
 
   const handleAddFolderToNewAIContext = async () => {
-    if (!folderMenuNode) return;
-    const notes = await db.list(undefined, folderMenuNode.id);
-    const attachments: AIContextAttachment[] = [{
-      type: "folder",
-      id: folderMenuNode.id,
-      name: folderMenuNode.name,
-      noteCount: notes.length,
-      notes: notes.map((note) => ({ id: note.id, title: note.title || note.content.split("\n")[0] || "无标题笔记" })),
-    }];
+    const attachments = await buildSelectedFolderAttachments();
+    if (attachments.length === 0) return;
     onAddToNewAIContext(attachments);
   };
 
@@ -189,7 +199,7 @@ export function Sidebar({
         onClick: handleAddFolderToAIContext,
       },
       {
-        label: "添加到新 AI 对话",
+        label: "添加到新建 AI 对话",
         icon: <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/><path d="M12 7v6M9 10h6"/></svg>,
         onClick: handleAddFolderToNewAIContext,
       },
