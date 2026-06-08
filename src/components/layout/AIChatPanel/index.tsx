@@ -184,27 +184,41 @@ export function AIChatPanel({ onClose, pendingContext, onOpenNote, onOpenFolder 
     if (attachments.length === 0) return "";
     const folders = attachments.filter((item) => item.type === "folder");
     const notes = attachments.filter((item) => item.type === "note");
-    return [
-      "<kova_context>",
-      folders.length > 0 ? [
-        "folders:",
-        ...folders.map((folder) => [
-          `- name: ${folder.name}`,
-          `  folder_id: ${folder.id}`,
-          `  note_count: ${folder.noteCount}`,
-          folder.notes.length > 0 ? `  notes: ${folder.notes.map((note) => `${note.title}(note_id:${note.id})`).join(", ")}` : "  notes: []",
-        ].join("\n")),
-      ].join("\n") : "folders: []",
-      notes.length > 0 ? [
-        "notes:",
-        ...notes.map((note) => [
-          `- title: ${note.title}`,
-          `  note_id: ${note.id}`,
-          `  folder_id: ${note.folderId ?? ""}`,
-        ].join("\n")),
-      ].join("\n") : "notes: []",
-      "</kova_context>",
-    ].join("\n");
+    const parts: string[] = ["<kova_context>"];
+
+    if (folders.length > 0) {
+      parts.push("目录上下文：");
+      parts.push("- 这表示后续操作默认在这些目录范围内进行。");
+      parts.push("- 如果用户要求创建笔记，必须把对应 folder_id 传给 create_note 或 batch_create_notes。");
+      parts.push("- 不要把新笔记创建到未分类，除非用户明确要求。");
+      parts.push("folders:");
+      for (const folder of folders) {
+        parts.push(`- name: ${folder.name}`);
+        parts.push(`  folder_id: ${folder.id}`);
+        parts.push(`  note_count: ${folder.noteCount}`);
+        parts.push(folder.notes.length > 0 ? `  notes: ${folder.notes.map((note) => `${note.title}(note_id:${note.id})`).join(", ")}` : "  notes: []");
+      }
+    } else {
+      parts.push("folders: []");
+    }
+
+    if (notes.length > 0) {
+      parts.push("");
+      parts.push("笔记上下文：");
+      parts.push("- 这表示用户希望你围绕这些具体笔记进行增删改查。");
+      parts.push("- 涉及查看、编辑、重命名、删除、移动、导出时，优先按 note_id 精确操作。");
+      parts.push("notes:");
+      for (const note of notes) {
+        parts.push(`- title: ${note.title}`);
+        parts.push(`  note_id: ${note.id}`);
+        parts.push(`  folder_id: ${note.folderId ?? ""}`);
+      }
+    } else {
+      parts.push("notes: []");
+    }
+
+    parts.push("</kova_context>");
+    return parts.join("\n");
   };
 
   const removeContextAttachment = (item: AIContextAttachment) => {

@@ -207,6 +207,7 @@ impl AiService {
             【笔记】创建、查看完整内容、搜索、列出、更新（标题/内容/标签/文件夹）、移动到文件夹、删除、导出为 Markdown\n\
             【文件夹】创建、列出、搜索、重命名、删除（笔记自动移至未分类）\n\
             【批量】批量创建笔记、批量删除笔记、批量移动笔记\n\
+            当用户消息包含 <kova_context> 时必须遵守：folders 表示目录操作范围；在该目录上下文中创建笔记时，必须把对应 folder_id 传给 create_note 或 batch_create_notes，不要只依赖 folder_name；notes 表示具体笔记操作目标，应优先使用 note_id。\n\
             请用 Markdown 格式回复。当用户要求管理笔记或文件夹时，请主动使用对应的工具完成操作。";
         let prompt = if system_prompt.is_empty() {
             tool_prompt.to_string()
@@ -371,6 +372,7 @@ impl AiService {
             【笔记】创建、查看完整内容、搜索、列出、更新（标题/内容/标签/文件夹）、移动到文件夹、删除、导出为 Markdown\n\
             【文件夹】创建、列出、搜索、重命名、删除（笔记自动移至未分类）\n\
             【批量】批量创建笔记、批量删除笔记、批量移动笔记\n\
+            当用户消息包含 <kova_context> 时必须遵守：folders 表示目录操作范围；在该目录上下文中创建笔记时，必须把对应 folder_id 传给 create_note 或 batch_create_notes，不要只依赖 folder_name；notes 表示具体笔记操作目标，应优先使用 note_id。\n\
             请用 Markdown 格式回复。当用户要求管理笔记或文件夹时，请主动使用对应的工具完成操作。";
         let mut prompt_parts = Vec::new();
         if !system_prompt.is_empty() {
@@ -621,9 +623,12 @@ impl AiService {
             "create_note" => {
                 let title = args["title"].as_str().unwrap_or("");
                 let content = args["content"].as_str().unwrap_or("");
+                let folder_id_arg = args["folder_id"].as_str().filter(|id| !id.is_empty()).map(|id| id.to_string());
                 let folder_name = args["folder_name"].as_str();
 
-                let folder_id = if let Some(fname) = folder_name {
+                let folder_id = if folder_id_arg.is_some() {
+                    folder_id_arg
+                } else if let Some(fname) = folder_name {
                     self.find_folder_id(db, fname)?
                 } else {
                     None
@@ -854,8 +859,11 @@ impl AiService {
                 for note_val in notes {
                     let title = note_val["title"].as_str().unwrap_or("");
                     let content = note_val["content"].as_str().unwrap_or("");
+                    let folder_id_arg = note_val["folder_id"].as_str().filter(|id| !id.is_empty()).map(|id| id.to_string());
                     let folder_name = note_val["folder_name"].as_str();
-                    let folder_id = if let Some(fname) = folder_name {
+                    let folder_id = if folder_id_arg.is_some() {
+                        folder_id_arg
+                    } else if let Some(fname) = folder_name {
                         self.find_folder_id(db, fname)?
                     } else {
                         None
@@ -1118,6 +1126,7 @@ impl AiService {
                                     "properties": {
                                         "title": { "type": "string", "description": "笔记标题" },
                                         "content": { "type": "string", "description": "笔记内容" },
+                                        "folder_id": { "type": "string", "description": "目标文件夹 ID（可选；当上下文提供 folder_id 时优先使用）" },
                                         "folder_name": { "type": "string", "description": "目标文件夹名称（可选）" }
                                     },
                                     "required": ["title", "content"]
