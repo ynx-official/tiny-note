@@ -33,13 +33,14 @@ interface SidebarProps {
   onDeselectNote: (noteId: string) => void;
   onImported: () => void;
   onAddToAIContext: (attachments: AIContextAttachment[]) => void;
+  onAddToNewAIContext: (attachments: AIContextAttachment[]) => void;
 }
 
 export function Sidebar({
   search, filteredNotes, selectedId, selectedIds, onSelectedIdsChange,
   folders, selectedFolderId,
   onSearchChange, onSelectNote, onCreateNote, onDelete,
-  onFolderSelect, onFolderCreate, onFolderRename, onFolderDelete, onMoveToFolder, onMoveMultipleToFolder, onDeselectNote, onImported, onAddToAIContext,
+  onFolderSelect, onFolderCreate, onFolderRename, onFolderDelete, onMoveToFolder, onMoveMultipleToFolder, onDeselectNote, onImported, onAddToAIContext, onAddToNewAIContext,
 }: SidebarProps) {
   const folderTree = buildTree(folders);
   const allFolderIds = folders.map(f => f.id);
@@ -154,13 +155,27 @@ export function Sidebar({
   const handleAddFolderToAIContext = async () => {
     if (!folderMenuNode) return;
     const notes = await db.list(undefined, folderMenuNode.id);
-    onAddToAIContext([{
+    const attachments: AIContextAttachment[] = [{
       type: "folder",
       id: folderMenuNode.id,
       name: folderMenuNode.name,
       noteCount: notes.length,
       notes: notes.map((note) => ({ id: note.id, title: note.title || note.content.split("\n")[0] || "无标题笔记" })),
-    }]);
+    }];
+    onAddToAIContext(attachments);
+  };
+
+  const handleAddFolderToNewAIContext = async () => {
+    if (!folderMenuNode) return;
+    const notes = await db.list(undefined, folderMenuNode.id);
+    const attachments: AIContextAttachment[] = [{
+      type: "folder",
+      id: folderMenuNode.id,
+      name: folderMenuNode.name,
+      noteCount: notes.length,
+      notes: notes.map((note) => ({ id: note.id, title: note.title || note.content.split("\n")[0] || "无标题笔记" })),
+    }];
+    onAddToNewAIContext(attachments);
   };
 
   const getFolderMenuItems = (): ContextMenuItem[] => {
@@ -169,9 +184,14 @@ export function Sidebar({
     const count = effectiveIds.size;
     return [
       {
-        label: "添加到 AI 对话",
+        label: "添加到当前 AI 对话",
         icon: <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/><path d="M12 7v6M9 10h6"/></svg>,
         onClick: handleAddFolderToAIContext,
+      },
+      {
+        label: "添加到新 AI 对话",
+        icon: <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/><path d="M12 7v6M9 10h6"/></svg>,
+        onClick: handleAddFolderToNewAIContext,
       },
       {
         label: "查看详情",
@@ -408,7 +428,7 @@ export function Sidebar({
             </button>
           </div>
         </div>
-        <NoteList notes={sortedNotes} selectedId={selectedId} selectedIds={selectedIds} onSelectedIdsChange={onSelectedIdsChange} onSelect={onSelectNote} onDeselect={onDeselectNote} onDelete={onDelete} folders={folders} onMoveMultipleToFolder={onMoveMultipleToFolder} onAddToAIContext={onAddToAIContext} />
+        <NoteList notes={sortedNotes} selectedId={selectedId} selectedIds={selectedIds} onSelectedIdsChange={onSelectedIdsChange} onSelect={onSelectNote} onDeselect={onDeselectNote} onDelete={onDelete} folders={folders} onMoveMultipleToFolder={onMoveMultipleToFolder} onAddToAIContext={onAddToAIContext} onAddToNewAIContext={onAddToNewAIContext} />
       </div>
 
       {/* Import button */}

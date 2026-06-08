@@ -19,9 +19,10 @@ interface NoteListProps {
   folders: { id: string; name: string; parent_id: string | null }[];
   onMoveMultipleToFolder: (noteIds: string[], folderId: string | undefined) => void;
   onAddToAIContext: (attachments: AIContextAttachment[]) => void;
+  onAddToNewAIContext: (attachments: AIContextAttachment[]) => void;
 }
 
-export function NoteList({ notes, selectedId, selectedIds, onSelectedIdsChange, onSelect, onDeselect, onDelete, folders, onMoveMultipleToFolder, onAddToAIContext }: NoteListProps) {
+export function NoteList({ notes, selectedId, selectedIds, onSelectedIdsChange, onSelect, onDeselect, onDelete, folders, onMoveMultipleToFolder, onAddToAIContext, onAddToNewAIContext }: NoteListProps) {
   const [menuPos, setMenuPos] = useState<{ x: number; y: number } | null>(null);
   const [menuNote, setMenuNote] = useState<Note | null>(null);
   const [propNote, setPropNote] = useState<Note | null>(null);
@@ -187,18 +188,22 @@ export function NoteList({ notes, selectedId, selectedIds, onSelectedIdsChange, 
     setShowFolderPicker(true);
   };
 
-  const handleAddSelectedToAIContext = (note: Note) => {
+  const buildSelectedNoteAttachments = (note: Note): AIContextAttachment[] => {
     const effectiveIds = new Set(selectedIds);
     if (selectedId) effectiveIds.add(selectedId);
     if (effectiveIds.size === 0) effectiveIds.add(note.id);
-    const selectedNotes = notes.filter((n) => effectiveIds.has(n.id));
-    if (selectedNotes.length === 0) return;
-    onAddToAIContext(selectedNotes.map((n) => ({
+    return notes.filter((n) => effectiveIds.has(n.id)).map((n) => ({
       type: "note",
       id: n.id,
       title: n.title || n.content.split("\n")[0] || "无标题笔记",
       folderId: n.folder_id,
-    })));
+    }));
+  };
+
+  const handleAddSelectedToAIContext = (note: Note) => {
+    const attachments = buildSelectedNoteAttachments(note);
+    if (attachments.length === 0) return;
+    onAddToAIContext(attachments);
   };
 
   const handleFolderPick = (folderId: string) => {
@@ -228,9 +233,17 @@ export function NoteList({ notes, selectedId, selectedIds, onSelectedIdsChange, 
     const count = effectiveIds.size;
     const items: ContextMenuItem[] = [
       {
-        label: count > 1 ? `添加到 AI 对话（${count} 条）` : "添加到 AI 对话",
+        label: count > 1 ? `添加到当前 AI 对话（${count} 条）` : "添加到当前 AI 对话",
         icon: <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/><path d="M12 7v6M9 10h6"/></svg>,
         onClick: () => handleAddSelectedToAIContext(note),
+      },
+      {
+        label: count > 1 ? `添加到新 AI 对话（${count} 条）` : "添加到新 AI 对话",
+        icon: <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/><path d="M12 7v6M9 10h6"/></svg>,
+        onClick: () => {
+          const attachments = buildSelectedNoteAttachments(note);
+          if (attachments.length > 0) onAddToNewAIContext(attachments);
+        },
       },
       {
         label: "查看详情",

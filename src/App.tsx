@@ -33,7 +33,7 @@ export default function App() {
   const [mode, setMode] = useState<ThemeMode>(loadMode);
   const [showSettings, setShowSettings] = useState(false);
   const [showAI, setShowAI] = useState(false);
-  const [pendingAIContext, setPendingAIContext] = useState<{ id: number; attachments: AIContextAttachment[] } | null>(null);
+  const [pendingAIContext, setPendingAIContext] = useState<{ id: number; attachments: AIContextAttachment[]; mode: "current" | "new" } | null>(null);
   const [showSidebar, setShowSidebar] = useState(true);
   const [selectedNote, setSelectedNote] = useState<Note | null>(null);
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
@@ -192,7 +192,13 @@ export default function App() {
   const handleAddToAIContext = (attachments: AIContextAttachment[]) => {
     setShowSettings(false);
     setShowAI(true);
-    setPendingAIContext({ id: Date.now(), attachments });
+    setPendingAIContext({ id: Date.now(), attachments, mode: "current" });
+  };
+
+  const handleAddToNewAIContext = (attachments: AIContextAttachment[]) => {
+    setShowSettings(false);
+    setShowAI(true);
+    setPendingAIContext({ id: Date.now(), attachments, mode: "new" });
   };
 
   const handleOpenNoteFromAI = async (noteId: string) => {
@@ -315,6 +321,7 @@ export default function App() {
               onDeselectNote={handleDeselectNote}
               onImported={() => { fetch(undefined, selectedFolderId ?? undefined); db.list().then((all: Note[]) => setAllNotes(all)); }}
               onAddToAIContext={handleAddToAIContext}
+              onAddToNewAIContext={handleAddToNewAIContext}
             />
           </div>
           <div className="w-1 shrink-0 bg-paper-deep/30 cursor-col-resize hover:bg-accent/40 transition-colors" onMouseDown={sidebar.handleMouseDown} />
@@ -354,7 +361,15 @@ export default function App() {
         <div className="relative shrink-0 flex overflow-hidden" style={{ width: showAI ? ai.width : 0, transition: isDragging ? "none" : "width 0.5s cubic-bezier(0.22,1,0.36,1)" }}>
           <div className="w-1 shrink-0 bg-paper-deep/30 cursor-col-resize hover:bg-accent/40 transition-colors" onMouseDown={ai.handleMouseDown} />
           <div className="h-full shrink-0" style={{ width: ai.width - 4 }}>
-            <AIChatPanel onClose={() => setShowAI(false)} pendingContext={pendingAIContext} onOpenNote={handleOpenNoteFromAI} onOpenFolder={handleOpenFolderFromAI} />
+            <AIChatPanel
+              onClose={() => {
+                setShowAI(false);
+                setPendingAIContext(null);
+              }}
+              pendingContext={pendingAIContext}
+              onOpenNote={handleOpenNoteFromAI}
+              onOpenFolder={handleOpenFolderFromAI}
+            />
           </div>
         </div>
       </div>

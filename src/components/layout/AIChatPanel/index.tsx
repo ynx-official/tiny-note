@@ -11,7 +11,7 @@ import type { Conversation, ChatMessage, AIProfile, AIContextAttachment } from "
 
 interface AIChatPanelProps {
   onClose: () => void;
-  pendingContext: { id: number; attachments: AIContextAttachment[] } | null;
+  pendingContext: { id: number; attachments: AIContextAttachment[]; mode: "current" | "new" } | null;
   onOpenNote?: (noteId: string) => void;
   onOpenFolder?: (folderId: string) => void;
 }
@@ -57,6 +57,13 @@ export function AIChatPanel({ onClose, pendingContext, onOpenNote, onOpenFolder 
       }
       return [...map.values()];
     });
+    if (pendingContext.mode === "new") {
+      setMessages([]);
+      setCurrentConvId(null);
+      setTimeout(() => {
+        handleNewConversation();
+      }, 0);
+    }
     setTimeout(() => inputRef.current?.focus(), 0);
   }, [pendingContext]);
 
@@ -221,7 +228,9 @@ export function AIChatPanel({ onClose, pendingContext, onOpenNote, onOpenFolder 
 
     const userMsg = input.trim() || "请根据已添加的上下文继续处理。";
     const contextPrompt = buildContextPrompt(contextAttachments);
-    const messageForAI = contextPrompt ? `${contextPrompt}\n\n用户请求：\n${userMsg}` : userMsg;
+    const messageForAI = contextPrompt
+      ? `${contextPrompt}\n\n用户请求：\n${userMsg}`
+      : `用户请求：\n${userMsg}`;
     const convId = currentConvId;
     setInput("");
     setContextAttachments([]);
