@@ -32,6 +32,7 @@ pub struct StreamChunk {
 }
 
 #[derive(Debug, Deserialize)]
+#[allow(dead_code)]
 pub struct StreamChoice {
     pub delta: StreamDelta,
     pub finish_reason: Option<String>,
@@ -45,6 +46,7 @@ pub struct StreamDelta {
 }
 
 #[derive(Debug, Clone, Deserialize)]
+#[allow(dead_code)]
 pub struct StreamToolCall {
     pub index: usize,
     pub id: Option<String>,
@@ -118,6 +120,7 @@ pub struct ModelsResponse {
 }
 
 #[derive(Debug, Deserialize, Clone)]
+#[allow(dead_code)]
 pub struct ModelInfo {
     pub id: String,
     #[serde(rename = "type")]
