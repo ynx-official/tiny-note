@@ -30,3 +30,18 @@ export interface AIProfile {
   temperature: number;
   max_tokens: number;
 }
+
+export type AIContextAttachment =
+  | {
+      type: "folder";
+      id: string;
+      name: string;
+      noteCount: number;
+      notes: { id: string; title: string }[];
+    }
+  | {
+      type: "note";
+      id: string;
+      title: string;
+      folderId: string | null;
+    };

@@ -10,6 +10,7 @@ import { FolderItem } from "./FolderItem";
 import { FolderInfoDialog } from "./FolderInfoDialog";
 import { buildTree } from "./utils";
 import type { FolderNode } from "./types";
+import type { AIContextAttachment } from "../AIChatPanel/types";
 
 interface SidebarProps {
   search: string;
@@ -31,13 +32,14 @@ interface SidebarProps {
   onMoveMultipleToFolder: (noteIds: string[], folderId: string | undefined) => void;
   onDeselectNote: (noteId: string) => void;
   onImported: () => void;
+  onAddToAIContext: (attachments: AIContextAttachment[]) => void;
 }
 
 export function Sidebar({
   search, filteredNotes, selectedId, selectedIds, onSelectedIdsChange,
   folders, selectedFolderId,
   onSearchChange, onSelectNote, onCreateNote, onDelete,
-  onFolderSelect, onFolderCreate, onFolderRename, onFolderDelete, onMoveToFolder, onMoveMultipleToFolder, onDeselectNote, onImported,
+  onFolderSelect, onFolderCreate, onFolderRename, onFolderDelete, onMoveToFolder, onMoveMultipleToFolder, onDeselectNote, onImported, onAddToAIContext,
 }: SidebarProps) {
   const folderTree = buildTree(folders);
   const allFolderIds = folders.map(f => f.id);
@@ -149,11 +151,28 @@ export function Sidebar({
     setFolderConfirm({ title: "导出成功", message: `已导出 ${paths.length} 条笔记到：\n${destDir}`, onConfirm: () => setFolderConfirm(null) });
   };
 
+  const handleAddFolderToAIContext = async () => {
+    if (!folderMenuNode) return;
+    const notes = await db.list(undefined, folderMenuNode.id);
+    onAddToAIContext([{
+      type: "folder",
+      id: folderMenuNode.id,
+      name: folderMenuNode.name,
+      noteCount: notes.length,
+      notes: notes.map((note) => ({ id: note.id, title: note.title || note.content.split("\n")[0] || "无标题笔记" })),
+    }]);
+  };
+
   const getFolderMenuItems = (): ContextMenuItem[] => {
     const effectiveIds = new Set(selectedFolderIds);
     if (selectedFolderId) effectiveIds.add(selectedFolderId);
     const count = effectiveIds.size;
     return [
+      {
+        label: "添加到 AI 对话",
+        icon: <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/><path d="M12 7v6M9 10h6"/></svg>,
+        onClick: handleAddFolderToAIContext,
+      },
       {
         label: "查看详情",
         icon: <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="10" /><line x1="12" y1="16" x2="12" y2="12" /><line x1="12" y1="8" x2="12.01" y2="8" /></svg>,
@@ -389,7 +408,7 @@ export function Sidebar({
             </button>
           </div>
         </div>
-        <NoteList notes={sortedNotes} selectedId={selectedId} selectedIds={selectedIds} onSelectedIdsChange={onSelectedIdsChange} onSelect={onSelectNote} onDeselect={onDeselectNote} onDelete={onDelete} folders={folders} onMoveMultipleToFolder={onMoveMultipleToFolder} />
+        <NoteList notes={sortedNotes} selectedId={selectedId} selectedIds={selectedIds} onSelectedIdsChange={onSelectedIdsChange} onSelect={onSelectNote} onDeselect={onDeselectNote} onDelete={onDelete} folders={folders} onMoveMultipleToFolder={onMoveMultipleToFolder} onAddToAIContext={onAddToAIContext} />
       </div>
 
       {/* Import button */}

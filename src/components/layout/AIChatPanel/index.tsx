@@ -7,13 +7,16 @@ import { ProfileManager } from "./ProfileManager";
 import { ConversationList } from "./ConversationList";
 import { MessageBubble } from "./MessageBubble";
 import { DeleteConfirmDialog } from "./DeleteConfirmDialog";
-import type { Conversation, ChatMessage, AIProfile } from "./types";
+import type { Conversation, ChatMessage, AIProfile, AIContextAttachment } from "./types";
 
 interface AIChatPanelProps {
   onClose: () => void;
+  pendingContext: { id: number; attachments: AIContextAttachment[] } | null;
+  onOpenNote?: (noteId: string) => void;
+  onOpenFolder?: (folderId: string) => void;
 }
 
-export function AIChatPanel({ onClose }: AIChatPanelProps) {
+export function AIChatPanel({ onClose, pendingContext, onOpenNote, onOpenFolder }: AIChatPanelProps) {
   const [conversations, setConversations] = useState<Conversation[]>([]);
   const [currentConvId, setCurrentConvId] = useState<string | null>(null);
   const [messages, setMessages] = useState<ChatMessage[]>([]);
@@ -30,6 +33,7 @@ export function AIChatPanel({ onClose }: AIChatPanelProps) {
   const [deleteProfileConfirmId, setDeleteProfileConfirmId] = useState<string | null>(null);
   const [showSearch, setShowSearch] = useState(false);
   const [searchQuery, setSearchQuery] = useState("");
+  const [contextAttachments, setContextAttachments] = useState<AIContextAttachment[]>([]);
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
   const lastUserMsgRef = useRef<string>("");
@@ -43,6 +47,18 @@ export function AIChatPanel({ onClose }: AIChatPanelProps) {
     loadConversations();
     loadProfiles();
   }, []);
+
+  useEffect(() => {
+    if (!pendingContext) return;
+    setContextAttachments((prev) => {
+      const map = new Map(prev.map((item) => [`${item.type}:${item.id}`, item]));
+      for (const item of pendingContext.attachments) {
+        map.set(`${item.type}:${item.id}`, item);
+      }
+      return [...map.values()];
+    });
+    setTimeout(() => inputRef.current?.focus(), 0);
+  }, [pendingContext]);
 
   // Load messages when conversation changes
   useEffect(() => {
@@ -157,8 +173,39 @@ export function AIChatPanel({ onClose }: AIChatPanelProps) {
     setEditingConvId(null);
   };
 
+  const buildContextPrompt = (attachments: AIContextAttachment[]) => {
+    if (attachments.length === 0) return "";
+    const folders = attachments.filter((item) => item.type === "folder");
+    const notes = attachments.filter((item) => item.type === "note");
+    return [
+      "<kova_context>",
+      folders.length > 0 ? [
+        "folders:",
+        ...folders.map((folder) => [
+          `- name: ${folder.name}`,
+          `  folder_id: ${folder.id}`,
+          `  note_count: ${folder.noteCount}`,
+          folder.notes.length > 0 ? `  notes: ${folder.notes.map((note) => `${note.title}(note_id:${note.id})`).join(", ")}` : "  notes: []",
+        ].join("\n")),
+      ].join("\n") : "folders: []",
+      notes.length > 0 ? [
+        "notes:",
+        ...notes.map((note) => [
+          `- title: ${note.title}`,
+          `  note_id: ${note.id}`,
+          `  folder_id: ${note.folderId ?? ""}`,
+        ].join("\n")),
+      ].join("\n") : "notes: []",
+      "</kova_context>",
+    ].join("\n");
+  };
+
+  const removeContextAttachment = (item: AIContextAttachment) => {
+    setContextAttachments((prev) => prev.filter((current) => !(current.type === item.type && current.id === item.id)));
+  };
+
   const handleSend = async () => {
-    if (!input.trim() || !currentConvId || loading) return;
+    if ((!input.trim() && contextAttachments.length === 0) || !currentConvId || loading) return;
     if (!activeProfile) {
       setMessages((prev) => [...prev, {
         id: Date.now().toString(),
@@ -172,9 +219,12 @@ export function AIChatPanel({ onClose }: AIChatPanelProps) {
       return;
     }
 
-    const userMsg = input.trim();
+    const userMsg = input.trim() || "请根据已添加的上下文继续处理。";
+    const contextPrompt = buildContextPrompt(contextAttachments);
+    const messageForAI = contextPrompt ? `${contextPrompt}\n\n用户请求：\n${userMsg}` : userMsg;
     const convId = currentConvId;
     setInput("");
+    setContextAttachments([]);
     setLoading(true);
     abortRef.current = false;
     lastUserMsgRef.current = userMsg;
@@ -276,7 +326,7 @@ export function AIChatPanel({ onClose }: AIChatPanelProps) {
       console.log("[AI Chat] Starting ai_chat_stream with profile:", activeProfile.name);
       await invoke<ChatMessage>("ai_chat_stream", {
         conversationId: convId,
-        message: userMsg,
+        message: messageForAI,
         baseUrl: activeProfile.base_url,
         apiKey: activeProfile.api_key,
         model: activeProfile.model,
@@ -508,7 +558,7 @@ export function AIChatPanel({ onClose }: AIChatPanelProps) {
             <>
               <p className="text-[10px] text-ink-ghost text-center py-1">找到 {filtered.length} 条消息</p>
               {filtered.map((msg, i) => (
-                <MessageBubble key={msg.id} msg={msg} index={i} totalMessages={filtered.length} loading={loading} hasLastUserMsg={!!lastUserMsgRef.current} onCopy={(c) => navigator.clipboard.writeText(c)} onCreateNote={handleCreateNoteFromMsg} onRegenerate={handleRegenerate} />
+                <MessageBubble key={msg.id} msg={msg} index={i} totalMessages={filtered.length} loading={loading} hasLastUserMsg={!!lastUserMsgRef.current} onCopy={(c) => navigator.clipboard.writeText(c)} onCreateNote={handleCreateNoteFromMsg} onRegenerate={handleRegenerate} onOpenNote={onOpenNote} onOpenFolder={onOpenFolder} />
               ))}
             </>
           ) : (
@@ -526,6 +576,33 @@ export function AIChatPanel({ onClose }: AIChatPanelProps) {
 
       {/* Input area */}
       <div className="px-3 pb-3 pt-1 shrink-0">
+        {contextAttachments.length > 0 && (
+          <div className="mb-2 flex flex-wrap gap-1.5" onClick={(e) => e.stopPropagation()}>
+            {contextAttachments.map((item) => (
+              <span
+                key={`${item.type}:${item.id}`}
+                title={item.type === "folder" ? `${item.name} · ${item.noteCount} 条笔记 · ${item.id}` : `${item.title} · ${item.id}`}
+                className="group max-w-full inline-flex items-center gap-1.5 rounded-full border border-accent/20 bg-accent-mist/45 px-2 py-1 text-[11px] text-accent shadow-[0_1px_0_rgba(255,255,255,0.45)_inset] animate-dropdown"
+              >
+                {item.type === "folder" ? (
+                  <svg width="12" height="12" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" strokeLinejoin="round" className="shrink-0"><path d="M14 13a1.5 1.5 0 0 1-1.5 1.5h-9A1.5 1.5 0 0 1 2 13V5.5A1.5 1.5 0 0 1 3.5 4H6l1.5 2h5A1.5 1.5 0 0 1 14 7.5z"/></svg>
+                ) : (
+                  <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" className="shrink-0"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>
+                )}
+                <span className="truncate max-w-[180px]">{item.type === "folder" ? item.name : item.title}</span>
+                {item.type === "folder" && <span className="text-[10px] text-accent/60">{item.noteCount}</span>}
+                <button
+                  type="button"
+                  onClick={() => removeContextAttachment(item)}
+                  className="ml-0.5 rounded-full p-0.5 text-accent/50 hover:bg-accent/10 hover:text-accent transition-colors"
+                  title="移除"
+                >
+                  <svg width="9" height="9" viewBox="0 0 12 12" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round"><path d="M2.5 2.5l7 7M9.5 2.5l-7 7" /></svg>
+                </button>
+              </span>
+            ))}
+          </div>
+        )}
         <div className="flex gap-2">
           <textarea
             ref={inputRef}

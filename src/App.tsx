@@ -14,6 +14,7 @@ import { StatusBar } from "./components/StatusBar";
 import { db } from "./lib/db";
 import { useNotes } from "./hooks/useNotes";
 import type { Note } from "./lib/db";
+import type { AIContextAttachment } from "./components/layout/AIChatPanel/types";
 
 // Init theme and fonts
 applyTheme(loadMode());
@@ -32,6 +33,7 @@ export default function App() {
   const [mode, setMode] = useState<ThemeMode>(loadMode);
   const [showSettings, setShowSettings] = useState(false);
   const [showAI, setShowAI] = useState(false);
+  const [pendingAIContext, setPendingAIContext] = useState<{ id: number; attachments: AIContextAttachment[] } | null>(null);
   const [showSidebar, setShowSidebar] = useState(true);
   const [selectedNote, setSelectedNote] = useState<Note | null>(null);
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
@@ -187,6 +189,30 @@ export default function App() {
     db.list().then((all: Note[]) => setAllNotes(all));
   };
 
+  const handleAddToAIContext = (attachments: AIContextAttachment[]) => {
+    setShowSettings(false);
+    setShowAI(true);
+    setPendingAIContext({ id: Date.now(), attachments });
+  };
+
+  const handleOpenNoteFromAI = async (noteId: string) => {
+    const notesSnapshot = allNotes.length > 0 ? allNotes : await db.list();
+    const note = notesSnapshot.find((item) => item.id === noteId);
+    if (!note) return;
+    const folderId = note.folder_id ?? "";
+    setSelectedFolderId(folderId);
+    setSelectedNote(note);
+    setSelectedIds(new Set());
+    await fetch(undefined, folderId || undefined);
+  };
+
+  const handleOpenFolderFromAI = async (folderId: string) => {
+    setSelectedFolderId(folderId);
+    setSelectedNote(null);
+    setSelectedIds(new Set());
+    await fetch(undefined, folderId);
+  };
+
   const handleDelete = (id: string) => {
     remove(id).then(() => {
       const nextIds = new Set(selectedIds);
@@ -205,13 +231,13 @@ export default function App() {
     const next = new Set(selectedIds);
     next.delete(noteId);
     setSelectedIds(next);
-    if (next.size > 0) {
-      const nextId = [...next][0];
-      const nextNote = allNotes.find(n => n.id === nextId);
-      if (nextNote) setSelectedNote(nextNote);
-    } else {
-      setSelectedNote(null);
-    }
+
+    if (selectedNote?.id !== noteId) return;
+
+    const nextNote = [...next]
+      .map(id => allNotes.find(n => n.id === id))
+      .find((note): note is Note => Boolean(note));
+    setSelectedNote(nextNote ?? null);
   };
 
   const handleUpdateTitle = (id: string, title: string) => {
@@ -288,6 +314,7 @@ export default function App() {
               }}
               onDeselectNote={handleDeselectNote}
               onImported={() => { fetch(undefined, selectedFolderId ?? undefined); db.list().then((all: Note[]) => setAllNotes(all)); }}
+              onAddToAIContext={handleAddToAIContext}
             />
           </div>
           <div className="w-1 shrink-0 bg-paper-deep/30 cursor-col-resize hover:bg-accent/40 transition-colors" onMouseDown={sidebar.handleMouseDown} />
@@ -327,7 +354,7 @@ export default function App() {
         <div className="relative shrink-0 flex overflow-hidden" style={{ width: showAI ? ai.width : 0, transition: isDragging ? "none" : "width 0.5s cubic-bezier(0.22,1,0.36,1)" }}>
           <div className="w-1 shrink-0 bg-paper-deep/30 cursor-col-resize hover:bg-accent/40 transition-colors" onMouseDown={ai.handleMouseDown} />
           <div className="h-full shrink-0" style={{ width: ai.width - 4 }}>
-            <AIChatPanel onClose={() => setShowAI(false)} />
+            <AIChatPanel onClose={() => setShowAI(false)} pendingContext={pendingAIContext} onOpenNote={handleOpenNoteFromAI} onOpenFolder={handleOpenFolderFromAI} />
           </div>
         </div>
       </div>
