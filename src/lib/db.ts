@@ -68,8 +68,8 @@ export const db = {
   exportNoteTxt: (id: string, destDir: string) =>
     invoke<string>("export_note_txt", { id, destDir }),
 
-  exportNotePdf: (id: string, destDir: string, watermark: string, password?: string) =>
-    invoke<string>("export_note_pdf", { id, destDir, watermark, password: password?.trim() || null }),
+  exportNotePdf: (id: string, destDir: string, watermark: string, watermarkOpacity: number, password?: string) =>
+    invoke<string>("export_note_pdf", { id, destDir, watermark, watermarkOpacity, password: password?.trim() || null }),
 
   openPath: (path: string) =>
     invoke<void>("open_path", { path }),

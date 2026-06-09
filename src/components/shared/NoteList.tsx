@@ -34,7 +34,9 @@ export function NoteList({ notes, selectedId, selectedIds, onSelectedIdsChange, 
   const [moveNoteIds, setMoveNoteIds] = useState<string[]>([]);
   const [pdfExportState, setPdfExportState] = useState<{
     noteIds: string[];
+    watermarkEnabled: boolean;
     watermark: string;
+    watermarkOpacity: number;
     password: string;
   } | null>(null);
   const [exportNotice, setExportNotice] = useState<{ status: "loading" | "success"; message: string } | null>(null);
@@ -185,23 +187,24 @@ export function NoteList({ notes, selectedId, selectedIds, onSelectedIdsChange, 
     const effectiveIds = new Set(selectedIds);
     if (selectedId) effectiveIds.add(selectedId);
     if (effectiveIds.size === 0) effectiveIds.add(note.id);
-    setPdfExportState({ noteIds: [...effectiveIds], watermark: "", password: "" });
+    setPdfExportState({ noteIds: [...effectiveIds], watermarkEnabled: false, watermark: "", watermarkOpacity: 0.16, password: "" });
   };
 
   const handleExportPdf = async () => {
     if (!pdfExportState) return;
-    const watermark = pdfExportState.watermark.trim();
-    if (!watermark) return;
+    const watermark = pdfExportState.watermarkEnabled ? pdfExportState.watermark.trim() : "";
+    const watermarkOpacity = pdfExportState.watermarkEnabled ? pdfExportState.watermarkOpacity : 0.16;
     const destDir = await open({ directory: true });
     if (!destDir) return;
     const paths: string[] = [];
     showExportNotice("loading", `正在导出 ${pdfExportState.noteIds.length} 条 PDF...`);
     for (const id of pdfExportState.noteIds) {
-      const path = await db.exportNotePdf(id, destDir as string, watermark, pdfExportState.password);
+      const path = await db.exportNotePdf(id, destDir as string, watermark, watermarkOpacity, pdfExportState.password);
       paths.push(path);
     }
     setPdfExportState(null);
     showExportNotice("success", `已导出 ${paths.length} 条 PDF`);
+    db.openPath(destDir as string).catch(console.error);
   };
 
   const handleDeleteSelected = (menuNote: Note) => {
@@ -418,17 +421,45 @@ export function NoteList({ notes, selectedId, selectedIds, onSelectedIdsChange, 
               <h3 className="text-[13px] font-medium text-ink-soft">导出 PDF</h3>
             </div>
             <div className="px-4 py-4 space-y-3">
-              <label className="block">
-                <span className="block text-xs text-ink-soft mb-1.5">水印文本</span>
+              <label className="flex items-center justify-between h-8 rounded-lg bg-paper-warm/45 border border-paper-deep/25 px-3">
+                <span className="text-xs text-ink-soft">添加斜向水印</span>
                 <input
-                  type="text"
-                  value={pdfExportState.watermark}
-                  onChange={(e) => setPdfExportState({ ...pdfExportState, watermark: e.target.value })}
-                  autoFocus
-                  className="w-full h-8 rounded-lg bg-paper border border-paper-deep/40 px-3 text-xs text-ink-soft outline-none focus:border-accent"
-                  placeholder="请输入水印文本"
+                  type="checkbox"
+                  checked={pdfExportState.watermarkEnabled}
+                  onChange={(e) => setPdfExportState({ ...pdfExportState, watermarkEnabled: e.target.checked })}
+                  className="accent-accent"
                 />
               </label>
+              {pdfExportState.watermarkEnabled && (
+                <>
+                  <label className="block">
+                    <span className="block text-xs text-ink-soft mb-1.5">水印文本</span>
+                    <input
+                      type="text"
+                      value={pdfExportState.watermark}
+                      onChange={(e) => setPdfExportState({ ...pdfExportState, watermark: e.target.value })}
+                      autoFocus
+                      className="w-full h-8 rounded-lg bg-paper border border-paper-deep/40 px-3 text-xs text-ink-soft outline-none focus:border-accent"
+                      placeholder="请输入水印文本"
+                    />
+                  </label>
+                  <label className="block">
+                    <div className="flex items-center justify-between mb-1.5">
+                      <span className="text-xs text-ink-soft">水印透明度</span>
+                      <span className="text-[11px] text-ink-ghost">{Math.round(pdfExportState.watermarkOpacity * 100)}%</span>
+                    </div>
+                    <input
+                      type="range"
+                      min="0.02"
+                      max="0.6"
+                      step="0.02"
+                      value={pdfExportState.watermarkOpacity}
+                      onChange={(e) => setPdfExportState({ ...pdfExportState, watermarkOpacity: Number(e.target.value) })}
+                      className="w-full accent-accent"
+                    />
+                  </label>
+                </>
+              )}
               <label className="block">
                 <span className="block text-xs text-ink-soft mb-1.5">打开密码（选填）</span>
                 <input
@@ -442,7 +473,7 @@ export function NoteList({ notes, selectedId, selectedIds, onSelectedIdsChange, 
             </div>
             <div className="px-4 py-2.5 border-t border-paper-deep/25 flex justify-end gap-2">
               <button type="button" onClick={() => setPdfExportState(null)} className="px-4 py-1.5 text-xs text-ink-soft bg-paper-warm/60 border border-paper-deep/30 rounded-lg hover:bg-paper-warm transition-colors">取消</button>
-              <button type="button" disabled={!pdfExportState.watermark.trim()} onClick={handleExportPdf} className="px-4 py-1.5 text-xs text-white bg-accent hover:bg-accent-light disabled:opacity-40 disabled:hover:bg-accent rounded-lg transition-colors">导出</button>
+              <button type="button" disabled={pdfExportState.watermarkEnabled && !pdfExportState.watermark.trim()} onClick={handleExportPdf} className="px-4 py-1.5 text-xs text-white bg-accent hover:bg-accent-light disabled:opacity-40 disabled:hover:bg-accent rounded-lg transition-colors">导出</button>
             </div>
           </div>
         </div>

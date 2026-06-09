@@ -1,6 +1,4 @@
 use std::fs;
-use std::fs::File;
-use std::io::BufWriter;
 use std::path::PathBuf;
 use chrono::Local;
 use rusqlite::params;
@@ -153,94 +151,195 @@ hr {{ border: none; border-top: 1px solid #eee; margin: 2em 0; }}
         Ok(file_path.to_string_lossy().to_string())
     }
 
-    pub fn export_note_as_pdf(&self, id: &str, dest_dir: &str, watermark: &str, password: Option<String>) -> Result<String, String> {
+    pub fn export_note_as_pdf(&self, id: &str, dest_dir: &str, watermark: &str, watermark_opacity: f32, password: Option<String>) -> Result<String, String> {
         let conn = self.conn.lock().map_err(|e| e.to_string())?;
-        let (title, content): (String, String) = conn.query_row(
-            "SELECT title, content FROM notes WHERE id = ?1", params![id],
-            |row| Ok((row.get(0)?, row.get(1)?)),
+        let (title, content, created_at, updated_at): (String, String, String, String) = conn.query_row(
+            "SELECT title, content, created_at, updated_at FROM notes WHERE id = ?1", params![id],
+            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)),
         ).map_err(|e| format!("Note not found: {}", e))?;
         drop(conn);
 
         let display_title = if title.is_empty() { "无标题笔记".to_string() } else { title.clone() };
         let dest = PathBuf::from(dest_dir);
         fs::create_dir_all(&dest).map_err(|e| e.to_string())?;
-        let file_path = dest.join(Self::export_filename(&display_title, "pdf", "pdf"));
+        let file_path = Self::export_path(&dest, &display_title, "pdf", "pdf");
+        let temp_html = dest.join(format!(".__kova_pdf_{}.html", Uuid::new_v4()));
+        let html = Self::render_note_html(&display_title, &content, &created_at, &updated_at, watermark, watermark_opacity);
 
-        self.write_pdf_file(&file_path, &display_title, &content, watermark)?;
+        fs::write(&temp_html, html).map_err(|e| e.to_string())?;
+        let print_result = Self::print_html_to_pdf(&temp_html, &file_path);
+        let _ = fs::remove_file(&temp_html);
+        print_result?;
+
         if let Some(pass) = password.map(|p| p.trim().to_string()).filter(|p| !p.is_empty()) {
             self.encrypt_pdf_file(&file_path, &pass)?;
         }
         Ok(file_path.to_string_lossy().to_string())
     }
 
-    fn write_pdf_file(&self, file_path: &PathBuf, title: &str, content: &str, watermark: &str) -> Result<(), String> {
-        use printpdf::{BuiltinFont, Mm, PdfDocument};
+    fn render_note_html(title: &str, content: &str, created_at: &str, updated_at: &str, watermark: &str, watermark_opacity: f32) -> String {
+        use pulldown_cmark::{html, Options, Parser};
+        let mut options = Options::empty();
+        options.insert(Options::ENABLE_TABLES);
+        options.insert(Options::ENABLE_STRIKETHROUGH);
+        options.insert(Options::ENABLE_TASKLISTS);
+        let parser = Parser::new_ext(content, options);
+        let mut html_content = String::new();
+        html::push_html(&mut html_content, parser);
 
-        let page_w = Mm(210.0);
-        let page_h = Mm(297.0);
-        let margin_x = Mm(18.0);
-        let top_y = 274.0;
-        let bottom_y = 20.0;
-        let line_h = 6.2;
-        let max_chars = 58;
-        let (doc, page, layer) = PdfDocument::new(title, page_w, page_h, "正文");
-        let font = match Self::open_pdf_font().and_then(|file| doc.add_external_font(file).ok()) {
-            Some(font) => font,
-            None => doc.add_builtin_font(BuiltinFont::Helvetica).map_err(|e| e.to_string())?,
+        let escaped_title = Self::escape_html(title);
+        let watermark = watermark.trim();
+        let watermark_html = if watermark.is_empty() {
+            String::new()
+        } else {
+            format!(
+                r#"<div class="pdf-watermark" style="opacity: {:.3};">{}</div>"#,
+                watermark_opacity.clamp(0.02, 0.6),
+                Self::escape_html(watermark),
+            )
         };
-        let mut current_layer = doc.get_page(page).get_layer(layer);
-        Self::draw_pdf_watermark(&current_layer, watermark, &font);
-        current_layer.use_text(title, 18.0, margin_x, Mm(top_y), &font);
 
-        let mut y = top_y - 12.0;
-        for line in Self::wrap_pdf_text(content, max_chars) {
-            if y < bottom_y {
-                let (next_page, next_layer) = doc.add_page(page_w, page_h, "正文");
-                current_layer = doc.get_page(next_page).get_layer(next_layer);
-                Self::draw_pdf_watermark(&current_layer, watermark, &font);
-                y = top_y;
-            }
-            current_layer.use_text(line, 11.0, margin_x, Mm(y), &font);
-            y -= line_h;
-        }
-
-        doc.save(&mut BufWriter::new(File::create(file_path).map_err(|e| e.to_string())?)).map_err(|e| e.to_string())
+        format!(
+            r#"<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>{title}</title>
+<style>
+@page {{ size: A4; margin: 20mm 18mm; }}
+* {{ box-sizing: border-box; }}
+html {{ background: #ffffff; }}
+body {{
+  margin: 0;
+  color: #25211d;
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "Microsoft YaHei", "Noto Sans SC", Arial, sans-serif;
+  font-size: 14px;
+  line-height: 1.78;
+  -webkit-print-color-adjust: exact;
+  print-color-adjust: exact;
+}}
+.article {{ max-width: 780px; margin: 0 auto; position: relative; z-index: 1; }}
+.title {{ margin: 0 0 8px; font-size: 28px; line-height: 1.28; letter-spacing: -0.02em; color: #16120f; }}
+.meta {{ color: #8a8177; font-size: 12px; margin-bottom: 28px; padding-bottom: 14px; border-bottom: 1px solid #e9e1d8; }}
+h1, h2, h3, h4, h5, h6 {{ color: #16120f; line-height: 1.35; margin: 1.45em 0 0.65em; page-break-after: avoid; }}
+h1 {{ font-size: 24px; padding-bottom: 8px; border-bottom: 1px solid #eadfd4; }}
+h2 {{ font-size: 21px; }}
+h3 {{ font-size: 18px; }}
+h4, h5, h6 {{ font-size: 16px; }}
+p {{ margin: 0.8em 0; }}
+ul, ol {{ margin: 0.75em 0 0.75em 1.45em; padding: 0; }}
+li {{ margin: 0.24em 0; }}
+li > p {{ margin: 0.2em 0; }}
+a {{ color: #8b5e34; text-decoration: none; }}
+strong {{ color: #17120e; font-weight: 700; }}
+blockquote {{ margin: 1em 0; padding: 10px 16px; border-left: 4px solid #d3b892; color: #6f6258; background: #fbf7f1; border-radius: 0 10px 10px 0; }}
+code {{ background: #f3eee8; color: #5b3922; padding: 2px 5px; border-radius: 5px; font-family: "Cascadia Code", Consolas, "Courier New", monospace; font-size: 0.92em; }}
+pre {{ margin: 1em 0; padding: 14px 16px; background: #f7f2ec; border: 1px solid #eadfd3; border-radius: 12px; overflow: hidden; page-break-inside: avoid; }}
+pre code {{ display: block; padding: 0; background: transparent; color: #2b2825; white-space: pre-wrap; word-break: break-word; }}
+table {{ width: 100%; border-collapse: collapse; margin: 1em 0; page-break-inside: avoid; font-size: 13px; }}
+th, td {{ border: 1px solid #e0d5ca; padding: 8px 10px; text-align: left; vertical-align: top; }}
+th {{ background: #f4eee7; color: #2a211a; font-weight: 700; }}
+tr:nth-child(even) td {{ background: #fdfaf6; }}
+hr {{ border: none; border-top: 1px solid #e7ded4; margin: 2em 0; }}
+img {{ max-width: 100%; border-radius: 10px; }}
+input[type="checkbox"] {{ margin-right: 6px; }}
+.pdf-watermark {{
+  position: fixed;
+  top: 50%;
+  left: 50%;
+  z-index: 0;
+  transform: translate(-50%, -50%) rotate(-32deg);
+  transform-origin: center;
+  color: #222;
+  font-size: 72px;
+  font-weight: 800;
+  letter-spacing: 0.08em;
+  white-space: nowrap;
+  pointer-events: none;
+}}
+@media print {{
+  .article {{ z-index: 1; }}
+  pre, blockquote, table {{ break-inside: avoid; }}
+}}
+</style>
+</head>
+<body>
+{watermark}
+<main class="article">
+<h1 class="title">{title}</h1>
+<div class="meta">创建时间：{created_at} &nbsp;|&nbsp; 更新时间：{updated_at}</div>
+{content}
+</main>
+</body>
+</html>"#,
+            title = escaped_title,
+            created_at = Self::escape_html(created_at),
+            updated_at = Self::escape_html(updated_at),
+            content = html_content,
+            watermark = watermark_html,
+        )
     }
 
-    fn draw_pdf_watermark(layer: &printpdf::PdfLayerReference, watermark: &str, font: &printpdf::IndirectFontRef) {
-        use printpdf::{Color, Mm, Rgb};
-        layer.set_fill_color(Color::Rgb(Rgb::new(0.82, 0.82, 0.82, None)));
-        layer.use_text(watermark, 34.0, Mm(52.0), Mm(148.0), font);
-        layer.set_fill_color(Color::Rgb(Rgb::new(0.08, 0.08, 0.08, None)));
+    fn print_html_to_pdf(html_path: &PathBuf, pdf_path: &PathBuf) -> Result<(), String> {
+        let browser = Self::find_pdf_browser().ok_or("未找到可用于 HTML 转 PDF 的 Edge 或 Chrome")?;
+        let html_uri = Self::file_uri(html_path);
+        let pdf_arg = format!("--print-to-pdf={}", pdf_path.to_string_lossy());
+        let attempts = ["--headless=new", "--headless"];
+
+        let mut last_error = String::new();
+        for headless_arg in attempts {
+            let output = std::process::Command::new(&browser)
+                .args([
+                    headless_arg,
+                    "--disable-gpu",
+                    "--disable-extensions",
+                    "--no-first-run",
+                    "--no-default-browser-check",
+                    "--run-all-compositor-stages-before-draw",
+                    "--virtual-time-budget=1000",
+                    &pdf_arg,
+                    &html_uri,
+                ])
+                .output()
+                .map_err(|e| format!("启动浏览器失败: {}", e))?;
+            if output.status.success() && pdf_path.exists() {
+                return Ok(());
+            }
+            last_error = String::from_utf8_lossy(&output.stderr).trim().to_string();
+        }
+
+        Err(if last_error.is_empty() { "HTML 转 PDF 失败".to_string() } else { format!("HTML 转 PDF 失败: {}", last_error) })
     }
 
-    fn wrap_pdf_text(text: &str, max_chars: usize) -> Vec<String> {
-        let mut lines = Vec::new();
-        for raw_line in text.replace('\t', "    ").lines() {
-            if raw_line.is_empty() {
-                lines.push(String::new());
-                continue;
-            }
-            let chars: Vec<char> = raw_line.chars().collect();
-            for chunk in chars.chunks(max_chars) {
-                lines.push(chunk.iter().collect());
-            }
+    fn find_pdf_browser() -> Option<PathBuf> {
+        let mut candidates = Vec::new();
+        if let Ok(program_files) = std::env::var("PROGRAMFILES") {
+            candidates.push(PathBuf::from(&program_files).join("Microsoft/Edge/Application/msedge.exe"));
+            candidates.push(PathBuf::from(&program_files).join("Google/Chrome/Application/chrome.exe"));
         }
-        if lines.is_empty() {
-            lines.push(String::new());
+        if let Ok(program_files_x86) = std::env::var("PROGRAMFILES(X86)") {
+            candidates.push(PathBuf::from(&program_files_x86).join("Microsoft/Edge/Application/msedge.exe"));
+            candidates.push(PathBuf::from(&program_files_x86).join("Google/Chrome/Application/chrome.exe"));
         }
-        lines
+        if let Ok(local_app_data) = std::env::var("LOCALAPPDATA") {
+            candidates.push(PathBuf::from(&local_app_data).join("Microsoft/Edge/Application/msedge.exe"));
+            candidates.push(PathBuf::from(&local_app_data).join("Google/Chrome/Application/chrome.exe"));
+        }
+        candidates.into_iter().find(|path| path.exists()).or_else(|| Some(PathBuf::from("msedge")))
     }
 
-    fn open_pdf_font() -> Option<File> {
-        let candidates = [
-            r"C:\Windows\Fonts\NotoSansSC-VF.ttf",
-            r"C:\Windows\Fonts\msyh.ttc",
-            r"C:\Windows\Fonts\simhei.ttf",
-            r"C:\Windows\Fonts\simsun.ttc",
-            r"C:\Windows\Fonts\arial.ttf",
-        ];
-        candidates.iter().find_map(|path| File::open(path).ok())
+    fn file_uri(path: &PathBuf) -> String {
+        format!("file:///{}", path.to_string_lossy().replace('\\', "/"))
+    }
+
+    fn escape_html(value: &str) -> String {
+        value
+            .replace('&', "&amp;")
+            .replace('<', "&lt;")
+            .replace('>', "&gt;")
+            .replace('"', "&quot;")
+            .replace('\'', "&#39;")
     }
 
     fn encrypt_pdf_file(&self, file_path: &PathBuf, password: &str) -> Result<(), String> {

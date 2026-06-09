@@ -121,8 +121,8 @@ fn export_note_txt(id: String, dest_dir: String) -> Result<String, String> {
 }
 
 #[tauri::command]
-fn export_note_pdf(id: String, dest_dir: String, watermark: String, password: Option<String>) -> Result<String, String> {
-    db().export_note_as_pdf(&id, &dest_dir, &watermark, password)
+fn export_note_pdf(id: String, dest_dir: String, watermark: String, watermark_opacity: f32, password: Option<String>) -> Result<String, String> {
+    db().export_note_as_pdf(&id, &dest_dir, &watermark, watermark_opacity, password)
 }
 
 #[tauri::command]
