@@ -1,5 +1,5 @@
 use std::fs;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use chrono::Local;
 use rusqlite::params;
 use uuid::Uuid;
@@ -71,6 +71,8 @@ impl Database {
         let dest = PathBuf::from(dest_dir);
         fs::create_dir_all(&dest).map_err(|e| e.to_string())?;
         let file_path = Self::export_path(&dest, display_title, "md", "md");
+        let asset_dir = Self::export_asset_dir(&file_path);
+        let full_content = self.rewrite_kova_assets_for_markdown(&full_content, &asset_dir)?;
         fs::write(&file_path, &full_content).map_err(|e| e.to_string())?;
         Ok(file_path.to_string_lossy().to_string())
     }
@@ -83,6 +85,13 @@ impl Database {
         ).map_err(|e| format!("Note not found: {}", e))?;
 
         use pulldown_cmark::{Parser, Options, html};
+        let display_title = if title.is_empty() { "无标题笔记" } else { &title };
+        let dest = PathBuf::from(dest_dir);
+        fs::create_dir_all(&dest).map_err(|e| e.to_string())?;
+        let file_path = Self::export_path(&dest, display_title, "html", "html");
+        let asset_dir = Self::export_asset_dir(&file_path);
+        let content = self.rewrite_kova_assets_for_markdown(&content, &asset_dir)?;
+
         let mut options = Options::empty();
         options.insert(Options::ENABLE_TABLES);
         options.insert(Options::ENABLE_STRIKETHROUGH);
@@ -91,7 +100,6 @@ impl Database {
         let mut html_content = String::new();
         html::push_html(&mut html_content, parser);
 
-        let display_title = if title.is_empty() { "无标题笔记" } else { &title };
         let html_doc = format!(
             r#"<!DOCTYPE html>
 <html lang="zh-CN">
@@ -127,9 +135,6 @@ hr {{ border: none; border-top: 1px solid #eee; margin: 2em 0; }}
             content = html_content,
         );
 
-        let dest = PathBuf::from(dest_dir);
-        fs::create_dir_all(&dest).map_err(|e| e.to_string())?;
-        let file_path = Self::export_path(&dest, display_title, "html", "html");
         fs::write(&file_path, &html_doc).map_err(|e| e.to_string())?;
         Ok(file_path.to_string_lossy().to_string())
     }
@@ -164,6 +169,8 @@ hr {{ border: none; border-top: 1px solid #eee; margin: 2em 0; }}
         fs::create_dir_all(&dest).map_err(|e| e.to_string())?;
         let file_path = Self::export_path(&dest, &display_title, "pdf", "pdf");
         let temp_html = dest.join(format!("kova_pdf_{}.html", Uuid::new_v4()));
+        let asset_dir = Self::export_asset_dir(&temp_html);
+        let content = self.rewrite_kova_assets_for_html(&content, &asset_dir)?;
         let html = Self::render_note_html(&display_title, &content, &created_at, &updated_at, watermark, watermark_opacity);
 
         fs::write(&temp_html, html).map_err(|e| e.to_string())?;
@@ -359,6 +366,97 @@ input[type="checkbox"] {{ margin-right: 6px; }}
 
     fn file_uri(path: &PathBuf) -> String {
         format!("file:///{}", path.to_string_lossy().replace('\\', "/"))
+    }
+
+    fn export_asset_dir(export_path: &Path) -> PathBuf {
+        let stem = export_path
+            .file_stem()
+            .and_then(|s| s.to_str())
+            .unwrap_or("note");
+        export_path.with_file_name(format!("{}.assets", stem))
+    }
+
+    fn rewrite_kova_assets_for_markdown(&self, content: &str, asset_dir: &Path) -> Result<String, String> {
+        self.rewrite_kova_assets(content, asset_dir, false)
+    }
+
+    fn rewrite_kova_assets_for_html(&self, content: &str, asset_dir: &Path) -> Result<String, String> {
+        self.rewrite_kova_assets(content, asset_dir, true)
+    }
+
+    fn rewrite_kova_assets(&self, content: &str, asset_dir: &Path, absolute_file_uri: bool) -> Result<String, String> {
+        let mut output = String::with_capacity(content.len());
+        let mut cursor = 0;
+        const PREFIX: &str = "kova-asset://";
+
+        while let Some(offset) = content[cursor..].find(PREFIX) {
+            let start = cursor + offset;
+            output.push_str(&content[cursor..start]);
+            let rest = &content[start..];
+            let end = rest
+                .find(|c: char| c == ')' || c == '"' || c == '\'' || c.is_whitespace() || c == '<' || c == '>')
+                .unwrap_or(rest.len());
+            let asset_url = &rest[..end];
+            let exported = self.export_kova_asset(asset_url, asset_dir, absolute_file_uri)?;
+            output.push_str(&exported);
+            cursor = start + end;
+        }
+
+        output.push_str(&content[cursor..]);
+        Ok(output)
+    }
+
+    fn export_kova_asset(&self, asset_url: &str, asset_dir: &Path, absolute_file_uri: bool) -> Result<String, String> {
+        let rel = asset_url.strip_prefix("kova-asset://").ok_or("附件地址无效")?;
+        let rel_path = Path::new(rel);
+        if rel_path.is_absolute() || rel_path.components().any(|c| matches!(c, std::path::Component::ParentDir)) {
+            return Err("附件路径无效".into());
+        }
+
+        let source = self.data_dir.join("attachments").join(rel_path);
+        if !source.exists() {
+            return Ok(asset_url.to_string());
+        }
+
+        fs::create_dir_all(asset_dir).map_err(|e| e.to_string())?;
+        let file_name = rel_path
+            .file_name()
+            .and_then(|s| s.to_str())
+            .unwrap_or("image.png");
+        let target = Self::unique_asset_path(asset_dir, file_name);
+        fs::copy(&source, &target).map_err(|e| format!("复制附件失败: {}", e))?;
+
+        if absolute_file_uri {
+            Ok(Self::file_uri(&target))
+        } else {
+            let dir_name = asset_dir
+                .file_name()
+                .and_then(|s| s.to_str())
+                .unwrap_or("assets");
+            let name = target
+                .file_name()
+                .and_then(|s| s.to_str())
+                .unwrap_or(file_name);
+            Ok(format!("{}/{}", dir_name, name).replace('\\', "/"))
+        }
+    }
+
+    fn unique_asset_path(asset_dir: &Path, file_name: &str) -> PathBuf {
+        let path = asset_dir.join(file_name);
+        if !path.exists() {
+            return path;
+        }
+
+        let source = Path::new(file_name);
+        let stem = source.file_stem().and_then(|s| s.to_str()).unwrap_or("image");
+        let ext = source.extension().and_then(|s| s.to_str()).unwrap_or("png");
+        for i in 1.. {
+            let candidate = asset_dir.join(format!("{}_{}.{}", stem, i, ext));
+            if !candidate.exists() {
+                return candidate;
+            }
+        }
+        unreachable!()
     }
 
     fn escape_html(value: &str) -> String {

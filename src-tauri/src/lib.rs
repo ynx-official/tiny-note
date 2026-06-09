@@ -5,6 +5,7 @@ use services::models::{Note, Folder, Conversation, ChatMessage};
 use services::ai::AiService;
 use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::OnceLock;
+use std::path::{Path, PathBuf};
 use tauri::Manager;
 use tauri::menu::{Menu, MenuItem};
 use tauri::tray::TrayIconEvent;
@@ -31,6 +32,100 @@ fn db() -> &'static Database {
 
 fn ai() -> &'static AiService {
     AI.get_or_init(|| AiService::new())
+}
+
+fn sanitize_attachment_name(name: &str) -> String {
+    let stem = Path::new(name)
+        .file_stem()
+        .and_then(|s| s.to_str())
+        .unwrap_or("image");
+    let safe: String = stem
+        .chars()
+        .take(40)
+        .map(|c| if c.is_ascii_alphanumeric() || c == '-' || c == '_' { c } else { '_' })
+        .collect();
+    if safe.trim_matches('_').is_empty() { "image".into() } else { safe }
+}
+
+fn attachment_extension(mime: &str, file_name: Option<&str>) -> String {
+    if let Some(ext) = file_name
+        .and_then(|n| Path::new(n).extension())
+        .and_then(|e| e.to_str())
+        .map(|e| e.to_ascii_lowercase())
+        .filter(|e| matches!(e.as_str(), "png" | "jpg" | "jpeg" | "webp" | "gif" | "bmp" | "svg"))
+    {
+        return ext;
+    }
+    match mime {
+        "image/jpeg" => "jpg".into(),
+        "image/webp" => "webp".into(),
+        "image/gif" => "gif".into(),
+        "image/bmp" => "bmp".into(),
+        "image/svg+xml" => "svg".into(),
+        _ => "png".into(),
+    }
+}
+
+fn attachment_mime(path: &Path) -> &'static str {
+    match path.extension().and_then(|e| e.to_str()).unwrap_or("").to_ascii_lowercase().as_str() {
+        "jpg" | "jpeg" => "image/jpeg",
+        "webp" => "image/webp",
+        "gif" => "image/gif",
+        "bmp" => "image/bmp",
+        "svg" => "image/svg+xml",
+        _ => "image/png",
+    }
+}
+
+fn normalize_asset_path(asset_path: &str) -> Result<PathBuf, String> {
+    let rel = asset_path.strip_prefix("kova-asset://").unwrap_or(asset_path);
+    let rel_path = Path::new(rel);
+    if rel_path.is_absolute() || rel_path.components().any(|c| matches!(c, std::path::Component::ParentDir)) {
+        return Err("附件路径无效".into());
+    }
+    Ok(rel_path.to_path_buf())
+}
+
+#[tauri::command]
+fn save_attachment(note_id: String, bytes: Vec<u8>, mime: String, file_name: Option<String>) -> Result<String, String> {
+    if bytes.is_empty() {
+        return Err("图片内容为空".into());
+    }
+    if bytes.len() > 25 * 1024 * 1024 {
+        return Err("单张图片不能超过 25MB".into());
+    }
+    if !mime.starts_with("image/") {
+        return Err("只支持图片附件".into());
+    }
+    let note_dir = sanitize_attachment_name(&note_id);
+    if note_dir != note_id {
+        return Err("笔记 ID 无效".into());
+    }
+
+    let ext = attachment_extension(&mime, file_name.as_deref());
+    let base = file_name.as_deref().map(sanitize_attachment_name).unwrap_or_else(|| "image".into());
+    let random = Uuid::new_v4().simple().to_string()[..8].to_string();
+    let stored_name = format!("{}_{}.{}", base, random, ext);
+    let rel_path = PathBuf::from(&note_dir).join(stored_name);
+    let dest = db().data_dir().join("attachments").join(&rel_path);
+
+    if let Some(parent) = dest.parent() {
+        std::fs::create_dir_all(parent).map_err(|e| e.to_string())?;
+    }
+    std::fs::write(&dest, bytes).map_err(|e| e.to_string())?;
+
+    Ok(format!("kova-asset://{}", rel_path.to_string_lossy().replace('\\', "/")))
+}
+
+#[tauri::command]
+fn read_attachment(asset_path: String) -> Result<(Vec<u8>, String), String> {
+    let rel_path = normalize_asset_path(&asset_path)?;
+    let path = db().data_dir().join("attachments").join(rel_path);
+    if !path.exists() {
+        return Err("附件不存在".into());
+    }
+    let data = std::fs::read(&path).map_err(|e| e.to_string())?;
+    Ok((data, attachment_mime(&path).into()))
 }
 
 #[tauri::command]
@@ -594,6 +689,7 @@ pub fn run() {
         })
         .invoke_handler(tauri::generate_handler![
             create_note, get_notes, update_note, delete_note,
+            save_attachment, read_attachment,
             create_folder, get_folders, update_folder, delete_folder, move_note_to_folder,
             get_data_dir, set_data_dir, import_md_file, import_file, export_note, export_note_html, export_note_txt, export_note_pdf,
             backup_data, restore_data, abort_ai, toggle_conversation_pinned, export_conversation, open_path, write_file, read_file, copy_file, download_font, get_window_size, save_quick_window_size,

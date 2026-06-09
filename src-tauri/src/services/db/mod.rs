@@ -130,6 +130,34 @@ impl Database {
         &self.data_dir
     }
 
+    fn add_dir_to_zip(
+        zip: &mut zip::ZipWriter<fs::File>,
+        base_dir: &std::path::Path,
+        current_dir: &std::path::Path,
+        options: zip::write::SimpleFileOptions,
+    ) -> Result<(), String> {
+        for entry in fs::read_dir(current_dir).map_err(|e| e.to_string())? {
+            let entry = entry.map_err(|e| e.to_string())?;
+            let path = entry.path();
+            if path.is_dir() {
+                Self::add_dir_to_zip(zip, base_dir, &path, options)?;
+                continue;
+            }
+            if !path.is_file() {
+                continue;
+            }
+            let rel = path
+                .strip_prefix(base_dir)
+                .map_err(|e| e.to_string())?
+                .to_string_lossy()
+                .replace('\\', "/");
+            let data = fs::read(&path).map_err(|e| format!("读取附件失败: {}", e))?;
+            zip.start_file(format!("attachments/{}", rel), options).map_err(|e| e.to_string())?;
+            zip.write_all(&data).map_err(|e| e.to_string())?;
+        }
+        Ok(())
+    }
+
     pub fn quick_window_size(&self) -> (f64, f64) {
         let config = self.read_config();
         let w = if config.quick_width > 0.0 { config.quick_width } else { 320.0 };
@@ -196,6 +224,12 @@ impl Database {
             let settings_data = fs::read(&settings_path).map_err(|e| format!("读取设置失败: {}", e))?;
             zip.start_file("kova-settings.json", options).map_err(|e| e.to_string())?;
             zip.write_all(&settings_data).map_err(|e| e.to_string())?;
+        }
+
+        // Add attachments if exists
+        let attachments_path = self.data_dir.join("attachments");
+        if attachments_path.exists() {
+            Self::add_dir_to_zip(&mut zip, &attachments_path, &attachments_path, options)?;
         }
 
         zip.finish().map_err(|e| e.to_string())?;
@@ -277,6 +311,22 @@ impl Database {
                             let dest = self.data_dir.join("kova-settings.json");
                             fs::write(&dest, &buf).map_err(|e| e.to_string())?;
                         }
+                    }
+                    _ if entry_name.starts_with("attachments/") => {
+                        if !entry.is_file() {
+                            continue;
+                        }
+                        let rel = std::path::Path::new(&entry_name["attachments/".len()..]);
+                        if rel.components().any(|c| matches!(c, std::path::Component::ParentDir)) {
+                            continue;
+                        }
+                        let dest = self.data_dir.join("attachments").join(rel);
+                        if let Some(parent) = dest.parent() {
+                            fs::create_dir_all(parent).map_err(|e| e.to_string())?;
+                        }
+                        let mut buf = Vec::new();
+                        std::io::Read::read_to_end(&mut entry, &mut buf).map_err(|e| e.to_string())?;
+                        fs::write(&dest, &buf).map_err(|e| e.to_string())?;
                     }
                     _ => {}
                 }

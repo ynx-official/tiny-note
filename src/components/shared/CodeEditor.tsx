@@ -16,21 +16,27 @@ interface CodeEditorProps {
   editorViewRef?: React.MutableRefObject<EditorView | null>;
   onScroll?: (scrollTop: number, scrollHeight: number, clientHeight: number) => void;
   onContextMenu?: (e: React.MouseEvent) => void;
+  onPasteFiles?: (files: File[]) => void;
+  onDropFiles?: (files: File[]) => void;
 }
 
-export function CodeEditor({ value, onChange, placeholder, className, tabSize = 2, editorViewRef, onScroll, onContextMenu }: CodeEditorProps) {
+export function CodeEditor({ value, onChange, placeholder, className, tabSize = 2, editorViewRef, onScroll, onContextMenu, onPasteFiles, onDropFiles }: CodeEditorProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const viewRef = useRef<EditorView | null>(null);
   const tabCompartmentRef = useRef<Compartment | null>(null);
   const tabSizeRef = useRef(tabSize);
   const onChangeRef = useRef(onChange);
   const onScrollRef = useRef(onScroll);
+  const onPasteFilesRef = useRef(onPasteFiles);
+  const onDropFilesRef = useRef(onDropFiles);
   const isExternalUpdate = useRef(false);
 
   tabSizeRef.current = tabSize;
 
   onChangeRef.current = onChange;
   onScrollRef.current = onScroll;
+  onPasteFilesRef.current = onPasteFiles;
+  onDropFilesRef.current = onDropFiles;
 
   // Create editor
   useEffect(() => {
@@ -145,10 +151,34 @@ export function CodeEditor({ value, onChange, placeholder, className, tabSize = 
     const scrollHandler = () => {
       onScrollRef.current?.(scrollDom.scrollTop, scrollDom.scrollHeight, scrollDom.clientHeight);
     };
+    const imageFilesFrom = (files?: FileList | null) => Array.from(files ?? []).filter((file) => file.type.startsWith("image/"));
+    const pasteHandler = (event: ClipboardEvent) => {
+      const files = imageFilesFrom(event.clipboardData?.files);
+      if (files.length === 0) return;
+      event.preventDefault();
+      onPasteFilesRef.current?.(files);
+    };
+    const dragOverHandler = (event: DragEvent) => {
+      const hasFiles = Array.from(event.dataTransfer?.types ?? []).includes("Files");
+      if (!hasFiles) return;
+      event.preventDefault();
+    };
+    const dropHandler = (event: DragEvent) => {
+      const files = imageFilesFrom(event.dataTransfer?.files);
+      if (files.length === 0) return;
+      event.preventDefault();
+      onDropFilesRef.current?.(files);
+    };
     scrollDom.addEventListener("scroll", scrollHandler);
+    view.dom.addEventListener("paste", pasteHandler);
+    view.dom.addEventListener("dragover", dragOverHandler);
+    view.dom.addEventListener("drop", dropHandler);
 
     return () => {
       scrollDom.removeEventListener("scroll", scrollHandler);
+      view.dom.removeEventListener("paste", pasteHandler);
+      view.dom.removeEventListener("dragover", dragOverHandler);
+      view.dom.removeEventListener("drop", dropHandler);
       view.destroy();
       viewRef.current = null;
       if (editorViewRef) editorViewRef.current = null;
@@ -197,6 +227,15 @@ export function insertAtCursor(view: EditorView, before: string, after: string =
   view.dispatch({
     changes: { from, to, insert: replacement },
     selection: { anchor: from + before.length, head: from + before.length + selected.length },
+  });
+  view.focus();
+}
+
+export function insertTextAtCursor(view: EditorView, text: string) {
+  const { from, to } = view.state.selection.main;
+  view.dispatch({
+    changes: { from, to, insert: text },
+    selection: { anchor: from + text.length },
   });
   view.focus();
 }

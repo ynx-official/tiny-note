@@ -73,4 +73,10 @@ export const db = {
 
   openPath: (path: string) =>
     invoke<void>("open_path", { path }),
+
+  saveAttachment: (noteId: string, bytes: number[], mime: string, fileName?: string) =>
+    invoke<string>("save_attachment", { noteId, bytes, mime, fileName: fileName ?? null }),
+
+  readAttachment: (assetPath: string) =>
+    invoke<[number[], string]>("read_attachment", { assetPath }),
 };

@@ -2,9 +2,10 @@ import { useState, useCallback, useRef, useEffect } from "react";
 import type { EditorView } from "@codemirror/view";
 import { undo, redo } from "@codemirror/commands";
 import type { Note } from "../../lib/db";
+import { db } from "../../lib/db";
 import { loadAutoSave, loadAutoSaveDelay, loadViewMode, saveViewMode, loadSplitRatio, saveSplitRatio, loadTabSize } from "../../lib/theme";
 import { MarkdownPreview } from "../shared/MarkdownPreview";
-import { CodeEditor, insertAtCursor } from "../shared/CodeEditor";
+import { CodeEditor, insertAtCursor, insertTextAtCursor } from "../shared/CodeEditor";
 import { FormatToolbar } from "../shared/FormatToolbar";
 import { SlidingButtonGroup } from "../shared/SlidingButtonGroup";
 import { ConfirmDialog } from "../dialog/ConfirmDialog";
@@ -34,6 +35,7 @@ export function NoteDetail({ note, onToggleSidebar, onDelete, onUpdateTitle, onU
   const [splitRatio, setSplitRatio] = useState(loadSplitRatio);
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
   const [contextMenu, setContextMenu] = useState<{ x: number; y: number; items: ContextMenuItem[] } | null>(null);
+  const [attachmentStatus, setAttachmentStatus] = useState<string | null>(null);
   const editorViewRef = useRef<EditorView | null>(null);
   const titleTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const contentTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -134,6 +136,39 @@ export function NoteDetail({ note, onToggleSidebar, onDelete, onUpdateTitle, onU
     }
   }, [note, editTitle, editContent, onUpdateTitle, onUpdateContent, onSaved]);
 
+  const handleImageFiles = useCallback(async (files: File[]) => {
+    const view = editorViewRef.current;
+    if (!view || files.length === 0) return;
+    if (!note) {
+      setAttachmentStatus("请先选择笔记");
+      window.setTimeout(() => setAttachmentStatus(null), 1400);
+      return;
+    }
+
+    setAttachmentStatus(files.length === 1 ? "正在保存图片..." : `正在保存 ${files.length} 张图片...`);
+    const snippets: string[] = [];
+
+    try {
+      for (const file of files) {
+        const bytes = Array.from(new Uint8Array(await file.arrayBuffer()));
+        const assetUrl = await db.saveAttachment(note.id, bytes, file.type || "image/png", file.name || undefined);
+        const label = file.name ? file.name.replace(/\.[^.]+$/, "") : "图片";
+        snippets.push(`![${label}](${assetUrl})`);
+      }
+
+      const text = `${snippets.join("\n\n")}\n`;
+      insertTextAtCursor(view, text);
+      const nextContent = view.state.doc.toString();
+      handleContentChange(nextContent);
+      if (!getAutoSave() && note) onUpdateContent(note.id, nextContent);
+      setAttachmentStatus("图片已插入");
+      window.setTimeout(() => setAttachmentStatus(null), 1400);
+    } catch (error) {
+      setAttachmentStatus(error instanceof Error ? error.message : "图片保存失败");
+      window.setTimeout(() => setAttachmentStatus(null), 2200);
+    }
+  }, [handleContentChange, note, onUpdateContent]);
+
   useEffect(() => {
     const handler = (e: KeyboardEvent) => {
       if ((e.ctrlKey || e.metaKey) && e.key === "s") {
@@ -228,6 +263,7 @@ export function NoteDetail({ note, onToggleSidebar, onDelete, onUpdateTitle, onU
           {new Date(note.updated_at).toLocaleString("zh-CN", { year: "numeric", month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit" })}
           {" · "}
           {isModified ? <span className="text-danger">未保存</span> : <span className="text-accent">已保存</span>}
+          {attachmentStatus && <span className="ml-2 text-accent">{attachmentStatus}</span>}
         </p>
       </div>
 
@@ -240,11 +276,13 @@ export function NoteDetail({ note, onToggleSidebar, onDelete, onUpdateTitle, onU
             <CodeEditor
               value={editContent}
               onChange={handleContentChange}
-              placeholder="支持 Markdown 语法..."
+              placeholder="支持 Markdown 语法，图片可直接粘贴或拖入..."
               className="flex-1 min-h-0"
               tabSize={tabSize}
               editorViewRef={editorViewRef}
               onScroll={mode === "split" ? handleEditorScroll : undefined}
+              onPasteFiles={handleImageFiles}
+              onDropFiles={handleImageFiles}
               onContextMenu={(e) => { e.preventDefault(); setContextMenu({ x: e.clientX, y: e.clientY, items: getEditorMenuItems() }); }}
             />
           </div>

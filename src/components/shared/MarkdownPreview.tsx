@@ -1,4 +1,5 @@
-import { useState, useCallback } from "react";
+import { useState, useCallback, useEffect } from "react";
+import { db } from "../../lib/db";
 import Markdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import remarkMath from "remark-math";
@@ -10,6 +11,11 @@ import "yet-another-react-lightbox/styles.css";
 
 interface MarkdownPreviewProps {
   content: string;
+}
+
+function transformMarkdownUrl(url: string) {
+  if (url.startsWith("kova-asset://")) return url;
+  return url;
 }
 
 function CopyButton({ text }: { text: string }) {
@@ -29,13 +35,45 @@ function CopyButton({ text }: { text: string }) {
 
 function ImageWithLightbox({ src, alt }: { src: string; alt?: string }) {
   const [open, setOpen] = useState(false);
+  const [resolvedSrc, setResolvedSrc] = useState(src);
+
+  useEffect(() => {
+    let revoked: string | null = null;
+    let cancelled = false;
+
+    async function resolve() {
+      if (!src.startsWith("kova-asset://")) {
+        setResolvedSrc(src);
+        return;
+      }
+
+      try {
+        const [bytes, mime] = await db.readAttachment(src);
+        const objectUrl = URL.createObjectURL(new Blob([new Uint8Array(bytes)], { type: mime }));
+        revoked = objectUrl;
+        if (!cancelled) setResolvedSrc(objectUrl);
+      } catch {
+        if (!cancelled) setResolvedSrc("");
+      }
+    }
+
+    resolve();
+    return () => {
+      cancelled = true;
+      if (revoked) URL.revokeObjectURL(revoked);
+    };
+  }, [src]);
 
   const handleClose = useCallback(() => setOpen(false), []);
+
+  if (!resolvedSrc) {
+    return <span className="text-danger text-sm">图片加载失败</span>;
+  }
 
   return (
     <>
       <img
-        src={src}
+        src={resolvedSrc}
         alt={alt}
         className="max-w-full rounded cursor-zoom-in"
         onClick={() => setOpen(true)}
@@ -43,7 +81,7 @@ function ImageWithLightbox({ src, alt }: { src: string; alt?: string }) {
       <Lightbox
         open={open}
         close={handleClose}
-        slides={[{ src }]}
+        slides={[{ src: resolvedSrc }]}
         plugins={[Zoom]}
         zoom={{
           scrollToZoom: true,
@@ -70,6 +108,7 @@ export function MarkdownPreview({ content }: MarkdownPreviewProps) {
       <Markdown
         remarkPlugins={[remarkGfm, remarkMath]}
         rehypePlugins={[rehypeKatex]}
+        urlTransform={transformMarkdownUrl}
         components={{
           pre({ children }: { children?: React.ReactNode }) {
             const codeChild = Array.isArray(children) ? children.find((c: React.ReactNode) => c && (c as React.ReactElement).type === "code") as React.ReactElement | undefined : undefined;
