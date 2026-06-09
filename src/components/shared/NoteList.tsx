@@ -1,4 +1,4 @@
-import { useState, useRef, useLayoutEffect } from "react";
+import { useState, useRef, useLayoutEffect, useEffect } from "react";
 import { open } from "@tauri-apps/plugin-dialog";
 import { db } from "../../lib/db";
 import type { Note } from "../../lib/db";
@@ -37,6 +37,22 @@ export function NoteList({ notes, selectedId, selectedIds, onSelectedIdsChange, 
     watermark: string;
     password: string;
   } | null>(null);
+  const [exportNotice, setExportNotice] = useState<{ status: "loading" | "success"; message: string } | null>(null);
+  const exportNoticeTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  const showExportNotice = (status: "loading" | "success", message: string) => {
+    setExportNotice({ status, message });
+    if (exportNoticeTimer.current) clearTimeout(exportNoticeTimer.current);
+    if (status === "success") {
+      exportNoticeTimer.current = setTimeout(() => setExportNotice(null), 1800);
+    }
+  };
+
+  useEffect(() => {
+    return () => {
+      if (exportNoticeTimer.current) clearTimeout(exportNoticeTimer.current);
+    };
+  }, []);
 
   const containerRef = useRef<HTMLDivElement>(null);
   const prevPositions = useRef<Map<string, number>>(new Map());
@@ -155,17 +171,13 @@ export function NoteList({ notes, selectedId, selectedIds, onSelectedIdsChange, 
     const destDir = await open({ directory: true });
     if (!destDir) return;
     const exportFn = format === "html" ? db.exportNoteHtml : format === "txt" ? db.exportNoteTxt : db.exportNote;
+    showExportNotice("loading", `正在导出 ${ids.length} 条笔记...`);
     const paths: string[] = [];
     for (const id of ids) {
       const path = await exportFn(id, destDir as string);
       paths.push(path);
     }
-    setConfirmState({
-      title: "导出成功",
-      message: `已导出 ${paths.length} 条笔记到：\n${destDir}`,
-      confirmLabel: "确定",
-      onConfirm: () => setConfirmState(null),
-    });
+    showExportNotice("success", `已导出 ${paths.length} 条笔记`);
   };
 
   const openPdfExportDialog = (note: Note) => {
@@ -182,17 +194,13 @@ export function NoteList({ notes, selectedId, selectedIds, onSelectedIdsChange, 
     const destDir = await open({ directory: true });
     if (!destDir) return;
     const paths: string[] = [];
+    showExportNotice("loading", `正在导出 ${pdfExportState.noteIds.length} 条 PDF...`);
     for (const id of pdfExportState.noteIds) {
       const path = await db.exportNotePdf(id, destDir as string, watermark, pdfExportState.password);
       paths.push(path);
     }
     setPdfExportState(null);
-    setConfirmState({
-      title: "导出成功",
-      message: `已导出 ${paths.length} 条 PDF 到：\n${destDir}`,
-      confirmLabel: "确定",
-      onConfirm: () => setConfirmState(null),
-    });
+    showExportNotice("success", `已导出 ${paths.length} 条 PDF`);
   };
 
   const handleDeleteSelected = (menuNote: Note) => {
@@ -434,6 +442,24 @@ export function NoteList({ notes, selectedId, selectedIds, onSelectedIdsChange, 
             <div className="px-4 py-2.5 border-t border-paper-deep/25 flex justify-end gap-2">
               <button type="button" onClick={() => setPdfExportState(null)} className="px-4 py-1.5 text-xs text-ink-soft bg-paper-warm/60 border border-paper-deep/30 rounded-lg hover:bg-paper-warm transition-colors">取消</button>
               <button type="button" disabled={!pdfExportState.watermark.trim()} onClick={handleExportPdf} className="px-4 py-1.5 text-xs text-white bg-accent hover:bg-accent-light disabled:opacity-40 disabled:hover:bg-accent rounded-lg transition-colors">导出</button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {exportNotice && (
+        <div className="fixed inset-0 z-[70] flex items-center justify-center pointer-events-none">
+          <div className="min-w-[220px] rounded-2xl border border-paper-deep bg-cloud/95 px-5 py-4 shadow-xl animate-view-fade flex items-center gap-3">
+            {exportNotice.status === "loading" ? (
+              <span className="w-5 h-5 rounded-full border-2 border-paper-deep border-t-accent animate-spin" />
+            ) : (
+              <span className="w-5 h-5 rounded-full bg-accent-mist text-accent flex items-center justify-center">
+                <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round"><path d="M20 6L9 17l-5-5" /></svg>
+              </span>
+            )}
+            <div>
+              <p className="text-xs font-medium text-ink-soft">{exportNotice.status === "loading" ? "导出中" : "导出成功"}</p>
+              <p className="text-[11px] text-ink-ghost mt-0.5">{exportNotice.message}</p>
             </div>
           </div>
         </div>

@@ -2,6 +2,7 @@ use std::fs;
 use std::fs::File;
 use std::io::BufWriter;
 use std::path::PathBuf;
+use chrono::Local;
 use rusqlite::params;
 use uuid::Uuid;
 
@@ -66,12 +67,12 @@ impl Database {
             |row| Ok((row.get(0)?, row.get(1)?)),
         ).map_err(|e| format!("Note not found: {}", e))?;
 
+        let display_title = if title.is_empty() { "无标题笔记" } else { &title };
         let full_content = if title.is_empty() { content } else { format!("# {}\n\n{}", title, content) };
-        let safe_name = Self::safe_filename(&title);
 
         let dest = PathBuf::from(dest_dir);
         fs::create_dir_all(&dest).map_err(|e| e.to_string())?;
-        let file_path = dest.join(format!("{}_{}.md", Uuid::new_v4(), safe_name));
+        let file_path = Self::export_path(&dest, display_title, "md", "md");
         fs::write(&file_path, &full_content).map_err(|e| e.to_string())?;
         Ok(file_path.to_string_lossy().to_string())
     }
@@ -128,10 +129,9 @@ hr {{ border: none; border-top: 1px solid #eee; margin: 2em 0; }}
             content = html_content,
         );
 
-        let safe_name = Self::safe_filename(display_title);
         let dest = PathBuf::from(dest_dir);
         fs::create_dir_all(&dest).map_err(|e| e.to_string())?;
-        let file_path = dest.join(format!("{}_{}.html", Uuid::new_v4(), safe_name));
+        let file_path = Self::export_path(&dest, display_title, "html", "html");
         fs::write(&file_path, &html_doc).map_err(|e| e.to_string())?;
         Ok(file_path.to_string_lossy().to_string())
     }
@@ -143,12 +143,12 @@ hr {{ border: none; border-top: 1px solid #eee; margin: 2em 0; }}
             |row| Ok((row.get(0)?, row.get(1)?)),
         ).map_err(|e| format!("Note not found: {}", e))?;
 
+        let display_title = if title.is_empty() { "无标题笔记" } else { &title };
         let full_content = if title.is_empty() { content } else { format!("{}\n\n{}", title, content) };
-        let safe_name = Self::safe_filename(&title);
 
         let dest = PathBuf::from(dest_dir);
         fs::create_dir_all(&dest).map_err(|e| e.to_string())?;
-        let file_path = dest.join(format!("{}_{}.txt", Uuid::new_v4(), safe_name));
+        let file_path = dest.join(Self::export_filename(display_title, "txt", "txt"));
         fs::write(&file_path, &full_content).map_err(|e| e.to_string())?;
         Ok(file_path.to_string_lossy().to_string())
     }
@@ -162,10 +162,9 @@ hr {{ border: none; border-top: 1px solid #eee; margin: 2em 0; }}
         drop(conn);
 
         let display_title = if title.is_empty() { "无标题笔记".to_string() } else { title.clone() };
-        let safe_name = Self::safe_filename(&display_title);
         let dest = PathBuf::from(dest_dir);
         fs::create_dir_all(&dest).map_err(|e| e.to_string())?;
-        let file_path = dest.join(format!("{}_{}.pdf", Uuid::new_v4(), safe_name));
+        let file_path = dest.join(Self::export_filename(&display_title, "pdf", "pdf"));
 
         self.write_pdf_file(&file_path, &display_title, &content, watermark)?;
         if let Some(pass) = password.map(|p| p.trim().to_string()).filter(|p| !p.is_empty()) {
@@ -261,6 +260,28 @@ hr {{ border: none; border-top: 1px solid #eee; margin: 2em 0; }}
         doc.encrypt(&state).map_err(|e| e.to_string())?;
         doc.save(file_path).map_err(|e| e.to_string())?;
         Ok(())
+    }
+
+    fn export_path(dest: &PathBuf, title: &str, export_type: &str, extension: &str) -> PathBuf {
+        let base = Self::export_filename(title, export_type, extension);
+        let path = dest.join(&base);
+        if !path.exists() {
+            return path;
+        }
+
+        let stem = base.trim_end_matches(&format!(".{}", extension));
+        for i in 1.. {
+            let candidate = dest.join(format!("{}_{}.{}", stem, i, extension));
+            if !candidate.exists() {
+                return candidate;
+            }
+        }
+        unreachable!()
+    }
+
+    fn export_filename(title: &str, export_type: &str, extension: &str) -> String {
+        let date = Local::now().format("%y%m%d");
+        format!("{}_{}_{}.{}", Self::safe_filename(title), export_type, date, extension)
     }
 
     fn safe_filename(title: &str) -> String {

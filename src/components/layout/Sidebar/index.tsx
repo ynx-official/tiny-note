@@ -50,7 +50,7 @@ export function Sidebar({
   const [selectedFolderIds, setSelectedFolderIds] = useState<Set<string>>(new Set());
   const [folderMenuPos, setFolderMenuPos] = useState<{ x: number; y: number } | null>(null);
   const [folderMenuNode, setFolderMenuNode] = useState<FolderNode | null>(null);
-  const [folderConfirm, setFolderConfirm] = useState<{ title: string; message: string; onConfirm: () => void } | null>(null);
+  const [folderConfirm, setFolderConfirm] = useState<{ title: string; message: string; onConfirm: () => void | Promise<void>; danger?: boolean; confirmLabel?: string } | null>(null);
   const [folderInfoNode, setFolderInfoNode] = useState<FolderNode | null>(null);
   const [renamingFolderId, setRenamingFolderId] = useState<string | null>(null);
   const [expandedFolderIds, setExpandedFolderIds] = useState<Set<string>>(new Set());
@@ -58,6 +58,22 @@ export function Sidebar({
   const [sortField, setSortField] = useState<string>(() => localStorage.getItem("kova-sort-field") || "updated_at");
   const [sortDir, setSortDir] = useState<string>(() => localStorage.getItem("kova-sort-dir") || "desc");
   const [showSortMenu, setShowSortMenu] = useState(false);
+  const [exportNotice, setExportNotice] = useState<{ status: "loading" | "success"; message: string } | null>(null);
+  const exportNoticeTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  const showExportNotice = (status: "loading" | "success", message: string) => {
+    setExportNotice({ status, message });
+    if (exportNoticeTimer.current) clearTimeout(exportNoticeTimer.current);
+    if (status === "success") {
+      exportNoticeTimer.current = setTimeout(() => setExportNotice(null), 1800);
+    }
+  };
+
+  useEffect(() => {
+    return () => {
+      if (exportNoticeTimer.current) clearTimeout(exportNoticeTimer.current);
+    };
+  }, []);
 
   const sortedNotes = [...filteredNotes].sort((a, b) => {
     let cmp = 0;
@@ -125,6 +141,8 @@ export function Sidebar({
     setFolderConfirm({
       title: `删除 ${ids.length} 个文件夹`,
       message: `确定删除「${names.join("、")}」吗？其中的笔记将移至未分类。`,
+      danger: true,
+      confirmLabel: "删除",
       onConfirm: async () => {
         for (const id of ids) {
           await onFolderDelete(id);
@@ -145,11 +163,12 @@ export function Sidebar({
     const destDir = await open({ directory: true });
     if (!destDir) return;
     const paths: string[] = [];
+    showExportNotice("loading", `正在导出 ${notes.length} 条笔记...`);
     for (const note of notes) {
       const path = await db.exportNote(note.id, destDir as string);
       paths.push(path);
     }
-    setFolderConfirm({ title: "导出成功", message: `已导出 ${paths.length} 条笔记到：\n${destDir}`, onConfirm: () => setFolderConfirm(null) });
+    showExportNotice("success", `已导出 ${paths.length} 条笔记`);
   };
 
   const buildSelectedFolderAttachments = async (): Promise<AIContextAttachment[]> => {
@@ -246,11 +265,12 @@ export function Sidebar({
     const destDir = await open({ directory: true });
     if (!destDir) return;
     const paths: string[] = [];
+    showExportNotice("loading", `正在导出 ${allNotes.length} 条笔记...`);
     for (const note of allNotes) {
       const path = await db.exportNote(note.id, destDir as string);
       paths.push(path);
     }
-    setFolderConfirm({ title: "导出成功", message: `已导出 ${paths.length} 条笔记到：\n${destDir}`, onConfirm: () => setFolderConfirm(null) });
+    showExportNotice("success", `已导出 ${paths.length} 条笔记`);
   };
 
   const toggleAllFoldersExpand = () => {
@@ -460,13 +480,31 @@ export function Sidebar({
         <ContextMenu x={allMenuPos.x} y={allMenuPos.y} items={getAllMenuItems()} onClose={() => setAllMenuPos(null)} />
       )}
 
+      {exportNotice && (
+        <div className="fixed inset-0 z-[70] flex items-center justify-center pointer-events-none">
+          <div className="min-w-[220px] rounded-2xl border border-paper-deep bg-cloud/95 px-5 py-4 shadow-xl animate-view-fade flex items-center gap-3">
+            {exportNotice.status === "loading" ? (
+              <span className="w-5 h-5 rounded-full border-2 border-paper-deep border-t-accent animate-spin" />
+            ) : (
+              <span className="w-5 h-5 rounded-full bg-accent-mist text-accent flex items-center justify-center">
+                <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round"><path d="M20 6L9 17l-5-5" /></svg>
+              </span>
+            )}
+            <div>
+              <p className="text-xs font-medium text-ink-soft">{exportNotice.status === "loading" ? "导出中" : "导出成功"}</p>
+              <p className="text-[11px] text-ink-ghost mt-0.5">{exportNotice.message}</p>
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* Folder delete confirm */}
       {folderConfirm && (
         <ConfirmDialog
           title={folderConfirm.title}
           message={folderConfirm.message}
-          danger
-          confirmLabel="删除"
+          danger={Boolean(folderConfirm.danger)}
+          confirmLabel={folderConfirm.confirmLabel ?? "确定"}
           onConfirm={folderConfirm.onConfirm}
           onCancel={() => setFolderConfirm(null)}
         />

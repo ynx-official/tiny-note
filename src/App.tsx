@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { listen } from "@tauri-apps/api/event";
 import { getCurrentWebview } from "@tauri-apps/api/webview";
 import { loadMode, saveMode, applyTheme, loadAllCustomFonts, type ThemeMode } from "./lib/theme";
@@ -51,6 +51,20 @@ export default function App() {
   const ai = usePanelResize({ storageKey: "kova-ai-width", defaultWidth: 360, minWidth: 300, maxWidth: 600, side: "left" });
   const isDragging = sidebar.isDragging || settings.isDragging || ai.isDragging;
   const [draggingFiles, setDraggingFiles] = useState(false);
+  const [toast, setToast] = useState<string | null>(null);
+  const toastTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  const showToast = (message: string) => {
+    setToast(message);
+    if (toastTimerRef.current) clearTimeout(toastTimerRef.current);
+    toastTimerRef.current = setTimeout(() => setToast(null), 1800);
+  };
+
+  useEffect(() => {
+    return () => {
+      if (toastTimerRef.current) clearTimeout(toastTimerRef.current);
+    };
+  }, []);
 
   // Zoom with Ctrl+scroll, reset with Ctrl+0
   useEffect(() => {
@@ -187,6 +201,7 @@ export default function App() {
     setSelectedNote(note);
     fetch(undefined, selectedFolderId ?? undefined);
     db.list().then((all: Note[]) => setAllNotes(all));
+    showToast("笔记已新建");
   };
 
   const handleAddToAIContext = (attachments: AIContextAttachment[]) => {
@@ -230,6 +245,7 @@ export default function App() {
           setSelectedNote(remaining[0] ?? null);
         });
       }
+      showToast("笔记已删除");
     });
   };
 
@@ -298,8 +314,9 @@ export default function App() {
                 }
                 await db.createFolder(name, parentId);
                 db.listFolders().then(setFolders);
+                showToast("文件夹已新建");
               }}
-              onFolderRename={async (id, name) => { await db.updateFolder(id, name); db.listFolders().then(setFolders); }}
+              onFolderRename={async (id, name) => { await db.updateFolder(id, name); db.listFolders().then(setFolders); showToast("文件夹已重命名"); }}
               onFolderDelete={async (id) => {
                 await db.deleteFolder(id);
                 db.listFolders().then((updated) => {
@@ -308,8 +325,9 @@ export default function App() {
                     setSelectedFolderId(updated.length > 0 ? updated[0].id : "");
                   }
                 });
+                showToast("文件夹已删除");
               }}
-              onMoveToFolder={async (noteId, folderId) => { await db.moveToFolder(noteId, folderId ?? undefined); fetch(undefined, selectedFolderId ?? undefined); }}
+              onMoveToFolder={async (noteId, folderId) => { await db.moveToFolder(noteId, folderId ?? undefined); fetch(undefined, selectedFolderId ?? undefined); showToast("笔记已移动"); }}
               onMoveMultipleToFolder={async (noteIds, folderId) => {
                 for (const id of noteIds) { await db.moveToFolder(id, folderId ?? undefined); }
                 const updated = await fetch(undefined, selectedFolderId ?? undefined);
@@ -317,6 +335,7 @@ export default function App() {
                   setSelectedNote(updated.length > 0 ? updated[0] : null);
                 }
                 db.list().then((all: Note[]) => setAllNotes(all));
+                showToast(noteIds.length > 1 ? `${noteIds.length} 条笔记已移动` : "笔记已移动");
               }}
               onDeselectNote={handleDeselectNote}
               onImported={() => { fetch(undefined, selectedFolderId ?? undefined); db.list().then((all: Note[]) => setAllNotes(all)); }}
@@ -330,7 +349,7 @@ export default function App() {
         {/* Detail */}
         <div className="flex-1 flex flex-col min-w-0">
           {selectedNote ? (
-            <NoteDetail note={selectedNote} onToggleSidebar={() => setShowSidebar((v) => !v)} onDelete={handleDelete} onUpdateTitle={handleUpdateTitle} onUpdateContent={handleUpdateContent} />
+            <NoteDetail note={selectedNote} onToggleSidebar={() => setShowSidebar((v) => !v)} onDelete={handleDelete} onUpdateTitle={handleUpdateTitle} onUpdateContent={handleUpdateContent} onSaved={() => showToast("笔记已保存")} />
           ) : (
             <>
               <div className="flex items-center justify-between px-4 h-10 border-b border-paper-deep/20 shrink-0 bg-paper/20">
@@ -373,6 +392,12 @@ export default function App() {
           </div>
         </div>
       </div>
+
+      {toast && (
+        <div className="fixed left-1/2 bottom-10 z-[70] -translate-x-1/2 rounded-full border border-paper-deep/60 bg-cloud/95 px-4 py-2 text-xs text-ink-soft shadow-lg animate-toast-in pointer-events-none">
+          {toast}
+        </div>
+      )}
 
       {/* File drop overlay */}
       {draggingFiles && (

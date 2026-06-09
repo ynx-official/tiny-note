@@ -24,9 +24,10 @@ interface NoteDetailProps {
   onDelete: (id: string) => void;
   onUpdateTitle: (id: string, title: string) => void;
   onUpdateContent: (id: string, content: string) => void;
+  onSaved?: () => void;
 }
 
-export function NoteDetail({ note, onToggleSidebar, onDelete, onUpdateTitle, onUpdateContent }: NoteDetailProps) {
+export function NoteDetail({ note, onToggleSidebar, onDelete, onUpdateTitle, onUpdateContent, onSaved }: NoteDetailProps) {
   const [mode, setMode] = useState<ViewMode>(() => loadViewMode() as ViewMode);
   const [editTitle, setEditTitle] = useState(note?.title ?? "");
   const [editContent, setEditContent] = useState(note?.content ?? "");
@@ -126,10 +127,12 @@ export function NoteDetail({ note, onToggleSidebar, onDelete, onUpdateTitle, onU
     if (titleTimerRef.current) clearTimeout(titleTimerRef.current);
     if (contentTimerRef.current) clearTimeout(contentTimerRef.current);
     if (note) {
+      const changed = editTitle !== note.title || editContent !== note.content;
       if (editTitle !== note.title) onUpdateTitle(note.id, editTitle);
       if (editContent !== note.content) onUpdateContent(note.id, editContent);
+      if (changed) onSaved?.();
     }
-  }, [note, editTitle, editContent, onUpdateTitle, onUpdateContent]);
+  }, [note, editTitle, editContent, onUpdateTitle, onUpdateContent, onSaved]);
 
   useEffect(() => {
     const handler = (e: KeyboardEvent) => {
