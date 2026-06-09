@@ -178,6 +178,7 @@ export function NoteList({ notes, selectedId, selectedIds, onSelectedIdsChange, 
       paths.push(path);
     }
     showExportNotice("success", `已导出 ${paths.length} 条笔记`);
+    db.openPath(destDir as string).catch(console.error);
   };
 
   const openPdfExportDialog = (note: Note) => {

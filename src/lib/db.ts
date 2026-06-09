@@ -70,4 +70,7 @@ export const db = {
 
   exportNotePdf: (id: string, destDir: string, watermark: string, password?: string) =>
     invoke<string>("export_note_pdf", { id, destDir, watermark, password: password?.trim() || null }),
+
+  openPath: (path: string) =>
+    invoke<void>("open_path", { path }),
 };

@@ -166,6 +166,15 @@ fn export_conversation(id: String, dest_dir: String) -> Result<String, String> {
 }
 
 #[tauri::command]
+fn open_path(path: String) -> Result<(), String> {
+    std::process::Command::new("explorer")
+        .arg(path)
+        .spawn()
+        .map_err(|e| e.to_string())?;
+    Ok(())
+}
+
+#[tauri::command]
 fn write_file(path: String, content: String) -> Result<(), String> {
     std::fs::write(&path, content).map_err(|e| e.to_string())
 }
@@ -585,7 +594,7 @@ pub fn run() {
             create_note, get_notes, update_note, delete_note,
             create_folder, get_folders, update_folder, delete_folder, move_note_to_folder,
             get_data_dir, set_data_dir, import_md_file, import_file, export_note, export_note_html, export_note_txt, export_note_pdf,
-            backup_data, restore_data, abort_ai, toggle_conversation_pinned, export_conversation, write_file, read_file, copy_file, download_font, get_window_size, save_quick_window_size,
+            backup_data, restore_data, abort_ai, toggle_conversation_pinned, export_conversation, open_path, write_file, read_file, copy_file, download_font, get_window_size, save_quick_window_size,
             toggle_window, get_cursor_position, create_quick_window, update_quick_shortcut,
             ai_chat, ai_chat_stream, create_conversation, get_conversations, update_conversation_title, delete_conversation,
             get_messages, get_ai_config, save_ai_config,
