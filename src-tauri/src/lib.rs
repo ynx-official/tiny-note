@@ -11,6 +11,7 @@ use tauri::tray::TrayIconEvent;
 use windows::Win32::UI::WindowsAndMessaging::GetCursorPos;
 use windows::Win32::UI::HiDpi::GetDpiForSystem;
 use windows::Win32::Foundation::POINT;
+use uuid::Uuid;
 
 static DB: OnceLock<Database> = OnceLock::new();
 static AI: OnceLock<AiService> = OnceLock::new();
@@ -121,8 +122,8 @@ fn export_note_txt(id: String, dest_dir: String) -> Result<String, String> {
 }
 
 #[tauri::command]
-fn export_note_pdf(id: String, dest_dir: String, watermark: String, watermark_opacity: f32, password: Option<String>) -> Result<String, String> {
-    db().export_note_as_pdf(&id, &dest_dir, &watermark, watermark_opacity, password)
+fn export_note_pdf(id: String, dest_dir: String, watermark: String, watermark_opacity: f32) -> Result<String, String> {
+    db().export_note_as_pdf(&id, &dest_dir, &watermark, watermark_opacity)
 }
 
 #[tauri::command]
@@ -159,7 +160,8 @@ fn export_conversation(id: String, dest_dir: String) -> Result<String, String> {
         md.push_str(&format!("**{}**\n\n{}\n\n---\n\n", role, msg.content));
     }
     let safe_name: String = conv.title.chars().take(40).filter(|c| c.is_alphanumeric() || *c == ' ' || *c == '-' || *c == '_').collect();
-    let file_name = format!("{}_{}.md", &conv.id[..8], if safe_name.is_empty() { "conversation" } else { &safe_name });
+    let random = Uuid::new_v4().simple().to_string()[..4].to_string();
+    let file_name = format!("{}_{}_{}.md", &conv.id[..8], if safe_name.is_empty() { "conversation" } else { &safe_name }, random);
     let path = std::path::PathBuf::from(&dest_dir).join(&file_name);
     std::fs::write(&path, &md).map_err(|e| e.to_string())?;
     Ok(path.to_string_lossy().to_string())

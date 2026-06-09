@@ -30,8 +30,6 @@ zip = "2"
 chrono = { version = "0.4", features = ["serde"] }
 uuid = { version = "1", features = ["v4", "serde"] }
 pulldown-cmark = "0.12"
-lopdf = "0.36"
-printpdf = "0.7"
 rusqlite = { version = "0.32", features = ["bundled"] }
 dirs = "6"
 

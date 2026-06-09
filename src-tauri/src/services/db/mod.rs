@@ -9,6 +9,7 @@ use std::io::Write;
 use std::path::PathBuf;
 use std::sync::Mutex;
 use rusqlite::Connection;
+use uuid::Uuid;
 
 use crate::services::models::AppConfig;
 
@@ -169,7 +170,8 @@ impl Database {
         }
 
         let now = chrono::Utc::now().format("%Y%m%d_%H%M%S");
-        let zip_name = format!("kova-backup-{}.zip", now);
+        let random = Uuid::new_v4().simple().to_string()[..4].to_string();
+        let zip_name = format!("kova-backup-{}_{}.zip", now, random);
         let dest = PathBuf::from(dest_dir).join(&zip_name);
         let file = fs::File::create(&dest).map_err(|e| format!("创建备份文件失败: {}", e))?;
         let mut zip = zip::ZipWriter::new(file);

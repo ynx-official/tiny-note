@@ -151,7 +151,7 @@ hr {{ border: none; border-top: 1px solid #eee; margin: 2em 0; }}
         Ok(file_path.to_string_lossy().to_string())
     }
 
-    pub fn export_note_as_pdf(&self, id: &str, dest_dir: &str, watermark: &str, watermark_opacity: f32, password: Option<String>) -> Result<String, String> {
+    pub fn export_note_as_pdf(&self, id: &str, dest_dir: &str, watermark: &str, watermark_opacity: f32) -> Result<String, String> {
         let conn = self.conn.lock().map_err(|e| e.to_string())?;
         let (title, content, created_at, updated_at): (String, String, String, String) = conn.query_row(
             "SELECT title, content, created_at, updated_at FROM notes WHERE id = ?1", params![id],
@@ -163,16 +163,15 @@ hr {{ border: none; border-top: 1px solid #eee; margin: 2em 0; }}
         let dest = PathBuf::from(dest_dir);
         fs::create_dir_all(&dest).map_err(|e| e.to_string())?;
         let file_path = Self::export_path(&dest, &display_title, "pdf", "pdf");
-        let temp_html = dest.join(format!(".__kova_pdf_{}.html", Uuid::new_v4()));
+        let temp_html = dest.join(format!("kova_pdf_{}.html", Uuid::new_v4()));
         let html = Self::render_note_html(&display_title, &content, &created_at, &updated_at, watermark, watermark_opacity);
 
         fs::write(&temp_html, html).map_err(|e| e.to_string())?;
         let print_result = Self::print_html_to_pdf(&temp_html, &file_path);
         let _ = fs::remove_file(&temp_html);
-        print_result?;
-
-        if let Some(pass) = password.map(|p| p.trim().to_string()).filter(|p| !p.is_empty()) {
-            self.encrypt_pdf_file(&file_path, &pass)?;
+        if let Err(error) = print_result {
+            let _ = fs::remove_file(&file_path);
+            return Err(error);
         }
         Ok(file_path.to_string_lossy().to_string())
     }
@@ -289,8 +288,9 @@ input[type="checkbox"] {{ margin-right: 6px; }}
 
         let mut last_error = String::new();
         for headless_arg in attempts {
-            let output = std::process::Command::new(&browser)
-                .args([
+            let output = Self::run_pdf_browser_with_timeout(
+                &browser,
+                &[
                     headless_arg,
                     "--disable-gpu",
                     "--disable-extensions",
@@ -298,11 +298,13 @@ input[type="checkbox"] {{ margin-right: 6px; }}
                     "--no-default-browser-check",
                     "--run-all-compositor-stages-before-draw",
                     "--virtual-time-budget=1000",
+                    "--print-to-pdf-no-header",
+                    "--no-pdf-header-footer",
                     &pdf_arg,
                     &html_uri,
-                ])
-                .output()
-                .map_err(|e| format!("启动浏览器失败: {}", e))?;
+                ],
+                std::time::Duration::from_secs(60),
+            )?;
             if output.status.success() && pdf_path.exists() {
                 return Ok(());
             }
@@ -310,6 +312,32 @@ input[type="checkbox"] {{ margin-right: 6px; }}
         }
 
         Err(if last_error.is_empty() { "HTML 转 PDF 失败".to_string() } else { format!("HTML 转 PDF 失败: {}", last_error) })
+    }
+
+    fn run_pdf_browser_with_timeout(browser: &PathBuf, args: &[&str], timeout: std::time::Duration) -> Result<std::process::Output, String> {
+        use std::process::{Command, Stdio};
+        use std::thread;
+        use std::time::{Duration, Instant};
+
+        let mut child = Command::new(browser)
+            .args(args)
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .spawn()
+            .map_err(|e| format!("启动浏览器失败: {}", e))?;
+        let start = Instant::now();
+
+        loop {
+            if child.try_wait().map_err(|e| format!("读取浏览器状态失败: {}", e))?.is_some() {
+                return child.wait_with_output().map_err(|e| format!("读取浏览器输出失败: {}", e));
+            }
+            if start.elapsed() >= timeout {
+                let _ = child.kill();
+                let _ = child.wait();
+                return Err("HTML 转 PDF 超时，请检查浏览器或导出内容".to_string());
+            }
+            thread::sleep(Duration::from_millis(100));
+        }
     }
 
     fn find_pdf_browser() -> Option<PathBuf> {
@@ -342,25 +370,6 @@ input[type="checkbox"] {{ margin-right: 6px; }}
             .replace('\'', "&#39;")
     }
 
-    fn encrypt_pdf_file(&self, file_path: &PathBuf, password: &str) -> Result<(), String> {
-        use lopdf::encryption::{EncryptionState, EncryptionVersion, Permissions};
-        use lopdf::Document;
-        use std::convert::TryFrom;
-
-        let mut doc = Document::load(file_path).map_err(|e| e.to_string())?;
-        let owner_password = format!("kova-owner-{}", Uuid::new_v4());
-        let state = EncryptionState::try_from(EncryptionVersion::V2 {
-            document: &doc,
-            owner_password: &owner_password,
-            user_password: password,
-            key_length: 128,
-            permissions: Permissions::all(),
-        }).map_err(|e| e.to_string())?;
-        doc.encrypt(&state).map_err(|e| e.to_string())?;
-        doc.save(file_path).map_err(|e| e.to_string())?;
-        Ok(())
-    }
-
     fn export_path(dest: &PathBuf, title: &str, export_type: &str, extension: &str) -> PathBuf {
         let base = Self::export_filename(title, export_type, extension);
         let path = dest.join(&base);
@@ -380,7 +389,8 @@ input[type="checkbox"] {{ margin-right: 6px; }}
 
     fn export_filename(title: &str, export_type: &str, extension: &str) -> String {
         let date = Local::now().format("%y%m%d");
-        format!("{}_{}_{}.{}", Self::safe_filename(title), export_type, date, extension)
+        let random = Uuid::new_v4().simple().to_string()[..4].to_string();
+        format!("{}_{}_{}_{}.{}", Self::safe_filename(title), export_type, date, random, extension)
     }
 
     fn safe_filename(title: &str) -> String {

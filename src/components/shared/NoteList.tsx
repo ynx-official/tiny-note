@@ -37,16 +37,15 @@ export function NoteList({ notes, selectedId, selectedIds, onSelectedIdsChange, 
     watermarkEnabled: boolean;
     watermark: string;
     watermarkOpacity: number;
-    password: string;
   } | null>(null);
-  const [exportNotice, setExportNotice] = useState<{ status: "loading" | "success"; message: string } | null>(null);
+  const [exportNotice, setExportNotice] = useState<{ status: "loading" | "success" | "error"; message: string } | null>(null);
   const exportNoticeTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
-  const showExportNotice = (status: "loading" | "success", message: string) => {
+  const showExportNotice = (status: "loading" | "success" | "error", message: string) => {
     setExportNotice({ status, message });
     if (exportNoticeTimer.current) clearTimeout(exportNoticeTimer.current);
-    if (status === "success") {
-      exportNoticeTimer.current = setTimeout(() => setExportNotice(null), 1800);
+    if (status !== "loading") {
+      exportNoticeTimer.current = setTimeout(() => setExportNotice(null), status === "success" ? 1800 : 2600);
     }
   };
 
@@ -173,38 +172,49 @@ export function NoteList({ notes, selectedId, selectedIds, onSelectedIdsChange, 
     const destDir = await open({ directory: true });
     if (!destDir) return;
     const exportFn = format === "html" ? db.exportNoteHtml : format === "txt" ? db.exportNoteTxt : db.exportNote;
-    showExportNotice("loading", `正在导出 ${ids.length} 条笔记...`);
     const paths: string[] = [];
-    for (const id of ids) {
-      const path = await exportFn(id, destDir as string);
-      paths.push(path);
+    showExportNotice("loading", `正在导出 ${ids.length} 条笔记...`);
+    try {
+      for (const id of ids) {
+        const path = await exportFn(id, destDir as string);
+        paths.push(path);
+      }
+      showExportNotice("success", `已导出 ${paths.length} 条笔记`);
+      db.openPath(destDir as string).catch(console.error);
+    } catch (error) {
+      console.error(error);
+      showExportNotice("error", error instanceof Error ? error.message : "导出失败");
     }
-    showExportNotice("success", `已导出 ${paths.length} 条笔记`);
-    db.openPath(destDir as string).catch(console.error);
   };
 
   const openPdfExportDialog = (note: Note) => {
     const effectiveIds = new Set(selectedIds);
     if (selectedId) effectiveIds.add(selectedId);
     if (effectiveIds.size === 0) effectiveIds.add(note.id);
-    setPdfExportState({ noteIds: [...effectiveIds], watermarkEnabled: false, watermark: "", watermarkOpacity: 0.16, password: "" });
+    setPdfExportState({ noteIds: [...effectiveIds], watermarkEnabled: false, watermark: "", watermarkOpacity: 0.16 });
   };
 
   const handleExportPdf = async () => {
     if (!pdfExportState) return;
-    const watermark = pdfExportState.watermarkEnabled ? pdfExportState.watermark.trim() : "";
-    const watermarkOpacity = pdfExportState.watermarkEnabled ? pdfExportState.watermarkOpacity : 0.16;
+    const { noteIds, watermarkEnabled, watermark: watermarkText, watermarkOpacity: opacity } = pdfExportState;
+    const watermark = watermarkEnabled ? watermarkText.trim() : "";
+    const watermarkOpacity = watermarkEnabled ? opacity : 0.16;
     const destDir = await open({ directory: true });
     if (!destDir) return;
     const paths: string[] = [];
-    showExportNotice("loading", `正在导出 ${pdfExportState.noteIds.length} 条 PDF...`);
-    for (const id of pdfExportState.noteIds) {
-      const path = await db.exportNotePdf(id, destDir as string, watermark, watermarkOpacity, pdfExportState.password);
-      paths.push(path);
+    showExportNotice("loading", `正在导出 ${noteIds.length} 条 PDF...`);
+    try {
+      for (const id of noteIds) {
+        const path = await db.exportNotePdf(id, destDir as string, watermark, watermarkOpacity);
+        paths.push(path);
+      }
+      setPdfExportState(null);
+      showExportNotice("success", `已导出 ${paths.length} 条 PDF`);
+      db.openPath(destDir as string).catch(console.error);
+    } catch (error) {
+      console.error(error);
+      showExportNotice("error", error instanceof Error ? error.message : "PDF 导出失败");
     }
-    setPdfExportState(null);
-    showExportNotice("success", `已导出 ${paths.length} 条 PDF`);
-    db.openPath(destDir as string).catch(console.error);
   };
 
   const handleDeleteSelected = (menuNote: Note) => {
@@ -460,16 +470,6 @@ export function NoteList({ notes, selectedId, selectedIds, onSelectedIdsChange, 
                   </label>
                 </>
               )}
-              <label className="block">
-                <span className="block text-xs text-ink-soft mb-1.5">打开密码（选填）</span>
-                <input
-                  type="password"
-                  value={pdfExportState.password}
-                  onChange={(e) => setPdfExportState({ ...pdfExportState, password: e.target.value })}
-                  className="w-full h-8 rounded-lg bg-paper border border-paper-deep/40 px-3 text-xs text-ink-soft outline-none focus:border-accent"
-                  placeholder="不填写则不加密码"
-                />
-              </label>
             </div>
             <div className="px-4 py-2.5 border-t border-paper-deep/25 flex justify-end gap-2">
               <button type="button" onClick={() => setPdfExportState(null)} className="px-4 py-1.5 text-xs text-ink-soft bg-paper-warm/60 border border-paper-deep/30 rounded-lg hover:bg-paper-warm transition-colors">取消</button>
@@ -484,13 +484,17 @@ export function NoteList({ notes, selectedId, selectedIds, onSelectedIdsChange, 
           <div className="min-w-[220px] rounded-2xl border border-paper-deep bg-cloud/95 px-5 py-4 shadow-xl animate-view-fade flex items-center gap-3">
             {exportNotice.status === "loading" ? (
               <span className="w-5 h-5 rounded-full border-2 border-paper-deep border-t-accent animate-spin" />
+            ) : exportNotice.status === "error" ? (
+              <span className="w-5 h-5 rounded-full bg-red-100 text-red-500 flex items-center justify-center">
+                <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round"><path d="M18 6L6 18" /><path d="M6 6l12 12" /></svg>
+              </span>
             ) : (
               <span className="w-5 h-5 rounded-full bg-accent-mist text-accent flex items-center justify-center">
                 <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round"><path d="M20 6L9 17l-5-5" /></svg>
               </span>
             )}
             <div>
-              <p className="text-xs font-medium text-ink-soft">{exportNotice.status === "loading" ? "导出中" : "导出成功"}</p>
+              <p className="text-xs font-medium text-ink-soft">{exportNotice.status === "loading" ? "导出中" : exportNotice.status === "error" ? "导出失败" : "导出成功"}</p>
               <p className="text-[11px] text-ink-ghost mt-0.5">{exportNotice.message}</p>
             </div>
           </div>
