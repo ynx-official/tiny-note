@@ -16,7 +16,14 @@ impl Database {
         } else {
             (String::new(), content)
         };
-        self.create_note(&title, &body, vec![], None)
+        let mut note = self.create_note(&title, &body, vec![], None)?;
+        let import_base = Path::new(path).parent().unwrap_or_else(|| Path::new(""));
+        let normalized = self.normalize_imported_assets(&note.id, &note.content, import_base);
+        if normalized != note.content {
+            self.update_note(&note.id, None, Some(&normalized), None, None)?;
+            note.content = normalized;
+        }
+        Ok(note)
     }
 
     pub fn import_html_file(&self, path: &str) -> Result<Note, String> {
@@ -374,6 +381,190 @@ input[type="checkbox"] {{ margin-right: 6px; }}
             .and_then(|s| s.to_str())
             .unwrap_or("note");
         export_path.with_file_name(format!("{}.assets", stem))
+    }
+
+    fn normalize_imported_assets(&self, note_id: &str, content: &str, import_base: &Path) -> String {
+        let mut output = String::with_capacity(content.len());
+        let mut cursor = 0;
+
+        while let Some(offset) = content[cursor..].find("](") {
+            let marker = cursor + offset;
+            if !Self::is_markdown_image(content, marker) {
+                output.push_str(&content[cursor..marker + 2]);
+                cursor = marker + 2;
+                continue;
+            }
+
+            output.push_str(&content[cursor..marker + 2]);
+            let url_start = marker + 2;
+            let rest = &content[url_start..];
+            let Some(close) = rest.find(')') else {
+                output.push_str(rest);
+                return output;
+            };
+            let raw_url = &rest[..close];
+            let replacement = self.import_asset_to_note(note_id, raw_url, import_base).unwrap_or_else(|| raw_url.to_string());
+            output.push_str(&replacement);
+            cursor = url_start + close;
+        }
+
+        output.push_str(&content[cursor..]);
+        output
+    }
+
+    fn is_markdown_image(content: &str, marker: usize) -> bool {
+        let before = &content[..marker];
+        before
+            .rfind('[')
+            .and_then(|open| open.checked_sub(1).map(|bang| (open, bang)))
+            .map_or(false, |(_, bang)| content.as_bytes().get(bang) == Some(&b'!'))
+    }
+
+    fn import_asset_to_note(&self, note_id: &str, raw_url: &str, import_base: &Path) -> Option<String> {
+        let url = raw_url.trim();
+        if url.is_empty() || url.starts_with("kova-asset://") || url.starts_with("data:") {
+            return None;
+        }
+
+        let (bytes, file_name, mime) = if url.starts_with("http://") || url.starts_with("https://") {
+            Self::download_import_asset(url)?
+        } else {
+            Self::read_local_import_asset(url, import_base)?
+        };
+
+        self.save_import_asset(note_id, &bytes, mime.as_deref().unwrap_or("image/png"), file_name.as_deref()).ok()
+    }
+
+    fn download_import_asset(url: &str) -> Option<(Vec<u8>, Option<String>, Option<String>)> {
+        let response = reqwest::blocking::Client::builder()
+            .timeout(std::time::Duration::from_secs(20))
+            .build().ok()?
+            .get(url)
+            .send().ok()?;
+        if !response.status().is_success() {
+            return None;
+        }
+        let mime = response
+            .headers()
+            .get(reqwest::header::CONTENT_TYPE)
+            .and_then(|v| v.to_str().ok())
+            .map(|v| v.split(';').next().unwrap_or(v).trim().to_string());
+        if !mime.as_deref().unwrap_or("image/png").starts_with("image/") {
+            return None;
+        }
+        let file_name = url
+            .split('/')
+            .last()
+            .and_then(|s| s.split('?').next())
+            .filter(|s| !s.is_empty())
+            .map(|s| s.to_string());
+        let bytes = response.bytes().ok()?.to_vec();
+        Some((bytes, file_name, mime))
+    }
+
+    fn read_local_import_asset(url: &str, import_base: &Path) -> Option<(Vec<u8>, Option<String>, Option<String>)> {
+        let clean = url.strip_prefix("file:///").or_else(|| url.strip_prefix("file://")).unwrap_or(url);
+        let decoded = Self::decode_url_path(clean);
+        let decoded = if decoded.len() > 3 && decoded.starts_with('/') && decoded.as_bytes().get(2) == Some(&b':') {
+            decoded[1..].to_string()
+        } else {
+            decoded
+        };
+        let path = PathBuf::from(&decoded);
+        let path = if path.is_absolute() { path } else { import_base.join(path) };
+        if !path.exists() || !path.is_file() {
+            return None;
+        }
+        let mime = Self::image_mime_from_path(&path)?.to_string();
+        let bytes = fs::read(&path).ok()?;
+        let file_name = path.file_name().and_then(|s| s.to_str()).map(|s| s.to_string());
+        Some((bytes, file_name, Some(mime)))
+    }
+
+    fn save_import_asset(&self, note_id: &str, bytes: &[u8], mime: &str, file_name: Option<&str>) -> Result<String, String> {
+        if bytes.is_empty() || bytes.len() > 25 * 1024 * 1024 || !mime.starts_with("image/") {
+            return Err("图片附件无效".into());
+        }
+        let note_dir = Self::safe_asset_segment(note_id);
+        if note_dir != note_id {
+            return Err("笔记 ID 无效".into());
+        }
+        let ext = Self::attachment_extension_for_import(mime, file_name);
+        let base = file_name.map(Self::safe_file_stem).unwrap_or_else(|| "image".into());
+        let random = Uuid::new_v4().simple().to_string()[..8].to_string();
+        let stored_name = format!("{}_{}.{}", base, random, ext);
+        let rel_path = PathBuf::from(&note_dir).join(stored_name);
+        let dest = self.data_dir.join("attachments").join(&rel_path);
+        if let Some(parent) = dest.parent() {
+            fs::create_dir_all(parent).map_err(|e| e.to_string())?;
+        }
+        fs::write(&dest, bytes).map_err(|e| e.to_string())?;
+        Ok(format!("kova-asset://{}", rel_path.to_string_lossy().replace('\\', "/")))
+    }
+
+    fn attachment_extension_for_import(mime: &str, file_name: Option<&str>) -> String {
+        if let Some(ext) = file_name
+            .and_then(|n| Path::new(n).extension())
+            .and_then(|e| e.to_str())
+            .map(|e| e.to_ascii_lowercase())
+            .filter(|e| matches!(e.as_str(), "png" | "jpg" | "jpeg" | "webp" | "gif" | "bmp" | "svg"))
+        {
+            return ext;
+        }
+        match mime {
+            "image/jpeg" => "jpg".into(),
+            "image/webp" => "webp".into(),
+            "image/gif" => "gif".into(),
+            "image/bmp" => "bmp".into(),
+            "image/svg+xml" => "svg".into(),
+            _ => "png".into(),
+        }
+    }
+
+    fn image_mime_from_path(path: &Path) -> Option<&'static str> {
+        match path.extension().and_then(|e| e.to_str()).unwrap_or("").to_ascii_lowercase().as_str() {
+            "png" => Some("image/png"),
+            "jpg" | "jpeg" => Some("image/jpeg"),
+            "webp" => Some("image/webp"),
+            "gif" => Some("image/gif"),
+            "bmp" => Some("image/bmp"),
+            "svg" => Some("image/svg+xml"),
+            _ => None,
+        }
+    }
+
+    fn safe_file_stem(name: &str) -> String {
+        let stem = Path::new(name).file_stem().and_then(|s| s.to_str()).unwrap_or("image");
+        let safe = Self::safe_asset_segment(stem);
+        if safe.is_empty() { "image".into() } else { safe }
+    }
+
+    fn safe_asset_segment(value: &str) -> String {
+        value
+            .chars()
+            .take(80)
+            .map(|c| if c.is_ascii_alphanumeric() || c == '-' || c == '_' { c } else { '_' })
+            .collect::<String>()
+            .trim_matches('_')
+            .to_string()
+    }
+
+    fn decode_url_path(value: &str) -> String {
+        let mut bytes = Vec::with_capacity(value.len());
+        let source = value.as_bytes();
+        let mut i = 0;
+        while i < source.len() {
+            if source[i] == b'%' && i + 2 < source.len() {
+                if let Ok(hex) = u8::from_str_radix(&value[i + 1..i + 3], 16) {
+                    bytes.push(hex);
+                    i += 3;
+                    continue;
+                }
+            }
+            bytes.push(source[i]);
+            i += 1;
+        }
+        String::from_utf8(bytes).unwrap_or_else(|_| value.to_string())
     }
 
     fn rewrite_kova_assets_for_markdown(&self, content: &str, asset_dir: &Path) -> Result<String, String> {
