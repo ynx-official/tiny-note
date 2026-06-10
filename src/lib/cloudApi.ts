@@ -139,6 +139,14 @@ export type KovaSyncConflict = {
   resolvedAt?: string | null;
 };
 
+export type KovaConflictResolveStrategy = "mark_only" | "local_overwrite" | "remote_overwrite" | "manual_merge";
+
+export type KovaConflictResolveRequest = {
+  status: "resolved" | "ignored";
+  strategy?: KovaConflictResolveStrategy;
+  mergedPayload?: Record<string, unknown>;
+};
+
 export function normalizeApiBaseUrl(baseUrl: string) {
   return baseUrl.endsWith("/") ? baseUrl : `${baseUrl}/`;
 }
@@ -286,10 +294,14 @@ export async function listKovaSyncConflicts(status = "pending") {
   return cloudRequest<KovaSyncConflict[]>(`/kova/sync/conflicts${suffix ? `?${suffix}` : ""}`);
 }
 
-export async function resolveKovaSyncConflict(id: number | string, status: "resolved" | "ignored") {
+export async function resolveKovaSyncConflict(
+  id: number | string,
+  request: KovaConflictResolveRequest | KovaConflictResolveRequest["status"],
+) {
+  const body = typeof request === "string" ? { status: request, strategy: "mark_only" } : request;
   return cloudRequest<void>(`/kova/sync/conflicts/${id}`, {
     method: "PATCH",
-    body: JSON.stringify({ status }),
+    body: JSON.stringify(body),
   });
 }
 

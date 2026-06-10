@@ -1,9 +1,10 @@
 use chrono::Utc;
 use rusqlite::{params, Connection};
+use serde_json::Value;
 use uuid::Uuid;
 
 use super::Database;
-use crate::services::models::{SyncAck, SyncChange, SyncFolderSnapshot, SyncNoteSnapshot, SyncStatus};
+use crate::services::models::{SyncAck, SyncApplyPayload, SyncApplyResult, SyncChange, SyncFolderSnapshot, SyncNoteSnapshot, SyncStatus};
 
 impl Database {
     pub fn get_sync_status(&self) -> Result<SyncStatus, String> {
@@ -186,6 +187,92 @@ impl Database {
         Ok(())
     }
 
+    pub fn apply_sync_payload(&self, payload: SyncApplyPayload) -> Result<SyncApplyResult, String> {
+        let conn = self.conn.lock().map_err(|e| e.to_string())?;
+        let data: Value = serde_json::from_str(&payload.payload).map_err(|e| format!("同步内容格式错误: {}", e))?;
+        let applied = match payload.entity_type.as_str() {
+            "note" => Self::apply_note_payload(&conn, &data)?,
+            "folder" => Self::apply_folder_payload(&conn, &data)?,
+            _ => false,
+        };
+        Ok(SyncApplyResult { applied })
+    }
+
+    fn apply_note_payload(conn: &Connection, data: &Value) -> Result<bool, String> {
+        let now = Utc::now().to_rfc3339();
+        let id = value_string(data, &["clientId", "client_id", "id"])
+            .ok_or_else(|| "缺少笔记本地 ID".to_string())?;
+        let cloud_id = value_string(data, &["cloudId", "cloud_id"]);
+        let title = value_string(data, &["title"]).unwrap_or_default();
+        let content = value_string(data, &["content"]).unwrap_or_default();
+        let tags = normalize_tags(data.get("tags"));
+        let folder_id = value_string(data, &["folderClientId", "folder_client_id", "folder_id"]);
+        let sync_version = value_i64(data, &["syncVersion", "sync_version"]).unwrap_or(0);
+        let deleted_at = value_string(data, &["deletedAt", "deleted_at"]);
+        let updated_at = value_string(data, &["clientUpdatedAt", "client_updated_at", "updated_at"]).unwrap_or_else(|| now.clone());
+        let created_at = value_string(data, &["clientCreatedAt", "client_created_at", "created_at"]).unwrap_or_else(|| updated_at.clone());
+
+        let existing_id: Option<String> = if let Some(cloud_id) = cloud_id.as_deref() {
+            conn.query_row("SELECT id FROM notes WHERE cloud_id = ?1", params![cloud_id], |row| row.get(0)).ok()
+        } else {
+            None
+        }.or_else(|| conn.query_row("SELECT id FROM notes WHERE id = ?1", params![id], |row| row.get(0)).ok());
+
+        if let Some(existing_id) = existing_id {
+            conn.execute(
+                "UPDATE notes SET title = ?1, content = ?2, tags = ?3, folder_id = ?4, updated_at = ?5,
+                 sync_status = 'synced', sync_version = ?6, cloud_id = COALESCE(?7, cloud_id), deleted_at = ?8,
+                 last_synced_at = ?9 WHERE id = ?10",
+                params![title, content, tags, folder_id, updated_at, sync_version, cloud_id, deleted_at, now, existing_id],
+            ).map_err(|e| e.to_string())?;
+        } else {
+            conn.execute(
+                "INSERT INTO notes (id, title, content, tags, folder_id, created_at, updated_at, sync_status, sync_version, cloud_id, deleted_at, last_synced_at)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, 'synced', ?8, ?9, ?10, ?11)",
+                params![id, title, content, tags, folder_id, created_at, updated_at, sync_version, cloud_id, deleted_at, now],
+            ).map_err(|e| e.to_string())?;
+        }
+        conn.execute("DELETE FROM sync_changes WHERE entity_type = 'note' AND entity_id = ?1 AND status IN ('pending', 'conflict')", params![id])
+            .map_err(|e| e.to_string())?;
+        Ok(true)
+    }
+
+    fn apply_folder_payload(conn: &Connection, data: &Value) -> Result<bool, String> {
+        let now = Utc::now().to_rfc3339();
+        let id = value_string(data, &["clientId", "client_id", "id"])
+            .ok_or_else(|| "缺少目录本地 ID".to_string())?;
+        let cloud_id = value_string(data, &["cloudId", "cloud_id"]);
+        let name = value_string(data, &["name"]).unwrap_or_else(|| "未命名目录".to_string());
+        let parent_id = value_string(data, &["parentClientId", "parent_client_id", "parent_id"]);
+        let sync_version = value_i64(data, &["syncVersion", "sync_version"]).unwrap_or(0);
+        let deleted_at = value_string(data, &["deletedAt", "deleted_at"]);
+        let updated_at = value_string(data, &["clientUpdatedAt", "client_updated_at", "updated_at"]).unwrap_or_else(|| now.clone());
+        let created_at = value_string(data, &["clientCreatedAt", "client_created_at", "created_at"]).unwrap_or_else(|| updated_at.clone());
+
+        let existing_id: Option<String> = if let Some(cloud_id) = cloud_id.as_deref() {
+            conn.query_row("SELECT id FROM folders WHERE cloud_id = ?1", params![cloud_id], |row| row.get(0)).ok()
+        } else {
+            None
+        }.or_else(|| conn.query_row("SELECT id FROM folders WHERE id = ?1", params![id], |row| row.get(0)).ok());
+
+        if let Some(existing_id) = existing_id {
+            conn.execute(
+                "UPDATE folders SET name = ?1, parent_id = ?2, updated_at = ?3, sync_status = 'synced',
+                 sync_version = ?4, cloud_id = COALESCE(?5, cloud_id), deleted_at = ?6, last_synced_at = ?7 WHERE id = ?8",
+                params![name, parent_id, updated_at, sync_version, cloud_id, deleted_at, now, existing_id],
+            ).map_err(|e| e.to_string())?;
+        } else {
+            conn.execute(
+                "INSERT INTO folders (id, name, parent_id, created_at, updated_at, sync_status, sync_version, cloud_id, deleted_at, last_synced_at)
+                 VALUES (?1, ?2, ?3, ?4, ?5, 'synced', ?6, ?7, ?8, ?9)",
+                params![id, name, parent_id, created_at, updated_at, sync_version, cloud_id, deleted_at, now],
+            ).map_err(|e| e.to_string())?;
+        }
+        conn.execute("DELETE FROM sync_changes WHERE entity_type = 'folder' AND entity_id = ?1 AND status IN ('pending', 'conflict')", params![id])
+            .map_err(|e| e.to_string())?;
+        Ok(true)
+    }
+
     pub(crate) fn ensure_device_id(conn: &Connection) -> Result<String, String> {
         if let Some(existing) = Self::get_sync_state_value(conn, "device_id")? {
             return Ok(existing);
@@ -225,5 +312,30 @@ impl Database {
         } else {
             Ok(None)
         }
+    }
+}
+
+fn value_string(data: &Value, keys: &[&str]) -> Option<String> {
+    keys.iter()
+        .find_map(|key| data.get(*key))
+        .and_then(|value| match value {
+            Value::String(text) => Some(text.clone()),
+            Value::Null => None,
+            other => Some(other.to_string()),
+        })
+        .filter(|value| !value.is_empty())
+}
+
+fn value_i64(data: &Value, keys: &[&str]) -> Option<i64> {
+    keys.iter()
+        .find_map(|key| data.get(*key))
+        .and_then(|value| value.as_i64().or_else(|| value.as_str().and_then(|text| text.parse::<i64>().ok())))
+}
+
+fn normalize_tags(value: Option<&Value>) -> String {
+    match value {
+        Some(Value::String(text)) => text.clone(),
+        Some(other) => other.to_string(),
+        None => "[]".to_string(),
     }
 }

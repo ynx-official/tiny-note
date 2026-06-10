@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import { db } from "../../lib/db";
 import {
   listKovaSyncConflicts,
   resolveKovaSyncConflict,
@@ -93,6 +94,8 @@ export function SyncConflictDialog({ onClose, onResolved }: SyncConflictDialogPr
   const [conflicts, setConflicts] = useState<KovaSyncConflict[]>([]);
   const [loading, setLoading] = useState(true);
   const [busyId, setBusyId] = useState<number | string | null>(null);
+  const [editingId, setEditingId] = useState<number | string | null>(null);
+  const [mergedText, setMergedText] = useState("");
   const [error, setError] = useState<string | null>(null);
 
   const refresh = async () => {
@@ -112,13 +115,67 @@ export function SyncConflictDialog({ onClose, onResolved }: SyncConflictDialogPr
     refresh();
   }, []);
 
-  const handleResolve = async (id: number | string, status: "resolved" | "ignored") => {
+  const finishConflict = (id: number | string) => {
+    setConflicts((items) => items.filter((item) => item.id !== id));
+    setEditingId(null);
+    setMergedText("");
+    onResolved?.();
+  };
+
+  const handleLocalOverwrite = async (conflict: KovaSyncConflict) => {
+    setBusyId(conflict.id);
+    setError(null);
+    try {
+      await resolveKovaSyncConflict(conflict.id, { status: "resolved", strategy: "local_overwrite" });
+      finishConflict(conflict.id);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "冲突处理失败");
+    } finally {
+      setBusyId(null);
+    }
+  };
+
+  const handleRemoteOverwrite = async (conflict: KovaSyncConflict) => {
+    setBusyId(conflict.id);
+    setError(null);
+    try {
+      await db.applySyncPayload({ entity_type: conflict.entityType, payload: conflict.serverPayload || "{}" });
+      await resolveKovaSyncConflict(conflict.id, { status: "ignored", strategy: "remote_overwrite" });
+      finishConflict(conflict.id);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "云端覆盖本地失败");
+    } finally {
+      setBusyId(null);
+    }
+  };
+
+  const startManualMerge = (conflict: KovaSyncConflict) => {
+    const local = parsePayload(conflict.localPayload);
+    setEditingId(conflict.id);
+    setMergedText(JSON.stringify(local, null, 2));
+  };
+
+  const handleManualMerge = async (conflict: KovaSyncConflict) => {
+    setBusyId(conflict.id);
+    setError(null);
+    try {
+      const mergedPayload = JSON.parse(mergedText) as Record<string, unknown>;
+      await db.applySyncPayload({ entity_type: conflict.entityType, payload: JSON.stringify(mergedPayload) });
+      await resolveKovaSyncConflict(conflict.id, { status: "resolved", strategy: "manual_merge", mergedPayload });
+      finishConflict(conflict.id);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "手动合并失败，请检查 JSON 格式");
+    } finally {
+      setBusyId(null);
+    }
+  };
+
+  const handleMarkOnly = async (id: number | string, status: "resolved" | "ignored") => {
     setBusyId(id);
     setError(null);
     try {
-      await resolveKovaSyncConflict(id, status);
-      setConflicts((items) => items.filter((item) => item.id !== id));
-      onResolved?.();
+      await resolveKovaSyncConflict(id, { status, strategy: "mark_only" });
+      finishConflict(id);
     } catch (err) {
       setError(err instanceof Error ? err.message : "冲突处理失败");
     } finally {
@@ -187,24 +244,69 @@ export function SyncConflictDialog({ onClose, onResolved }: SyncConflictDialogPr
                       </div>
                     </div>
 
-                    <div className="mt-4 flex justify-end gap-2">
-                      <button
-                        type="button"
-                        disabled={busy}
-                        onClick={() => handleResolve(conflict.id, "ignored")}
-                        className="rounded-lg border border-paper-deep/70 px-3 py-1.5 text-xs text-ink-faint hover:bg-paper-deep/50 disabled:opacity-50"
-                      >
-                        忽略本地冲突
-                      </button>
-                      <button
-                        type="button"
-                        disabled={busy}
-                        onClick={() => handleResolve(conflict.id, "resolved")}
-                        className="rounded-lg bg-accent px-3 py-1.5 text-xs text-white hover:opacity-90 disabled:opacity-50"
-                      >
-                        标记已处理
-                      </button>
-                    </div>
+                    {editingId === conflict.id ? (
+                      <div className="mt-4 space-y-2">
+                        <div className="text-xs font-medium text-ink-faint">手动合并 JSON</div>
+                        <textarea
+                          value={mergedText}
+                          onChange={(event) => setMergedText(event.target.value)}
+                          className="h-44 w-full resize-none rounded-lg border border-paper-deep/70 bg-paper/70 p-3 font-mono text-xs text-ink-soft outline-none focus:border-accent"
+                        />
+                        <div className="flex justify-end gap-2">
+                          <button
+                            type="button"
+                            disabled={busy}
+                            onClick={() => setEditingId(null)}
+                            className="rounded-lg border border-paper-deep/70 px-3 py-1.5 text-xs text-ink-faint hover:bg-paper-deep/50 disabled:opacity-50"
+                          >
+                            取消
+                          </button>
+                          <button
+                            type="button"
+                            disabled={busy}
+                            onClick={() => handleManualMerge(conflict)}
+                            className="rounded-lg bg-accent px-3 py-1.5 text-xs text-white hover:opacity-90 disabled:opacity-50"
+                          >
+                            写回合并结果
+                          </button>
+                        </div>
+                      </div>
+                    ) : (
+                      <div className="mt-4 flex flex-wrap justify-end gap-2">
+                        <button
+                          type="button"
+                          disabled={busy}
+                          onClick={() => handleMarkOnly(conflict.id, "ignored")}
+                          className="rounded-lg border border-paper-deep/70 px-3 py-1.5 text-xs text-ink-faint hover:bg-paper-deep/50 disabled:opacity-50"
+                        >
+                          仅忽略
+                        </button>
+                        <button
+                          type="button"
+                          disabled={busy}
+                          onClick={() => handleRemoteOverwrite(conflict)}
+                          className="rounded-lg border border-paper-deep/70 px-3 py-1.5 text-xs text-ink-faint hover:bg-paper-deep/50 disabled:opacity-50"
+                        >
+                          使用云端覆盖本地
+                        </button>
+                        <button
+                          type="button"
+                          disabled={busy}
+                          onClick={() => handleLocalOverwrite(conflict)}
+                          className="rounded-lg border border-paper-deep/70 px-3 py-1.5 text-xs text-ink-faint hover:bg-paper-deep/50 disabled:opacity-50"
+                        >
+                          用本地覆盖云端
+                        </button>
+                        <button
+                          type="button"
+                          disabled={busy}
+                          onClick={() => startManualMerge(conflict)}
+                          className="rounded-lg bg-accent px-3 py-1.5 text-xs text-white hover:opacity-90 disabled:opacity-50"
+                        >
+                          手动合并
+                        </button>
+                      </div>
+                    )}
                   </div>
                 );
               })}

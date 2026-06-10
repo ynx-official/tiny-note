@@ -62,6 +62,17 @@ pub struct SyncNoteSnapshot {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SyncApplyPayload {
+    pub entity_type: String,
+    pub payload: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SyncApplyResult {
+    pub applied: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Note {
     pub id: String,
     pub title: String,

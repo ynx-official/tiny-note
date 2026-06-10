@@ -1,7 +1,7 @@
 mod services;
 
 use services::db::Database;
-use services::models::{Note, Folder, Conversation, ChatMessage, SyncAck, SyncChange, SyncFolderSnapshot, SyncNoteSnapshot, SyncStatus};
+use services::models::{Note, Folder, Conversation, ChatMessage, SyncAck, SyncApplyPayload, SyncApplyResult, SyncChange, SyncFolderSnapshot, SyncNoteSnapshot, SyncStatus};
 use services::ai::AiService;
 use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::OnceLock;
@@ -205,6 +205,11 @@ fn acknowledge_sync_push(acknowledgements: Vec<SyncAck>, cursor: i64) -> Result<
 #[tauri::command]
 fn update_pull_cursor(cursor: i64) -> Result<(), String> {
     db().update_pull_cursor(cursor)
+}
+
+#[tauri::command]
+fn apply_sync_payload(payload: SyncApplyPayload) -> Result<SyncApplyResult, String> {
+    db().apply_sync_payload(payload)
 }
 
 #[tauri::command]
@@ -721,7 +726,7 @@ pub fn run() {
             create_note, get_notes, update_note, delete_note,
             save_attachment, read_attachment,
             create_folder, get_folders, update_folder, delete_folder, move_note_to_folder,
-            get_sync_status, list_pending_sync_changes, list_sync_folder_snapshots, list_sync_note_snapshots, acknowledge_sync_push, update_pull_cursor,
+            get_sync_status, list_pending_sync_changes, list_sync_folder_snapshots, list_sync_note_snapshots, acknowledge_sync_push, update_pull_cursor, apply_sync_payload,
             get_data_dir, set_data_dir, import_md_file, import_file, export_note, export_note_html, export_note_txt, export_note_pdf,
             backup_data, restore_data, abort_ai, toggle_conversation_pinned, export_conversation, open_path, write_file, read_file, copy_file, download_font, get_window_size, save_quick_window_size,
             toggle_window, get_cursor_position, create_quick_window, update_quick_shortcut,

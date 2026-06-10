@@ -56,6 +56,15 @@ export interface SyncNoteSnapshot {
   deleted_at: string | null;
 }
 
+export interface SyncApplyPayload {
+  entity_type: string;
+  payload: string;
+}
+
+export interface SyncApplyResult {
+  applied: boolean;
+}
+
 export interface Note {
   id: string;
   title: string;
@@ -120,6 +129,9 @@ export const db = {
 
   updatePullCursor: (cursor: number) =>
     invoke<void>("update_pull_cursor", { cursor: Number(cursor) }),
+
+  applySyncPayload: (payload: SyncApplyPayload) =>
+    invoke<SyncApplyResult>("apply_sync_payload", { payload }),
 
   getDataDir: () =>
     invoke<string>("get_data_dir"),
