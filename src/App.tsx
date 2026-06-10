@@ -52,6 +52,7 @@ export default function App() {
   const [closeToTray, setCloseToTray] = useState(() => localStorage.getItem("fp-close-to-tray") !== "false");
   const [cloudSession, setCloudSession] = useState(() => getCloudSession());
   const [isSyncing, setIsSyncing] = useState(false);
+  const [isEditorDirty, setIsEditorDirty] = useState(false);
   const [showConflicts, setShowConflicts] = useState(false);
   const [cloudConflictCount, setCloudConflictCount] = useState(0);
 
@@ -333,7 +334,12 @@ export default function App() {
       const result = await syncKovaCloud();
       const refreshed = await fetch(undefined, selectedFolderId ?? undefined);
       if (selectedNote) {
-        setSelectedNote(refreshed.find((note) => note.id === selectedNote.id) ?? null);
+        const nextSelected = refreshed.find((note) => note.id === selectedNote.id) ?? null;
+        if (!isEditorDirty) {
+          setSelectedNote(nextSelected);
+        } else if (!nextSelected) {
+          showToast("当前笔记已在云端删除，本地编辑内容暂不覆盖");
+        }
       }
       db.list().then((all: Note[]) => setAllNotes(all));
       db.listFolders().then(setFolders);
@@ -425,7 +431,7 @@ export default function App() {
         {/* Detail */}
         <div className="flex-1 flex flex-col min-w-0">
           {selectedNote ? (
-            <NoteDetail note={selectedNote} onToggleSidebar={() => setShowSidebar((v) => !v)} onDelete={handleDelete} onUpdateTitle={handleUpdateTitle} onUpdateContent={handleUpdateContent} onSaved={() => showToast("笔记已保存")} />
+            <NoteDetail note={selectedNote} onToggleSidebar={() => setShowSidebar((v) => !v)} onDelete={handleDelete} onUpdateTitle={handleUpdateTitle} onUpdateContent={handleUpdateContent} onDirtyChange={setIsEditorDirty} onSaved={() => showToast("笔记已保存")} />
           ) : (
             <>
               <div className="flex items-center justify-between px-4 h-10 border-b border-paper-deep/20 shrink-0 bg-paper/20">

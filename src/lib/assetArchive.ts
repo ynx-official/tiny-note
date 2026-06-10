@@ -87,13 +87,24 @@ export async function archiveMarkdownImages(content: string, archiveCache: Archi
     let archived = archiveCache.get(url);
     if (!archived) {
       archived = (async () => {
-        const { blob, fileName } = await loadImageBlob(url);
-        const uploaded = await uploadKovaAsset(blob, fileName);
-        return uploaded.url;
+        try {
+          const { blob, fileName } = await loadImageBlob(url);
+          const uploaded = await uploadKovaAsset(blob, fileName);
+          return uploaded.url;
+        } catch {
+          return url;
+        }
       })();
       archiveCache.set(url, archived);
     }
-    replacements.set(url, await archived);
+    try {
+      const nextUrl = await archived;
+      if (nextUrl !== url) {
+        replacements.set(url, nextUrl);
+      }
+    } catch {
+      // 单张图片失败时保留原地址，避免阻断整篇同步。
+    }
   }
 
   const nextContent = replaceAllImageUrls(content, replacements);

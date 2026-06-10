@@ -184,7 +184,10 @@ async function archiveNoteImagesForSyncPush(notes: KovaNoteSyncItem[]) {
   const archived: KovaNoteSyncItem[] = [];
   const rewrites = new Map<string, KovaNoteSyncItem>();
   for (const note of notes) {
-    const result = await archiveMarkdownImages(note.content ?? "", archiveCache);
+    const result = await archiveMarkdownImages(note.content ?? "", archiveCache).catch(() => ({
+      content: note.content ?? "",
+      changed: false,
+    }));
     const nextNote = {
       ...note,
       content: result.content,
@@ -206,6 +209,62 @@ function toLocalAck(ack: { entityType: string; clientId: string; cloudId: string
     sync_version: toNumber(ack.syncVersion),
     status: ack.status,
   };
+}
+
+type PulledCloudChange = {
+  entityType?: string;
+  entity_type?: string;
+  type?: string;
+  payload?: unknown;
+  serverPayload?: unknown;
+  server_payload?: unknown;
+  data?: unknown;
+  settingKey?: string;
+  setting_key?: string;
+  settingValue?: string;
+  setting_value?: string;
+};
+
+function toPayloadText(value: unknown) {
+  if (typeof value === "string") return value;
+  if (value && typeof value === "object") return JSON.stringify(value);
+  return "{}";
+}
+
+function normalizePulledChange(change: unknown) {
+  if (!change || typeof change !== "object") return null;
+  const item = change as PulledCloudChange;
+  const entityType = item.entityType ?? item.entity_type ?? item.type;
+  const payload = item.serverPayload ?? item.server_payload ?? item.payload ?? item.data ?? item;
+  if (!entityType) return null;
+  return { entityType, payload: toPayloadText(payload) };
+}
+
+function applyPulledSetting(change: PulledCloudChange) {
+  const settingKey = change.settingKey ?? change.setting_key;
+  const settingValue = change.settingValue ?? change.setting_value;
+  if (!settingKey || typeof settingValue !== "string") return false;
+  localStorage.setItem(settingKey, settingValue);
+  return true;
+}
+
+async function applyPulledChanges(changes: unknown[]) {
+  let applied = 0;
+  for (const change of changes) {
+    const normalized = normalizePulledChange(change);
+    if (!normalized) continue;
+    if (normalized.entityType === "setting") {
+      try {
+        if (applyPulledSetting(JSON.parse(normalized.payload) as PulledCloudChange)) applied += 1;
+      } catch {
+        // 忽略无法识别的设置变更。
+      }
+      continue;
+    }
+    const result = await db.applySyncPayload({ entity_type: normalized.entityType, payload: normalized.payload });
+    if (result.applied) applied += 1;
+  }
+  return applied;
 }
 
 function getDeviceName() {
@@ -291,17 +350,24 @@ export async function syncKovaCloud(): Promise<CloudSyncResult> {
   }
 
   const latestStatus = await db.getSyncStatus();
-  const pulled = await pullKovaSyncChanges({
-    deviceId: latestStatus.device_id,
-    cursor: latestStatus.last_pull_cursor,
-    limit: 500,
-  });
-  const pullCursor = toNumber(pulled.cursor, latestStatus.last_pull_cursor);
+  let pullCursor = latestStatus.last_pull_cursor;
+  let appliedPulled = 0;
+  let hasMore = true;
+  while (hasMore) {
+    const pulled = await pullKovaSyncChanges({
+      deviceId: latestStatus.device_id,
+      cursor: pullCursor,
+      limit: 500,
+    });
+    appliedPulled += await applyPulledChanges(pulled.changes);
+    pullCursor = toNumber(pulled.cursor, pullCursor);
+    hasMore = Boolean(pulled.hasMore && pulled.changes.length > 0);
+  }
   await db.updatePullCursor(pullCursor);
 
   return {
     pushed: acknowledgements.filter((ack) => ack.status !== "conflict").length,
-    pulled: pulled.changes.length,
+    pulled: appliedPulled,
     conflicts: acknowledgements.filter((ack) => ack.status === "conflict").length,
     cursor: Math.max(pushCursor, pullCursor),
   };

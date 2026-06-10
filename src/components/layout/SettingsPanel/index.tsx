@@ -3,6 +3,7 @@ import { open } from "@tauri-apps/plugin-dialog";
 import { invoke } from "@tauri-apps/api/core";
 import { relaunch } from "@tauri-apps/plugin-process";
 import { db } from "../../../lib/db";
+import { getCloudSession, listKovaBackupSnapshots, registerKovaBackupSnapshot, uploadKovaAsset } from "../../../lib/cloudApi";
 import { ConfirmDialog } from "../../dialog/ConfirmDialog";
 import { ColorRow, ToggleRow, SliderRow, FontRow, TabSizeRow, ViewModeRow } from "./ui-rows";
 import {
@@ -52,6 +53,8 @@ export function SettingsPanel({ onClose, mode }: SettingsPanelProps) {
   const [msg, setMsg] = useState<{ text: string; type: "ok" | "err" } | null>(null);
   const [confirmRestore, setConfirmRestore] = useState<string | null>(null);
   const [restorePath, setRestorePath] = useState<string | null>(null);
+  const [cloudRestoreUrl, setCloudRestoreUrl] = useState<string | null>(null);
+  const [busyAction, setBusyAction] = useState<"cloudBackup" | "cloudRestore" | "cleanup" | null>(null);
 
   useEffect(() => {
     db.getDataDir().then(setDataDir);
@@ -240,10 +243,95 @@ export function SettingsPanel({ onClose, mode }: SettingsPanelProps) {
       }
       const dataDir = await invoke<string>("get_data_dir");
       await invoke("write_file", { path: `${dataDir}/kova-settings.json`, content: JSON.stringify(settings, null, 2) });
-      const zipPath = await invoke<string>("backup_data", { destDir });
+      const zipPath = await db.backupData(destDir as string);
       showMsg(`已备份到 ${zipPath}`, "ok");
     } catch (e) {
       showMsg(String(e), "err");
+    }
+  };
+
+  const handleCleanupOrphanAttachments = async () => {
+    setBusyAction("cleanup");
+    try {
+      const result = await db.cleanupOrphanAttachments();
+      const mb = (result.bytes / 1024 / 1024).toFixed(2);
+      showMsg(`已清理 ${result.removed} 个孤儿附件，释放 ${mb} MB`, "ok");
+    } catch (e) {
+      showMsg(String(e), "err");
+    } finally {
+      setBusyAction(null);
+    }
+  };
+
+  const collectSettingsSnapshot = () => {
+    const settings: Record<string, string> = {};
+    for (let i = 0; i < localStorage.length; i++) {
+      const key = localStorage.key(i);
+      if (key && key.startsWith("fp-")) settings[key] = localStorage.getItem(key) || "";
+    }
+    return settings;
+  };
+
+  const sha256Hex = async (bytes: Uint8Array) => {
+    const buffer = bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength) as ArrayBuffer;
+    const digest = await crypto.subtle.digest("SHA-256", buffer);
+    return [...new Uint8Array(digest)].map((byte) => byte.toString(16).padStart(2, "0")).join("");
+  };
+
+  const handleCloudBackup = async () => {
+    const session = getCloudSession();
+    if (!session) {
+      showMsg("请先登录云端账号", "err");
+      return;
+    }
+    setBusyAction("cloudBackup");
+    try {
+      const dataDir = await db.getDataDir();
+      await invoke("write_file", { path: `${dataDir}/kova-settings.json`, content: JSON.stringify(collectSettingsSnapshot(), null, 2) });
+      const zipPath = await db.backupData(dataDir);
+      const bytes = new Uint8Array(await db.readBinaryFile(zipPath));
+      const fileName = zipPath.split(/[/\\]/).pop() || `kova-cloud-backup-${Date.now()}.zip`;
+      const uploaded = await uploadKovaAsset(new Blob([bytes], { type: "application/zip" }), fileName);
+      const [notes, folders] = await Promise.all([db.list(), db.listFolders()]);
+      await registerKovaBackupSnapshot({
+        snapshotId: crypto.randomUUID(),
+        deviceId: undefined,
+        snapshotName: fileName,
+        storageKey: uploaded.url,
+        fileSize: bytes.byteLength,
+        sha256: await sha256Hex(bytes),
+        noteCount: notes.length,
+        folderCount: folders.length,
+        attachmentCount: null,
+        status: "available",
+      });
+      showMsg("云备份已完成", "ok");
+    } catch (e) {
+      showMsg(String(e), "err");
+    } finally {
+      setBusyAction(null);
+    }
+  };
+
+  const handleCloudRestore = async () => {
+    if (!getCloudSession()) {
+      showMsg("请先登录云端账号", "err");
+      return;
+    }
+    setBusyAction("cloudRestore");
+    try {
+      const snapshots = await listKovaBackupSnapshots(1, 20);
+      const latest = snapshots
+        .filter((item) => item.storageKey)
+        .sort((a, b) => new Date(b.createTime ?? 0).getTime() - new Date(a.createTime ?? 0).getTime())[0];
+      if (!latest?.storageKey) throw new Error("没有可恢复的云备份");
+      setCloudRestoreUrl(latest.storageKey);
+      setRestorePath(null);
+      setConfirmRestore(latest.snapshotName || "云备份");
+    } catch (e) {
+      showMsg(String(e), "err");
+    } finally {
+      setBusyAction(null);
     }
   };
 
@@ -257,10 +345,14 @@ export function SettingsPanel({ onClose, mode }: SettingsPanelProps) {
   };
 
   const doRestore = async () => {
-    if (!restorePath) return;
     try {
-      if (restorePath.endsWith(".zip")) {
-        await invoke("restore_data", { srcPath: restorePath });
+      let targetPath = restorePath;
+      if (!targetPath && cloudRestoreUrl) {
+        targetPath = await db.downloadFileToDataDir(cloudRestoreUrl, `kova-cloud-restore-${Date.now()}.zip`);
+      }
+      if (!targetPath) return;
+      if (targetPath.endsWith(".zip")) {
+        await db.restoreData(targetPath);
         try {
           const dataDir = await invoke<string>("get_data_dir");
           const settingsPath = `${dataDir}/kova-settings.json`;
@@ -277,14 +369,14 @@ export function SettingsPanel({ onClose, mode }: SettingsPanelProps) {
           // Settings file not in zip, skip
         }
       } else {
-        const dir = restorePath.replace(/[^/\\]+$/, "");
-        const dbPath = restorePath.endsWith(".db") ? restorePath : `${dir}kova.db`;
+        const dir = targetPath.replace(/[^/\\]+$/, "");
+        const dbPath = targetPath.endsWith(".db") ? targetPath : `${dir}kova.db`;
         try {
-          await invoke("restore_data", { srcPath: dbPath });
+          await db.restoreData(dbPath);
         } catch {
           // DB not found, skip
         }
-        const settingsPath = restorePath.endsWith(".json") ? restorePath : `${dir}kova-settings.json`;
+        const settingsPath = targetPath.endsWith(".json") ? targetPath : `${dir}kova-settings.json`;
         try {
           const content = await invoke<string>("read_file", { path: settingsPath });
           const settings = JSON.parse(content);
@@ -301,6 +393,7 @@ export function SettingsPanel({ onClose, mode }: SettingsPanelProps) {
       }
       setConfirmRestore(null);
       setRestorePath(null);
+      setCloudRestoreUrl(null);
       await relaunch();
     } catch (e) {
       showMsg(String(e), "err");
@@ -423,14 +516,29 @@ export function SettingsPanel({ onClose, mode }: SettingsPanelProps) {
             <button type="button" onClick={handleBackup}
               className="flex-1 h-9 rounded-lg border border-paper-deep/45 text-[12px] text-ink-faint hover:text-accent hover:bg-accent-mist/50 transition-colors flex items-center justify-center gap-1.5">
               <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" /><polyline points="17 8 12 3 7 8" /><line x1="12" y1="3" x2="12" y2="15" /></svg>
-              备份数据
+              本地备份
             </button>
             <button type="button" onClick={handleRestore}
               className="flex-1 h-9 rounded-lg border border-paper-deep/45 text-[12px] text-ink-faint hover:text-accent hover:bg-accent-mist/50 transition-colors flex items-center justify-center gap-1.5">
               <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" /><polyline points="7 10 12 15 17 10" /><line x1="12" y1="15" x2="12" y2="3" /></svg>
-              恢复数据
+              本地恢复
             </button>
           </div>
+          <div className="grid grid-cols-2 gap-2">
+            <button type="button" onClick={handleCloudBackup} disabled={busyAction !== null}
+              className="h-9 rounded-lg border border-paper-deep/45 text-[12px] text-ink-faint hover:text-accent hover:bg-accent-mist/50 disabled:opacity-50 transition-colors">
+              {busyAction === "cloudBackup" ? "备份中..." : "云备份"}
+            </button>
+            <button type="button" onClick={handleCloudRestore} disabled={busyAction !== null}
+              className="h-9 rounded-lg border border-paper-deep/45 text-[12px] text-ink-faint hover:text-accent hover:bg-accent-mist/50 disabled:opacity-50 transition-colors">
+              {busyAction === "cloudRestore" ? "读取中..." : "设备恢复"}
+            </button>
+          </div>
+          <button type="button" onClick={handleCleanupOrphanAttachments} disabled={busyAction !== null}
+            className="w-full h-9 rounded-lg border border-paper-deep/45 text-[12px] text-ink-faint hover:text-accent hover:bg-accent-mist/50 disabled:opacity-50 transition-colors">
+            {busyAction === "cleanup" ? "清理中..." : "清理本地孤儿附件"}
+          </button>
+          <p className="text-[10px] text-ink-ghost/75">设备恢复会使用最新可用云备份，并覆盖当前本地数据。</p>
         </section>
 
         {msg && (

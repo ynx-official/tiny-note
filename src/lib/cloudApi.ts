@@ -152,6 +152,39 @@ export type KovaUploadedFile = {
   url: string;
 };
 
+export type KovaBackupSnapshot = {
+  snapshotId: string;
+  deviceId?: string | null;
+  snapshotName: string;
+  storageKey?: string | null;
+  fileSize?: number | null;
+  sha256?: string | null;
+  noteCount?: number | null;
+  folderCount?: number | null;
+  attachmentCount?: number | null;
+  status?: string | null;
+  createTime?: string | null;
+};
+
+type PageResult<T> = {
+  records?: T[];
+  list?: T[];
+  total?: number;
+};
+
+export type KovaBackupSnapshotRequest = {
+  snapshotId: string;
+  deviceId?: string | null;
+  snapshotName: string;
+  storageKey?: string | null;
+  fileSize?: number | null;
+  sha256?: string | null;
+  noteCount?: number | null;
+  folderCount?: number | null;
+  attachmentCount?: number | null;
+  status?: string | null;
+};
+
 export function normalizeApiBaseUrl(baseUrl: string) {
   return baseUrl.endsWith("/") ? baseUrl : `${baseUrl}/`;
 }
@@ -168,7 +201,7 @@ function readSavedUser(): CloudUser | null {
   }
 }
 
-function resolveCloudAssetUrl(apiBaseUrl: string, url?: string | null) {
+export function normalizeCloudAssetUrl(apiBaseUrl: string, url?: string | null) {
   if (!url) return null;
   if (/^https?:\/\//i.test(url) || url.startsWith("data:")) return url;
   return new URL(url.startsWith("/") ? url.slice(1) : url, normalizeApiBaseUrl(apiBaseUrl)).toString();
@@ -188,7 +221,7 @@ function notifyCloudSessionChanged() {
 export function saveCloudUser(user: CloudUser | null) {
   if (user) {
     const session = getCloudSession();
-    const avatarUrl = session ? resolveCloudAssetUrl(session.apiBaseUrl, user.avatarUrl) : user.avatarUrl ?? null;
+    const avatarUrl = session ? normalizeCloudAssetUrl(session.apiBaseUrl, user.avatarUrl) : user.avatarUrl ?? null;
     localStorage.setItem(API_USER_KEY, JSON.stringify({ ...user, avatarUrl }));
   } else {
     localStorage.removeItem(API_USER_KEY);
@@ -200,7 +233,7 @@ export function saveCloudSession(session: CloudSession) {
   localStorage.setItem(API_BASE_URL_KEY, normalizeApiBaseUrl(session.apiBaseUrl));
   localStorage.setItem(API_TOKEN_KEY, session.token);
   if (session.user) {
-    const avatarUrl = resolveCloudAssetUrl(session.apiBaseUrl, session.user.avatarUrl);
+    const avatarUrl = normalizeCloudAssetUrl(session.apiBaseUrl, session.user.avatarUrl);
     localStorage.setItem(API_USER_KEY, JSON.stringify({ ...session.user, avatarUrl }));
   }
   notifyCloudSessionChanged();
@@ -317,10 +350,28 @@ export async function uploadKovaAsset(file: Blob, fileName: string) {
     method: "POST",
     body: formData,
   });
-  if (!uploaded.url) {
+  const normalizedUrl = normalizeCloudAssetUrl(getCloudSession()!.apiBaseUrl, uploaded.url);
+  if (!normalizedUrl) {
     throw new Error("文件上传响应缺少 URL");
   }
-  return uploaded;
+  return { ...uploaded, url: normalizedUrl };
+}
+
+export async function registerKovaBackupSnapshot(request: KovaBackupSnapshotRequest) {
+  return cloudRequest<KovaBackupSnapshot>("/kova/sync/backup-snapshots", {
+    method: "POST",
+    body: JSON.stringify(request),
+  });
+}
+
+export async function listKovaBackupSnapshots(pageNum = 1, pageSize = 20) {
+  const query = new URLSearchParams({
+    pageNum: String(pageNum),
+    pageSize: String(pageSize),
+    status: "available",
+  });
+  const page = await cloudRequest<PageResult<KovaBackupSnapshot>>(`/kova/sync/backup-snapshots/page?${query}`);
+  return page.records ?? page.list ?? [];
 }
 
 export async function loginToCloud(apiBaseUrl: string, username: string, password: string) {

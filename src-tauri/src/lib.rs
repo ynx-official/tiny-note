@@ -3,6 +3,7 @@ mod services;
 use services::db::Database;
 use services::models::{Note, Folder, Conversation, ChatMessage, SyncAck, SyncApplyPayload, SyncApplyResult, SyncChange, SyncFolderSnapshot, SyncNoteSnapshot, SyncRewriteNoteContentPayload, SyncStatus};
 use services::ai::AiService;
+use std::collections::HashSet;
 use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::OnceLock;
 use std::path::{Path, PathBuf};
@@ -126,6 +127,102 @@ fn read_attachment(asset_path: String) -> Result<(Vec<u8>, String), String> {
     }
     let data = std::fs::read(&path).map_err(|e| e.to_string())?;
     Ok((data, attachment_mime(&path).into()))
+}
+
+fn collect_attachment_refs(content: &str, refs: &mut HashSet<String>) {
+    const PREFIX: &str = "kova-asset://";
+    let mut cursor = 0;
+    while let Some(offset) = content[cursor..].find(PREFIX) {
+        let start = cursor + offset;
+        let rest = &content[start..];
+        let end = rest
+            .find(|c: char| c == ')' || c == '"' || c == '\'' || c.is_whitespace() || c == '<' || c == '>')
+            .unwrap_or(rest.len());
+        if end > PREFIX.len() {
+            refs.insert(rest[..end].to_string());
+        }
+        cursor = start + end;
+    }
+}
+
+fn visit_attachment_files(dir: &Path, files: &mut Vec<PathBuf>) -> Result<(), String> {
+    if !dir.exists() {
+        return Ok(());
+    }
+    for entry in std::fs::read_dir(dir).map_err(|e| e.to_string())? {
+        let entry = entry.map_err(|e| e.to_string())?;
+        let path = entry.path();
+        if path.is_dir() {
+            visit_attachment_files(&path, files)?;
+        } else if path.is_file() {
+            files.push(path);
+        }
+    }
+    Ok(())
+}
+
+#[tauri::command]
+fn cleanup_orphan_attachments() -> Result<serde_json::Value, String> {
+    let notes = db().get_notes(None, None)?;
+    let mut refs = HashSet::new();
+    for note in notes {
+        collect_attachment_refs(&note.content, &mut refs);
+    }
+
+    let attachments_dir = db().data_dir().join("attachments");
+    let mut files = Vec::new();
+    visit_attachment_files(&attachments_dir, &mut files)?;
+
+    let mut removed = 0usize;
+    let mut bytes = 0u64;
+    for file in files {
+        let rel = file
+            .strip_prefix(&attachments_dir)
+            .map_err(|e| e.to_string())?
+            .to_string_lossy()
+            .replace('\\', "/");
+        let asset_url = format!("kova-asset://{}", rel);
+        if refs.contains(&asset_url) {
+            continue;
+        }
+        if let Ok(metadata) = std::fs::metadata(&file) {
+            bytes += metadata.len();
+        }
+        std::fs::remove_file(&file).map_err(|e| e.to_string())?;
+        removed += 1;
+    }
+
+    Ok(serde_json::json!({ "removed": removed, "bytes": bytes }))
+}
+
+#[tauri::command]
+fn read_binary_file(path: String) -> Result<Vec<u8>, String> {
+    std::fs::read(path).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+async fn download_file_to_data_dir(url: String, file_name: String) -> Result<String, String> {
+    let parsed = reqwest::Url::parse(&url).map_err(|_| "下载 URL 无效".to_string())?;
+    if !matches!(parsed.scheme(), "http" | "https") {
+        return Err("只支持 http/https 下载".into());
+    }
+    let response = reqwest::Client::new()
+        .get(parsed)
+        .send()
+        .await
+        .map_err(|e| format!("下载失败: {}", e))?;
+    if !response.status().is_success() {
+        return Err(format!("下载失败: {}", response.status()));
+    }
+    let safe_name: String = file_name
+        .chars()
+        .take(80)
+        .map(|c| if c.is_ascii_alphanumeric() || c == '-' || c == '_' || c == '.' { c } else { '_' })
+        .collect();
+    let dest = db().data_dir().join(if safe_name.ends_with(".zip") { safe_name } else { format!("{}.zip", safe_name) });
+    let bytes = response.bytes().await.map_err(|e| e.to_string())?;
+    std::fs::write(&dest, bytes).map_err(|e| e.to_string())?;
+    Ok(dest.to_string_lossy().to_string())
 }
 
 #[tauri::command]
@@ -772,7 +869,7 @@ pub fn run() {
         })
         .invoke_handler(tauri::generate_handler![
             create_note, get_notes, update_note, delete_note,
-            save_attachment, read_attachment, download_remote_image,
+            save_attachment, read_attachment, cleanup_orphan_attachments, read_binary_file, download_file_to_data_dir, download_remote_image,
             create_folder, get_folders, update_folder, delete_folder, move_note_to_folder,
             get_sync_status, list_pending_sync_changes, list_sync_folder_snapshots, list_sync_note_snapshots, acknowledge_sync_push, update_pull_cursor, rewrite_note_content_after_sync, apply_sync_payload,
             get_data_dir, set_data_dir, import_md_file, import_file, export_note, export_note_html, export_note_txt, export_note_pdf,

@@ -26,10 +26,11 @@ interface NoteDetailProps {
   onDelete: (id: string) => void;
   onUpdateTitle: (id: string, title: string) => void;
   onUpdateContent: (id: string, content: string) => void;
+  onDirtyChange?: (dirty: boolean) => void;
   onSaved?: () => void;
 }
 
-export function NoteDetail({ note, onToggleSidebar, onDelete, onUpdateTitle, onUpdateContent, onSaved }: NoteDetailProps) {
+export function NoteDetail({ note, onToggleSidebar, onDelete, onUpdateTitle, onUpdateContent, onDirtyChange, onSaved }: NoteDetailProps) {
   const [mode, setMode] = useState<ViewMode>(() => loadViewMode() as ViewMode);
   const [editTitle, setEditTitle] = useState(note?.title ?? "");
   const [editContent, setEditContent] = useState(note?.content ?? "");
@@ -46,6 +47,10 @@ export function NoteDetail({ note, onToggleSidebar, onDelete, onUpdateTitle, onU
   const [tabSize, setTabSize] = useState(loadTabSize);
   const getAutoSave = () => loadAutoSave();
   const getAutoSaveDelay = () => loadAutoSaveDelay();
+
+  useEffect(() => {
+    onDirtyChange?.(Boolean(note && (editTitle !== note.title || editContent !== note.content)));
+  }, [note, editTitle, editContent, onDirtyChange]);
 
   const handleEditorScroll = useCallback((scrollTop: number, scrollHeight: number, clientHeight: number) => {
     const pv = previewRef.current;
@@ -139,9 +144,12 @@ export function NoteDetail({ note, onToggleSidebar, onDelete, onUpdateTitle, onU
       const changed = editTitle !== note.title || editContent !== note.content;
       if (editTitle !== note.title) onUpdateTitle(note.id, editTitle);
       if (editContent !== note.content) onUpdateContent(note.id, editContent);
-      if (changed) onSaved?.();
+      if (changed) {
+        onDirtyChange?.(false);
+        onSaved?.();
+      }
     }
-  }, [note, editTitle, editContent, onUpdateTitle, onUpdateContent, onSaved]);
+  }, [note, editTitle, editContent, onUpdateTitle, onUpdateContent, onDirtyChange, onSaved]);
 
   const handleImageFiles = useCallback(async (files: File[]) => {
     const view = editorViewRef.current;

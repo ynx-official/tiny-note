@@ -178,4 +178,19 @@ export const db = {
 
   downloadRemoteImage: (url: string) =>
     invoke<[number[], string]>("download_remote_image", { url }),
+
+  cleanupOrphanAttachments: () =>
+    invoke<{ removed: number; bytes: number }>("cleanup_orphan_attachments"),
+
+  backupData: (destDir: string) =>
+    invoke<string>("backup_data", { destDir }),
+
+  restoreData: (srcPath: string) =>
+    invoke<void>("restore_data", { srcPath }),
+
+  readBinaryFile: (path: string) =>
+    invoke<number[]>("read_binary_file", { path }),
+
+  downloadFileToDataDir: (url: string, fileName: string) =>
+    invoke<string>("download_file_to_data_dir", { url, fileName }),
 };
