@@ -1,7 +1,7 @@
 mod services;
 
 use services::db::Database;
-use services::models::{Note, Folder, Conversation, ChatMessage, SyncAck, SyncApplyPayload, SyncApplyResult, SyncChange, SyncFolderSnapshot, SyncNoteSnapshot, SyncStatus};
+use services::models::{Note, Folder, Conversation, ChatMessage, SyncAck, SyncApplyPayload, SyncApplyResult, SyncChange, SyncFolderSnapshot, SyncNoteSnapshot, SyncRewriteNoteContentPayload, SyncStatus};
 use services::ai::AiService;
 use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::OnceLock;
@@ -129,6 +129,49 @@ fn read_attachment(asset_path: String) -> Result<(Vec<u8>, String), String> {
 }
 
 #[tauri::command]
+async fn download_remote_image(url: String) -> Result<(Vec<u8>, String), String> {
+    let parsed = reqwest::Url::parse(&url).map_err(|_| "图片 URL 无效".to_string())?;
+    if !matches!(parsed.scheme(), "http" | "https") {
+        return Err("只支持 http/https 图片".into());
+    }
+
+    let client = reqwest::Client::builder()
+        .redirect(reqwest::redirect::Policy::limited(5))
+        .build()
+        .map_err(|e| e.to_string())?;
+    let response = client
+        .get(parsed)
+        .send()
+        .await
+        .map_err(|e| format!("图片下载失败: {}", e))?;
+    if !response.status().is_success() {
+        return Err(format!("图片下载失败: {}", response.status()));
+    }
+    if response.content_length().is_some_and(|size| size > 25 * 1024 * 1024) {
+        return Err("单张图片不能超过 25MB".into());
+    }
+
+    let mime = response
+        .headers()
+        .get(reqwest::header::CONTENT_TYPE)
+        .and_then(|value| value.to_str().ok())
+        .map(|value| value.split(';').next().unwrap_or(value).trim().to_string())
+        .unwrap_or_else(|| "application/octet-stream".into());
+    if !mime.starts_with("image/") {
+        return Err("远程资源不是图片".into());
+    }
+
+    let bytes = response
+        .bytes()
+        .await
+        .map_err(|e| format!("图片读取失败: {}", e))?;
+    if bytes.len() > 25 * 1024 * 1024 {
+        return Err("单张图片不能超过 25MB".into());
+    }
+    Ok((bytes.to_vec(), mime))
+}
+
+#[tauri::command]
 fn create_note(title: String, content: String, tags: Vec<String>, folder_id: Option<String>) -> Result<Note, String> {
     // Empty string from frontend means "uncategorized" → store as NULL
     let fid = folder_id.filter(|s| !s.is_empty());
@@ -205,6 +248,11 @@ fn acknowledge_sync_push(acknowledgements: Vec<SyncAck>, cursor: i64) -> Result<
 #[tauri::command]
 fn update_pull_cursor(cursor: i64) -> Result<(), String> {
     db().update_pull_cursor(cursor)
+}
+
+#[tauri::command]
+fn rewrite_note_content_after_sync(payload: SyncRewriteNoteContentPayload) -> Result<(), String> {
+    db().rewrite_note_content_after_sync(payload)
 }
 
 #[tauri::command]
@@ -724,9 +772,9 @@ pub fn run() {
         })
         .invoke_handler(tauri::generate_handler![
             create_note, get_notes, update_note, delete_note,
-            save_attachment, read_attachment,
+            save_attachment, read_attachment, download_remote_image,
             create_folder, get_folders, update_folder, delete_folder, move_note_to_folder,
-            get_sync_status, list_pending_sync_changes, list_sync_folder_snapshots, list_sync_note_snapshots, acknowledge_sync_push, update_pull_cursor, apply_sync_payload,
+            get_sync_status, list_pending_sync_changes, list_sync_folder_snapshots, list_sync_note_snapshots, acknowledge_sync_push, update_pull_cursor, rewrite_note_content_after_sync, apply_sync_payload,
             get_data_dir, set_data_dir, import_md_file, import_file, export_note, export_note_html, export_note_txt, export_note_pdf,
             backup_data, restore_data, abort_ai, toggle_conversation_pinned, export_conversation, open_path, write_file, read_file, copy_file, download_font, get_window_size, save_quick_window_size,
             toggle_window, get_cursor_position, create_quick_window, update_quick_shortcut,

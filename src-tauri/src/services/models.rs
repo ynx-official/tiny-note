@@ -73,6 +73,14 @@ pub struct SyncApplyResult {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SyncRewriteNoteContentPayload {
+    pub client_id: String,
+    pub content: String,
+    pub sync_version: i64,
+    pub cloud_id: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Note {
     pub id: String,
     pub title: String,

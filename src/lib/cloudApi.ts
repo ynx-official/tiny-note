@@ -147,6 +147,11 @@ export type KovaConflictResolveRequest = {
   mergedPayload?: Record<string, unknown>;
 };
 
+export type KovaUploadedFile = {
+  fileId?: string | number | null;
+  url: string;
+};
+
 export function normalizeApiBaseUrl(baseUrl: string) {
   return baseUrl.endsWith("/") ? baseUrl : `${baseUrl}/`;
 }
@@ -240,7 +245,7 @@ export async function cloudRequest<T>(path: string, init: RequestInit = {}) {
 
   const headers = new Headers(init.headers);
   headers.set("Authorization", `Bearer ${session.token}`);
-  if (!headers.has("Content-Type") && init.body) {
+  if (!headers.has("Content-Type") && init.body && !(init.body instanceof FormData)) {
     headers.set("Content-Type", "application/json");
   }
 
@@ -303,6 +308,19 @@ export async function resolveKovaSyncConflict(
     method: "PATCH",
     body: JSON.stringify(body),
   });
+}
+
+export async function uploadKovaAsset(file: Blob, fileName: string) {
+  const formData = new FormData();
+  formData.set("file", file, fileName);
+  const uploaded = await cloudRequest<KovaUploadedFile>("/system/file/upload", {
+    method: "POST",
+    body: formData,
+  });
+  if (!uploaded.url) {
+    throw new Error("文件上传响应缺少 URL");
+  }
+  return uploaded;
 }
 
 export async function loginToCloud(apiBaseUrl: string, username: string, password: string) {

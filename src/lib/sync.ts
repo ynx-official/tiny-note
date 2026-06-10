@@ -1,4 +1,5 @@
 import { db, type SyncAck, type SyncChange, type SyncFolderSnapshot, type SyncNoteSnapshot } from "./db";
+import { archiveMarkdownImages } from "./assetArchive";
 import {
   getCloudSession,
   pullKovaSyncChanges,
@@ -10,6 +11,8 @@ import {
 } from "./cloudApi";
 
 const APP_VERSION = "0.1.0";
+
+const SYNC_SETTINGS_SNAPSHOT_KEY = "kova-sync-settings-snapshot";
 
 const SYNC_SETTING_KEYS = [
   "fp-mode",
@@ -152,16 +155,47 @@ function inferSettingValueType(value: string): KovaSettingSyncItem["valueType"] 
   }
 }
 
-function collectSyncSettings(): KovaSettingSyncItem[] {
-  return SYNC_SETTING_KEYS.flatMap((settingKey) => {
+function collectSyncSettingsSnapshot() {
+  const values = SYNC_SETTING_KEYS.flatMap((settingKey) => {
     const settingValue = localStorage.getItem(settingKey);
     if (settingValue === null) return [];
-    return [{
-      settingKey,
-      settingValue,
-      valueType: inferSettingValueType(settingValue),
-    }];
+    return [[settingKey, settingValue] as const];
   });
+  return JSON.stringify(values);
+}
+
+function collectSyncSettings(): KovaSettingSyncItem[] {
+  const snapshot = collectSyncSettingsSnapshot();
+  if (localStorage.getItem(SYNC_SETTINGS_SNAPSHOT_KEY) === snapshot) return [];
+
+  return (JSON.parse(snapshot) as Array<readonly [string, string]>).map(([settingKey, settingValue]) => ({
+    settingKey,
+    settingValue,
+    valueType: inferSettingValueType(settingValue),
+  }));
+}
+
+function markSyncSettingsSnapshotSynced() {
+  localStorage.setItem(SYNC_SETTINGS_SNAPSHOT_KEY, collectSyncSettingsSnapshot());
+}
+
+async function archiveNoteImagesForSyncPush(notes: KovaNoteSyncItem[]) {
+  const archiveCache = new Map<string, Promise<string>>();
+  const archived: KovaNoteSyncItem[] = [];
+  const rewrites = new Map<string, KovaNoteSyncItem>();
+  for (const note of notes) {
+    const result = await archiveMarkdownImages(note.content ?? "", archiveCache);
+    const nextNote = {
+      ...note,
+      content: result.content,
+      contentHash: contentHash(result.content),
+    };
+    archived.push(nextNote);
+    if (result.changed) {
+      rewrites.set(note.clientId, nextNote);
+    }
+  }
+  return { notes: archived, rewrites };
 }
 
 function toLocalAck(ack: { entityType: string; clientId: string; cloudId: string; syncVersion: number | string; status: string }): SyncAck {
@@ -223,7 +257,8 @@ export async function syncKovaCloud(): Promise<CloudSyncResult> {
   });
 
   const folders = [...folderMap.values()];
-  const notes = [...noteMap.values()];
+  const archivedNotes = await archiveNoteImagesForSyncPush([...noteMap.values()]);
+  const notes = archivedNotes.notes;
   const settings = collectSyncSettings();
 
   let pushCursor = status.last_push_cursor;
@@ -239,6 +274,20 @@ export async function syncKovaCloud(): Promise<CloudSyncResult> {
     pushCursor = toNumber(pushed.cursor, pushCursor);
     acknowledgements = pushed.acknowledgements.map(toLocalAck);
     await db.acknowledgeSyncPush(acknowledgements, pushCursor);
+    for (const ack of acknowledgements) {
+      if (ack.entity_type !== "note" || ack.status === "conflict") continue;
+      const rewrite = archivedNotes.rewrites.get(ack.client_id);
+      if (!rewrite?.content) continue;
+      await db.rewriteNoteContentAfterSync({
+        client_id: ack.client_id,
+        content: rewrite.content,
+        sync_version: ack.sync_version,
+        cloud_id: ack.cloud_id,
+      });
+    }
+    if (settings.length > 0 && !acknowledgements.some((ack) => ack.entity_type === "setting" && ack.status === "conflict")) {
+      markSyncSettingsSnapshotSynced();
+    }
   }
 
   const latestStatus = await db.getSyncStatus();

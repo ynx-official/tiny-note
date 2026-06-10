@@ -3,6 +3,7 @@ import type { EditorView } from "@codemirror/view";
 import { undo, redo } from "@codemirror/commands";
 import type { Note } from "../../lib/db";
 import { db } from "../../lib/db";
+import { uploadImageFileToCloud } from "../../lib/assetArchive";
 import { loadAutoSave, loadAutoSaveDelay, loadViewMode, saveViewMode, loadSplitRatio, saveSplitRatio, loadTabSize } from "../../lib/theme";
 import { MarkdownPreview } from "../shared/MarkdownPreview";
 import { CodeEditor, insertAtCursor, insertTextAtCursor } from "../shared/CodeEditor";
@@ -55,12 +56,18 @@ export function NoteDetail({ note, onToggleSidebar, onDelete, onUpdateTitle, onU
 
   // Sync when note changes
   useEffect(() => {
-    if (note && note.id !== prevNoteIdRef.current) {
+    if (!note) return;
+
+    if (note.id !== prevNoteIdRef.current) {
       prevNoteIdRef.current = note.id;
       setEditTitle(note.title);
       setEditContent(note.content);
+      return;
     }
-  }, [note]);
+
+    setEditTitle((current) => (current === note.title ? current : note.title));
+    setEditContent((current) => (current === note.content ? current : note.content));
+  }, [note?.id, note?.title, note?.content]);
 
   // Persist view mode and split ratio
   useEffect(() => { saveViewMode(mode); }, [mode]);
@@ -150,10 +157,13 @@ export function NoteDetail({ note, onToggleSidebar, onDelete, onUpdateTitle, onU
 
     try {
       for (const file of files) {
-        const bytes = Array.from(new Uint8Array(await file.arrayBuffer()));
-        const assetUrl = await db.saveAttachment(note.id, bytes, file.type || "image/png", file.name || undefined);
+        let imageUrl = await uploadImageFileToCloud(file);
+        if (!imageUrl) {
+          const bytes = Array.from(new Uint8Array(await file.arrayBuffer()));
+          imageUrl = await db.saveAttachment(note.id, bytes, file.type || "image/png", file.name || undefined);
+        }
         const label = file.name ? file.name.replace(/\.[^.]+$/, "") : "图片";
-        snippets.push(`![${label}](${assetUrl})`);
+        snippets.push(`![${label}](${imageUrl})`);
       }
 
       const text = `${snippets.join("\n\n")}\n`;

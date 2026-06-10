@@ -61,6 +61,13 @@ export interface SyncApplyPayload {
   payload: string;
 }
 
+export interface SyncRewriteNoteContentPayload {
+  client_id: string;
+  content: string;
+  sync_version: number;
+  cloud_id?: string | null;
+}
+
 export interface SyncApplyResult {
   applied: boolean;
 }
@@ -133,6 +140,9 @@ export const db = {
   applySyncPayload: (payload: SyncApplyPayload) =>
     invoke<SyncApplyResult>("apply_sync_payload", { payload }),
 
+  rewriteNoteContentAfterSync: (payload: SyncRewriteNoteContentPayload) =>
+    invoke<void>("rewrite_note_content_after_sync", { payload }),
+
   getDataDir: () =>
     invoke<string>("get_data_dir"),
 
@@ -165,4 +175,7 @@ export const db = {
 
   readAttachment: (assetPath: string) =>
     invoke<[number[], string]>("read_attachment", { assetPath }),
+
+  downloadRemoteImage: (url: string) =>
+    invoke<[number[], string]>("download_remote_image", { url }),
 };

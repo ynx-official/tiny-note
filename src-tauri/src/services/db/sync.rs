@@ -4,7 +4,7 @@ use serde_json::Value;
 use uuid::Uuid;
 
 use super::Database;
-use crate::services::models::{SyncAck, SyncApplyPayload, SyncApplyResult, SyncChange, SyncFolderSnapshot, SyncNoteSnapshot, SyncStatus};
+use crate::services::models::{SyncAck, SyncApplyPayload, SyncApplyResult, SyncChange, SyncFolderSnapshot, SyncNoteSnapshot, SyncRewriteNoteContentPayload, SyncStatus};
 
 impl Database {
     pub fn get_sync_status(&self) -> Result<SyncStatus, String> {
@@ -183,6 +183,22 @@ impl Database {
         conn.execute(
             "INSERT OR REPLACE INTO sync_state (key, value) VALUES ('last_synced_at', ?1)",
             params![now],
+        ).map_err(|e| e.to_string())?;
+        Ok(())
+    }
+
+    pub fn rewrite_note_content_after_sync(&self, payload: SyncRewriteNoteContentPayload) -> Result<(), String> {
+        let conn = self.conn.lock().map_err(|e| e.to_string())?;
+        let now = Utc::now().to_rfc3339();
+        conn.execute(
+            "UPDATE notes SET content = ?1, sync_status = 'synced', sync_version = ?2,
+             cloud_id = COALESCE(?3, cloud_id), last_synced_at = ?4
+             WHERE id = ?5 AND deleted_at IS NULL",
+            params![payload.content, payload.sync_version, payload.cloud_id, now, payload.client_id],
+        ).map_err(|e| e.to_string())?;
+        conn.execute(
+            "DELETE FROM sync_changes WHERE entity_type = 'note' AND entity_id = ?1 AND status IN ('pending', 'conflict')",
+            params![payload.client_id],
         ).map_err(|e| e.to_string())?;
         Ok(())
     }

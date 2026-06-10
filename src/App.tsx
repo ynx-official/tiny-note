@@ -331,7 +331,10 @@ export default function App() {
     setIsSyncing(true);
     try {
       const result = await syncKovaCloud();
-      await fetch(undefined, selectedFolderId ?? undefined);
+      const refreshed = await fetch(undefined, selectedFolderId ?? undefined);
+      if (selectedNote) {
+        setSelectedNote(refreshed.find((note) => note.id === selectedNote.id) ?? null);
+      }
       db.list().then((all: Note[]) => setAllNotes(all));
       db.listFolders().then(setFolders);
       await refreshCloudConflictCount();
