@@ -1,4 +1,4 @@
-import { useState, useCallback, useEffect } from "react";
+import { memo, useState, useCallback, useEffect, useMemo } from "react";
 import { db } from "../../lib/db";
 import Markdown from "react-markdown";
 import remarkGfm from "remark-gfm";
@@ -33,7 +33,7 @@ function CopyButton({ text }: { text: string }) {
   );
 }
 
-function ImageWithLightbox({ src, alt }: { src: string; alt?: string }) {
+const ImageWithLightbox = memo(function ImageWithLightbox({ src, alt }: { src: string; alt?: string }) {
   const [open, setOpen] = useState(false);
   const [resolvedSrc, setResolvedSrc] = useState(src);
 
@@ -96,12 +96,28 @@ function ImageWithLightbox({ src, alt }: { src: string; alt?: string }) {
       />
     </>
   );
-}
+});
 
-export function MarkdownPreview({ content }: MarkdownPreviewProps) {
+export const MarkdownPreview = memo(function MarkdownPreview({ content }: MarkdownPreviewProps) {
   if (!content.trim()) {
     return <p className="text-ink-ghost leading-[1.9]">暂无内容</p>;
   }
+
+  const components = useMemo(() => ({
+    pre({ children }: { children?: React.ReactNode }) {
+      const codeChild = Array.isArray(children) ? children.find((c: React.ReactNode) => c && (c as React.ReactElement).type === "code") as React.ReactElement | undefined : undefined;
+      const codeText = (codeChild?.props as any)?.children?.[0] ?? (typeof children === "string" ? children : "");
+      return (
+        <div className="relative group/code">
+          <CopyButton text={typeof codeText === "string" ? codeText : ""} />
+          <pre>{children}</pre>
+        </div>
+      );
+    },
+    img({ src, alt }: { src?: string; alt?: string }) {
+      return <ImageWithLightbox src={src || ""} alt={alt} />;
+    },
+  }), []);
 
   return (
     <div className="markdown-body">
@@ -109,24 +125,10 @@ export function MarkdownPreview({ content }: MarkdownPreviewProps) {
         remarkPlugins={[remarkGfm, remarkMath]}
         rehypePlugins={[rehypeKatex]}
         urlTransform={transformMarkdownUrl}
-        components={{
-          pre({ children }: { children?: React.ReactNode }) {
-            const codeChild = Array.isArray(children) ? children.find((c: React.ReactNode) => c && (c as React.ReactElement).type === "code") as React.ReactElement | undefined : undefined;
-            const codeText = (codeChild?.props as any)?.children?.[0] ?? (typeof children === "string" ? children : "");
-            return (
-              <div className="relative group/code">
-                <CopyButton text={typeof codeText === "string" ? codeText : ""} />
-                <pre>{children}</pre>
-              </div>
-            );
-          },
-          img({ src, alt }) {
-            return <ImageWithLightbox src={src || ""} alt={alt} />;
-          },
-        }}
+        components={components}
       >
         {content}
       </Markdown>
     </div>
   );
-}
+});

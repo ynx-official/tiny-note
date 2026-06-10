@@ -13,6 +13,7 @@ import { AIChatPanel } from "./components/layout/AIChatPanel";
 import { NoteDetail } from "./components/detail/NoteDetail";
 import { StatusBar } from "./components/StatusBar";
 import { db } from "./lib/db";
+import { getCloudSession, fetchCurrentUser } from "./lib/cloudApi";
 import { useNotes } from "./hooks/useNotes";
 import type { Note } from "./lib/db";
 import type { AIContextAttachment } from "./components/layout/AIChatPanel/types";
@@ -47,6 +48,7 @@ export default function App() {
   });
 
   const [closeToTray, setCloseToTray] = useState(() => localStorage.getItem("fp-close-to-tray") !== "false");
+  const [cloudSession, setCloudSession] = useState(() => getCloudSession());
 
   const sidebar = usePanelResize({ storageKey: "kova-sidebar-width", defaultWidth: 260, minWidth: 180, maxWidth: 400, side: "right" });
   const settings = usePanelResize({ storageKey: "kova-settings-width", defaultWidth: 360, minWidth: 280, maxWidth: 500, side: "left" });
@@ -135,6 +137,28 @@ export default function App() {
     window.addEventListener("fp-settings-changed", handler);
     return () => window.removeEventListener("fp-settings-changed", handler);
   }, []);
+
+  // Keep cloud session and user info fresh
+  useEffect(() => {
+    const handler = () => setCloudSession(getCloudSession());
+    window.addEventListener("kova-cloud-session-changed", handler);
+    return () => window.removeEventListener("kova-cloud-session-changed", handler);
+  }, []);
+
+  useEffect(() => {
+    if (!cloudSession || cloudSession.user) return;
+
+    let cancelled = false;
+    fetchCurrentUser()
+      .then(() => {
+        if (!cancelled) setCloudSession(getCloudSession());
+      })
+      .catch(() => {});
+
+    return () => {
+      cancelled = true;
+    };
+  }, [cloudSession]);
 
   // Listen for AI tool data changes
   useEffect(() => {
@@ -286,7 +310,7 @@ export default function App() {
 
   return (
     <div className="h-screen flex flex-col bg-paper">
-      <TitleBar settingsOpen={showSettings} loginOpen={showLogin} aiOpen={showAI} closeToTray={closeToTray} mode={mode} onToggleMode={handleToggleMode} onToggleSettings={() => { setShowSettings((v) => !v); setShowLogin(false); setShowAI(false); }} onToggleLogin={() => { setShowLogin((v) => !v); setShowSettings(false); setShowAI(false); }} onToggleAI={() => { setShowAI((v) => !v); setShowSettings(false); setShowLogin(false); }} />
+      <TitleBar settingsOpen={showSettings} loginOpen={showLogin} aiOpen={showAI} closeToTray={closeToTray} mode={mode} cloudUser={cloudSession?.user} isCloudLoggedIn={Boolean(cloudSession)} onToggleMode={handleToggleMode} onToggleSettings={() => { setShowSettings((v) => !v); setShowAI(false); }} onToggleLogin={() => setShowLogin((v) => !v)} onToggleAI={() => { setShowAI((v) => !v); setShowSettings(false); }} />
 
       <div className="flex flex-1 min-h-0">
         {/* Sidebar */}
@@ -371,18 +395,10 @@ export default function App() {
         </div>
 
         {/* Settings panel */}
-        <div className="relative shrink-0 flex overflow-hidden" style={{ width: showSettings && !showLogin && !showAI ? settings.width : 0, transition: isDragging ? "none" : "width 0.5s cubic-bezier(0.22,1,0.36,1)" }}>
+        <div className="relative shrink-0 flex overflow-hidden" style={{ width: showSettings && !showAI ? settings.width : 0, transition: isDragging ? "none" : "width 0.5s cubic-bezier(0.22,1,0.36,1)" }}>
           <div className="w-1 shrink-0 bg-paper-deep/30 cursor-col-resize hover:bg-accent/40 transition-colors" onMouseDown={settings.handleMouseDown} />
           <div className="h-full shrink-0 overflow-hidden" style={{ width: settings.width - 4 }}>
             <SettingsPanel onClose={() => setShowSettings(false)} mode={mode} onImported={() => { fetch(undefined, selectedFolderId ?? undefined); db.list().then((all: Note[]) => setAllNotes(all)); }} />
-          </div>
-        </div>
-
-        {/* Login panel */}
-        <div className="relative shrink-0 flex overflow-hidden" style={{ width: showLogin && !showSettings && !showAI ? settings.width : 0, transition: isDragging ? "none" : "width 0.5s cubic-bezier(0.22,1,0.36,1)" }}>
-          <div className="w-1 shrink-0 bg-paper-deep/30 cursor-col-resize hover:bg-accent/40 transition-colors" onMouseDown={settings.handleMouseDown} />
-          <div className="h-full shrink-0 overflow-hidden" style={{ width: settings.width - 4 }}>
-            <LoginPanel onClose={() => setShowLogin(false)} />
           </div>
         </div>
 
@@ -402,6 +418,14 @@ export default function App() {
           </div>
         </div>
       </div>
+
+      {showLogin && (
+        <div className="fixed inset-0 z-[80] flex items-center justify-center bg-black/25 px-4" onMouseDown={() => setShowLogin(false)}>
+          <div onMouseDown={(event) => event.stopPropagation()}>
+            <LoginPanel onClose={() => setShowLogin(false)} />
+          </div>
+        </div>
+      )}
 
       {toast && (
         <div className="fixed left-1/2 bottom-10 z-[70] -translate-x-1/2 rounded-full border border-paper-deep/60 bg-cloud/95 px-4 py-2 text-xs text-ink-soft shadow-lg animate-toast-in pointer-events-none">

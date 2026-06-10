@@ -1,6 +1,7 @@
 import { useState, useEffect } from "react";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import type { ThemeMode } from "../../lib/theme";
+import type { CloudUser } from "../../lib/cloudApi";
 
 const appWindow = getCurrentWindow();
 
@@ -10,13 +11,15 @@ interface TitleBarProps {
   aiOpen: boolean;
   closeToTray: boolean;
   mode: ThemeMode;
+  cloudUser?: CloudUser | null;
+  isCloudLoggedIn?: boolean;
   onToggleMode: () => void;
   onToggleSettings: () => void;
   onToggleLogin: () => void;
   onToggleAI: () => void;
 }
 
-export function TitleBar({ settingsOpen, loginOpen, aiOpen, closeToTray, mode, onToggleMode, onToggleSettings, onToggleLogin, onToggleAI }: TitleBarProps) {
+export function TitleBar({ settingsOpen, loginOpen, aiOpen, closeToTray, mode, cloudUser, isCloudLoggedIn, onToggleMode, onToggleSettings, onToggleLogin, onToggleAI }: TitleBarProps) {
   const [pinned, setPinned] = useState(() => {
     const saved = localStorage.getItem("fp-pinned");
     return saved === "true";
@@ -33,6 +36,10 @@ export function TitleBar({ settingsOpen, loginOpen, aiOpen, closeToTray, mode, o
     setPinned(next);
     localStorage.setItem("fp-pinned", String(next));
   };
+
+  const cloudDisplayName = cloudUser?.nickname || cloudUser?.username || "Kova 云同步";
+  const [failedAvatarUrl, setFailedAvatarUrl] = useState<string | null>(null);
+  const avatarUrl = cloudUser?.avatarUrl && cloudUser.avatarUrl !== failedAvatarUrl ? cloudUser.avatarUrl : null;
 
   return (
     <div
@@ -88,15 +95,33 @@ export function TitleBar({ settingsOpen, loginOpen, aiOpen, closeToTray, mode, o
         <button
           type="button"
           onClick={onToggleLogin}
-          className={`w-7 h-7 flex items-center justify-center rounded transition-colors ${
-            loginOpen ? "bg-accent-mist text-accent" : "hover:bg-paper-deep text-ink-faint hover:text-ink-soft"
+          className={`relative h-7 flex items-center justify-center transition-colors overflow-hidden ${
+            isCloudLoggedIn
+              ? `max-w-36 gap-1.5 rounded-full border px-1.5 pr-2 ${loginOpen ? "border-accent/35 bg-accent-mist text-accent" : "border-paper-deep/70 bg-cloud/70 text-ink-soft hover:border-accent/35 hover:bg-accent-mist/70"}`
+              : `w-7 rounded ${loginOpen ? "bg-accent-mist text-accent" : "hover:bg-paper-deep text-ink-faint hover:text-ink-soft"}`
           }`}
-          title="登录"
+          title={isCloudLoggedIn ? cloudDisplayName : "登录"}
         >
-          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-            <path d="M20 21a8 8 0 0 0-16 0" />
-            <circle cx="12" cy="7" r="4" />
-          </svg>
+          {isCloudLoggedIn ? (
+            <>
+              {avatarUrl ? (
+                <img
+                  src={avatarUrl}
+                  alt={cloudDisplayName}
+                  onError={() => setFailedAvatarUrl(avatarUrl)}
+                  className="w-5 h-5 rounded-full object-cover shrink-0"
+                />
+              ) : null}
+              <span className="min-w-0 truncate text-[11px] font-medium">
+                {cloudDisplayName}
+              </span>
+            </>
+          ) : (
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+              <path d="M20 21a8 8 0 0 0-16 0" />
+              <circle cx="12" cy="7" r="4" />
+            </svg>
+          )}
         </button>
         {/* Settings */}
         <button
