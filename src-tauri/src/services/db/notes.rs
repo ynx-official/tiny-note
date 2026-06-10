@@ -118,31 +118,36 @@ impl Database {
             conn.execute("UPDATE notes SET folder_id = ?1, updated_at = ?2, sync_status = 'pending', device_id = ?3 WHERE id = ?4 AND deleted_at IS NULL", params![f, now, device_id, id]).map_err(|e| e.to_string())?;
         }
         let note = conn.query_row(
-            "SELECT id, title, content, tags, folder_id, created_at, updated_at FROM notes WHERE id = ?1 AND deleted_at IS NULL",
+            "SELECT id, title, content, tags, folder_id, created_at, updated_at, sync_version, cloud_id FROM notes WHERE id = ?1 AND deleted_at IS NULL",
             params![id],
             |row| {
                 let tags_str: String = row.get(3)?;
                 let tags: Vec<String> = serde_json::from_str(&tags_str).unwrap_or_default();
-                Ok(Note {
-                    id: row.get(0)?,
-                    title: row.get(1)?,
-                    content: row.get(2)?,
-                    tags,
-                    folder_id: row.get(4)?,
-                    created_at: row.get(5)?,
-                    updated_at: row.get(6)?,
-                })
+                Ok((
+                    Note {
+                        id: row.get(0)?,
+                        title: row.get(1)?,
+                        content: row.get(2)?,
+                        tags,
+                        folder_id: row.get(4)?,
+                        created_at: row.get(5)?,
+                        updated_at: row.get(6)?,
+                    },
+                    row.get::<_, i64>(7)?,
+                    row.get::<_, Option<String>>(8)?,
+                ))
             },
         ).map_err(|e| format!("笔记不存在: {}", e))?;
         let payload = json!({
-            "id": note.id,
-            "title": note.title,
-            "content": note.content,
-            "tags": note.tags,
-            "folder_id": note.folder_id,
-            "updated_at": note.updated_at,
+            "id": note.0.id,
+            "cloud_id": note.2,
+            "title": note.0.title,
+            "content": note.0.content,
+            "tags": note.0.tags,
+            "folder_id": note.0.folder_id,
+            "updated_at": note.0.updated_at,
         }).to_string();
-        Self::record_sync_change(&conn, "note", id, "update", &payload, 0)?;
+        Self::record_sync_change(&conn, "note", id, "update", &payload, note.1)?;
         Ok(())
     }
 
@@ -150,12 +155,17 @@ impl Database {
         let conn = self.conn.lock().map_err(|e| e.to_string())?;
         let now = Utc::now().to_rfc3339();
         let device_id = Self::ensure_device_id(&conn)?;
+        let sync_base = conn.query_row(
+            "SELECT sync_version, cloud_id FROM notes WHERE id = ?1 AND deleted_at IS NULL",
+            params![id],
+            |row| Ok((row.get::<_, i64>(0)?, row.get::<_, Option<String>>(1)?)),
+        ).map_err(|e| format!("笔记不存在: {}", e))?;
         conn.execute(
             "UPDATE notes SET deleted_at = ?1, updated_at = ?1, sync_status = 'deleted', device_id = ?2 WHERE id = ?3 AND deleted_at IS NULL",
             params![now, device_id, id],
         ).map_err(|e| e.to_string())?;
-        let payload = json!({ "id": id, "deleted_at": now }).to_string();
-        Self::record_sync_change(&conn, "note", id, "delete", &payload, 0)?;
+        let payload = json!({ "id": id, "cloud_id": sync_base.1, "deleted_at": now }).to_string();
+        Self::record_sync_change(&conn, "note", id, "delete", &payload, sync_base.0)?;
         Ok(())
     }
 }

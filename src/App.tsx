@@ -9,11 +9,12 @@ import { TitleBar } from "./components/layout/TitleBar";
 import { Sidebar } from "./components/layout/Sidebar";
 import { SettingsPanel } from "./components/layout/SettingsPanel";
 import { LoginPanel } from "./components/layout/LoginPanel";
+import { SyncConflictDialog } from "./components/layout/SyncConflictDialog";
 import { AIChatPanel } from "./components/layout/AIChatPanel";
 import { NoteDetail } from "./components/detail/NoteDetail";
 import { StatusBar } from "./components/StatusBar";
 import { db } from "./lib/db";
-import { getCloudSession, fetchCurrentUser } from "./lib/cloudApi";
+import { getCloudSession, fetchCurrentUser, listKovaSyncConflicts } from "./lib/cloudApi";
 import { syncKovaCloud } from "./lib/sync";
 import { useNotes } from "./hooks/useNotes";
 import type { Note } from "./lib/db";
@@ -51,6 +52,8 @@ export default function App() {
   const [closeToTray, setCloseToTray] = useState(() => localStorage.getItem("fp-close-to-tray") !== "false");
   const [cloudSession, setCloudSession] = useState(() => getCloudSession());
   const [isSyncing, setIsSyncing] = useState(false);
+  const [showConflicts, setShowConflicts] = useState(false);
+  const [cloudConflictCount, setCloudConflictCount] = useState(0);
 
   const sidebar = usePanelResize({ storageKey: "kova-sidebar-width", defaultWidth: 260, minWidth: 180, maxWidth: 400, side: "right" });
   const settings = usePanelResize({ storageKey: "kova-settings-width", defaultWidth: 360, minWidth: 280, maxWidth: 500, side: "left" });
@@ -160,6 +163,23 @@ export default function App() {
     return () => {
       cancelled = true;
     };
+  }, [cloudSession]);
+
+  const refreshCloudConflictCount = async () => {
+    if (!getCloudSession()) {
+      setCloudConflictCount(0);
+      return;
+    }
+    try {
+      const conflicts = await listKovaSyncConflicts("pending");
+      setCloudConflictCount(conflicts.length);
+    } catch {
+      setCloudConflictCount(0);
+    }
+  };
+
+  useEffect(() => {
+    refreshCloudConflictCount();
   }, [cloudSession]);
 
   // Listen for AI tool data changes
@@ -314,7 +334,10 @@ export default function App() {
       await fetch(undefined, selectedFolderId ?? undefined);
       db.list().then((all: Note[]) => setAllNotes(all));
       db.listFolders().then(setFolders);
+      await refreshCloudConflictCount();
       if (result.conflicts > 0) {
+        setCloudConflictCount(result.conflicts);
+        setShowConflicts(true);
         showToast(`同步完成，${result.conflicts} 条冲突待处理`);
       } else if (result.pushed > 0 || result.pulled > 0) {
         showToast(`同步完成：推送 ${result.pushed}，拉取 ${result.pulled}`);
@@ -334,7 +357,7 @@ export default function App() {
 
   return (
     <div className="h-screen flex flex-col bg-paper">
-      <TitleBar settingsOpen={showSettings} loginOpen={showLogin} aiOpen={showAI} closeToTray={closeToTray} mode={mode} cloudUser={cloudSession?.user} isCloudLoggedIn={Boolean(cloudSession)} isSyncing={isSyncing} onToggleMode={handleToggleMode} onToggleSettings={() => { setShowSettings((v) => !v); setShowAI(false); }} onToggleLogin={() => setShowLogin((v) => !v)} onToggleAI={() => { setShowAI((v) => !v); setShowSettings(false); }} onSync={handleSync} />
+      <TitleBar settingsOpen={showSettings} loginOpen={showLogin} aiOpen={showAI} closeToTray={closeToTray} mode={mode} cloudUser={cloudSession?.user} isCloudLoggedIn={Boolean(cloudSession)} isSyncing={isSyncing} conflictCount={cloudConflictCount} onToggleMode={handleToggleMode} onToggleSettings={() => { setShowSettings((v) => !v); setShowAI(false); }} onToggleLogin={() => setShowLogin((v) => !v)} onToggleAI={() => { setShowAI((v) => !v); setShowSettings(false); }} onSync={handleSync} onOpenConflicts={() => setShowConflicts(true)} />
 
       <div className="flex flex-1 min-h-0">
         {/* Sidebar */}
@@ -449,6 +472,13 @@ export default function App() {
             <LoginPanel onClose={() => setShowLogin(false)} />
           </div>
         </div>
+      )}
+
+      {showConflicts && (
+        <SyncConflictDialog
+          onClose={() => setShowConflicts(false)}
+          onResolved={refreshCloudConflictCount}
+        />
       )}
 
       {toast && (

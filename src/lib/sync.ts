@@ -25,6 +25,7 @@ const SYNC_SETTING_KEYS = [
 
 type PendingPayload = {
   id?: string;
+  cloud_id?: string | null;
   title?: string;
   content?: string;
   tags?: string[];
@@ -76,6 +77,7 @@ function toLocalDateTime(value: string | null | undefined) {
 function toFolderSyncItem(change: SyncChange): KovaFolderSyncItem {
   const payload = parsePayload(change);
   return {
+    cloudId: payload.cloud_id ?? undefined,
     clientId: payload.id || change.entity_id,
     parentClientId: payload.parent_id ?? null,
     name: payload.name ?? null,
@@ -104,6 +106,7 @@ function toNoteSyncItem(change: SyncChange): KovaNoteSyncItem {
   const payload = parsePayload(change);
   const content = payload.content ?? "";
   return {
+    cloudId: payload.cloud_id ?? undefined,
     clientId: payload.id || change.entity_id,
     folderClientId: payload.folder_id ?? null,
     title: payload.title ?? "",
@@ -157,8 +160,6 @@ function collectSyncSettings(): KovaSettingSyncItem[] {
       settingKey,
       settingValue,
       valueType: inferSettingValueType(settingValue),
-      baseVersion: 0,
-      syncVersion: 0,
     }];
   });
 }

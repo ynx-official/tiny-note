@@ -125,6 +125,20 @@ export type KovaSyncPullResult = {
   changes: unknown[];
 };
 
+export type KovaSyncConflict = {
+  id: number | string;
+  entityType: string;
+  entityCloudId: string;
+  baseVersion?: number | string | null;
+  serverVersion?: number | string | null;
+  sourceDeviceId?: string | null;
+  conflictType?: string | null;
+  localPayload?: string | null;
+  serverPayload?: string | null;
+  status: string;
+  resolvedAt?: string | null;
+};
+
 export function normalizeApiBaseUrl(baseUrl: string) {
   return baseUrl.endsWith("/") ? baseUrl : `${baseUrl}/`;
 }
@@ -262,6 +276,20 @@ export async function pullKovaSyncChanges(request: KovaSyncPullRequest) {
   return cloudRequest<KovaSyncPullResult>("/kova/sync/pull", {
     method: "POST",
     body: JSON.stringify(request),
+  });
+}
+
+export async function listKovaSyncConflicts(status = "pending") {
+  const query = new URLSearchParams();
+  if (status) query.set("status", status);
+  const suffix = query.toString();
+  return cloudRequest<KovaSyncConflict[]>(`/kova/sync/conflicts${suffix ? `?${suffix}` : ""}`);
+}
+
+export async function resolveKovaSyncConflict(id: number | string, status: "resolved" | "ignored") {
+  return cloudRequest<void>(`/kova/sync/conflicts/${id}`, {
+    method: "PATCH",
+    body: JSON.stringify({ status }),
   });
 }
 

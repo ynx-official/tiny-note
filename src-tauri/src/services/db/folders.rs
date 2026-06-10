@@ -80,25 +80,30 @@ impl Database {
         ).map_err(|e| e.to_string())?;
 
         let folder = conn.query_row(
-            "SELECT id, name, parent_id, created_at, updated_at FROM folders WHERE id = ?1 AND deleted_at IS NULL",
+            "SELECT id, name, parent_id, created_at, updated_at, sync_version, cloud_id FROM folders WHERE id = ?1 AND deleted_at IS NULL",
             params![id],
             |row| {
-                Ok(Folder {
-                    id: row.get(0)?,
-                    name: row.get(1)?,
-                    parent_id: row.get(2)?,
-                    created_at: row.get(3)?,
-                    updated_at: row.get(4)?,
-                })
+                Ok((
+                    Folder {
+                        id: row.get(0)?,
+                        name: row.get(1)?,
+                        parent_id: row.get(2)?,
+                        created_at: row.get(3)?,
+                        updated_at: row.get(4)?,
+                    },
+                    row.get::<_, i64>(5)?,
+                    row.get::<_, Option<String>>(6)?,
+                ))
             },
         ).map_err(|e| format!("文件夹不存在: {}", e))?;
         let payload = json!({
-            "id": folder.id,
-            "name": folder.name,
-            "parent_id": folder.parent_id,
-            "updated_at": folder.updated_at,
+            "id": folder.0.id,
+            "cloud_id": folder.2,
+            "name": folder.0.name,
+            "parent_id": folder.0.parent_id,
+            "updated_at": folder.0.updated_at,
         }).to_string();
-        Self::record_sync_change(&conn, "folder", id, "update", &payload, 0)?;
+        Self::record_sync_change(&conn, "folder", id, "update", &payload, folder.1)?;
         Ok(())
     }
 
@@ -107,9 +112,15 @@ impl Database {
         let now = Utc::now().to_rfc3339();
         let device_id = Self::ensure_device_id(&conn)?;
 
+        let deleted_folder_base = conn.query_row(
+            "SELECT sync_version, cloud_id FROM folders WHERE id = ?1 AND deleted_at IS NULL",
+            params![id],
+            |row| Ok((row.get::<_, i64>(0)?, row.get::<_, Option<String>>(1)?)),
+        ).map_err(|e| format!("文件夹不存在: {}", e))?;
+
         let moved_note_payloads = {
             let mut stmt = conn.prepare(
-                "SELECT id, title, content, tags, created_at FROM notes WHERE folder_id = ?1 AND deleted_at IS NULL"
+                "SELECT id, title, content, tags, created_at, sync_version, cloud_id FROM notes WHERE folder_id = ?1 AND deleted_at IS NULL"
             ).map_err(|e| e.to_string())?;
             let rows = stmt.query_map(params![id], |row| {
                 let note_id: String = row.get(0)?;
@@ -118,8 +129,11 @@ impl Database {
                 let tags_str: String = row.get(3)?;
                 let tags: Vec<String> = serde_json::from_str(&tags_str).unwrap_or_default();
                 let created_at: String = row.get(4)?;
-                Ok((note_id.clone(), json!({
+                let sync_version: i64 = row.get(5)?;
+                let cloud_id: Option<String> = row.get(6)?;
+                Ok((note_id.clone(), sync_version, json!({
                     "id": note_id,
+                    "cloud_id": cloud_id,
                     "title": title,
                     "content": content,
                     "tags": tags,
@@ -137,14 +151,17 @@ impl Database {
         };
         let moved_folder_payloads = {
             let mut stmt = conn.prepare(
-                "SELECT id, name, created_at FROM folders WHERE parent_id = ?1 AND deleted_at IS NULL"
+                "SELECT id, name, created_at, sync_version, cloud_id FROM folders WHERE parent_id = ?1 AND deleted_at IS NULL"
             ).map_err(|e| e.to_string())?;
             let rows = stmt.query_map(params![id], |row| {
                 let folder_id: String = row.get(0)?;
                 let name: String = row.get(1)?;
                 let created_at: String = row.get(2)?;
-                Ok((folder_id.clone(), json!({
+                let sync_version: i64 = row.get(3)?;
+                let cloud_id: Option<String> = row.get(4)?;
+                Ok((folder_id.clone(), sync_version, json!({
                     "id": folder_id,
+                    "cloud_id": cloud_id,
                     "name": name,
                     "parent_id": null,
                     "created_at": created_at,
@@ -172,14 +189,14 @@ impl Database {
             params![now, device_id, id],
         ).map_err(|e| e.to_string())?;
 
-        for (note_id, payload) in moved_note_payloads {
-            Self::record_sync_change(&conn, "note", &note_id, "update", &payload, 0)?;
+        for (note_id, sync_version, payload) in moved_note_payloads {
+            Self::record_sync_change(&conn, "note", &note_id, "update", &payload, sync_version)?;
         }
-        for (folder_id, payload) in moved_folder_payloads {
-            Self::record_sync_change(&conn, "folder", &folder_id, "update", &payload, 0)?;
+        for (folder_id, sync_version, payload) in moved_folder_payloads {
+            Self::record_sync_change(&conn, "folder", &folder_id, "update", &payload, sync_version)?;
         }
-        let payload = json!({ "id": id, "deleted_at": now }).to_string();
-        Self::record_sync_change(&conn, "folder", id, "delete", &payload, 0)?;
+        let payload = json!({ "id": id, "cloud_id": deleted_folder_base.1, "deleted_at": now }).to_string();
+        Self::record_sync_change(&conn, "folder", id, "delete", &payload, deleted_folder_base.0)?;
         Ok(())
     }
 }
