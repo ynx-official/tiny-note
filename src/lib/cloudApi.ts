@@ -34,6 +34,97 @@ type LoginResponse = {
   token: string;
 };
 
+export type KovaDeviceRegisterRequest = {
+  deviceId: string;
+  deviceName: string;
+  platform?: string | null;
+  appVersion?: string | null;
+};
+
+export type KovaDevice = {
+  id?: number | string;
+  deviceId: string;
+  deviceName?: string | null;
+  platform?: string | null;
+  appVersion?: string | null;
+  lastSyncTime?: string | null;
+  lastPushVersion?: number | null;
+  lastPullCursor?: number | null;
+};
+
+export type KovaFolderSyncItem = {
+  cloudId?: string | null;
+  clientId: string;
+  parentCloudId?: string | null;
+  parentClientId?: string | null;
+  name?: string | null;
+  baseVersion?: number | null;
+  syncVersion?: number | null;
+  clientCreatedAt?: string | null;
+  clientUpdatedAt?: string | null;
+  deletedAt?: string | null;
+};
+
+export type KovaNoteSyncItem = {
+  cloudId?: string | null;
+  clientId: string;
+  folderCloudId?: string | null;
+  folderClientId?: string | null;
+  title?: string | null;
+  content?: string | null;
+  tags?: string | null;
+  noteType?: string | null;
+  done?: number | null;
+  dueDate?: string | null;
+  baseVersion?: number | null;
+  syncVersion?: number | null;
+  contentHash?: string | null;
+  clientCreatedAt?: string | null;
+  clientUpdatedAt?: string | null;
+  deletedAt?: string | null;
+};
+
+export type KovaSettingSyncItem = {
+  settingKey: string;
+  settingValue: string;
+  valueType: "string" | "number" | "boolean" | "json";
+  baseVersion?: number | null;
+  syncVersion?: number | null;
+};
+
+export type KovaSyncPushRequest = {
+  deviceId: string;
+  folders: KovaFolderSyncItem[];
+  notes: KovaNoteSyncItem[];
+  attachments?: unknown[];
+  settings?: KovaSettingSyncItem[];
+};
+
+export type KovaSyncAck = {
+  entityType: string;
+  clientId: string;
+  cloudId: string;
+  syncVersion: number;
+  status: string;
+};
+
+export type KovaSyncPushResult = {
+  cursor: number;
+  acknowledgements: KovaSyncAck[];
+};
+
+export type KovaSyncPullRequest = {
+  deviceId: string;
+  cursor?: number;
+  limit?: number;
+};
+
+export type KovaSyncPullResult = {
+  cursor: number;
+  hasMore: boolean;
+  changes: unknown[];
+};
+
 export function normalizeApiBaseUrl(baseUrl: string) {
   return baseUrl.endsWith("/") ? baseUrl : `${baseUrl}/`;
 }
@@ -151,6 +242,27 @@ export async function logoutFromCloud() {
   } finally {
     clearCloudSession();
   }
+}
+
+export async function registerKovaDevice(request: KovaDeviceRegisterRequest) {
+  return cloudRequest<KovaDevice>("/kova/sync/devices/register", {
+    method: "POST",
+    body: JSON.stringify(request),
+  });
+}
+
+export async function pushKovaSyncChanges(request: KovaSyncPushRequest) {
+  return cloudRequest<KovaSyncPushResult>("/kova/sync/push", {
+    method: "POST",
+    body: JSON.stringify(request),
+  });
+}
+
+export async function pullKovaSyncChanges(request: KovaSyncPullRequest) {
+  return cloudRequest<KovaSyncPullResult>("/kova/sync/pull", {
+    method: "POST",
+    body: JSON.stringify(request),
+  });
 }
 
 export async function loginToCloud(apiBaseUrl: string, username: string, password: string) {

@@ -1,10 +1,20 @@
 import { invoke } from "@tauri-apps/api/core";
 
+export interface SyncAck {
+  entity_type: string;
+  client_id: string;
+  cloud_id: string;
+  sync_version: number;
+  status: string;
+}
+
 export interface SyncStatus {
   mode: string;
   device_id: string;
   pending_changes: number;
   conflict_count: number;
+  last_push_cursor: number;
+  last_pull_cursor: number;
   last_synced_at: string | null;
 }
 
@@ -20,6 +30,30 @@ export interface SyncChange {
   created_at: string;
   synced_at: string | null;
   error: string | null;
+}
+
+export interface SyncFolderSnapshot {
+  id: string;
+  name: string;
+  parent_id: string | null;
+  created_at: string;
+  updated_at: string;
+  sync_version: number;
+  cloud_id: string | null;
+  deleted_at: string | null;
+}
+
+export interface SyncNoteSnapshot {
+  id: string;
+  title: string;
+  content: string;
+  tags: string[];
+  folder_id: string | null;
+  created_at: string;
+  updated_at: string;
+  sync_version: number;
+  cloud_id: string | null;
+  deleted_at: string | null;
 }
 
 export interface Note {
@@ -74,6 +108,18 @@ export const db = {
 
   listPendingSyncChanges: () =>
     invoke<SyncChange[]>("list_pending_sync_changes"),
+
+  listSyncFolderSnapshots: () =>
+    invoke<SyncFolderSnapshot[]>("list_sync_folder_snapshots"),
+
+  listSyncNoteSnapshots: () =>
+    invoke<SyncNoteSnapshot[]>("list_sync_note_snapshots"),
+
+  acknowledgeSyncPush: (acknowledgements: SyncAck[], cursor: number) =>
+    invoke<void>("acknowledge_sync_push", { acknowledgements, cursor: Number(cursor) }),
+
+  updatePullCursor: (cursor: number) =>
+    invoke<void>("update_pull_cursor", { cursor: Number(cursor) }),
 
   getDataDir: () =>
     invoke<string>("get_data_dir"),

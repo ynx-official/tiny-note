@@ -1,11 +1,22 @@
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SyncAck {
+    pub entity_type: String,
+    pub client_id: String,
+    pub cloud_id: String,
+    pub sync_version: i64,
+    pub status: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SyncStatus {
     pub mode: String,
     pub device_id: String,
     pub pending_changes: i64,
     pub conflict_count: i64,
+    pub last_push_cursor: i64,
+    pub last_pull_cursor: i64,
     pub last_synced_at: Option<String>,
 }
 
@@ -22,6 +33,32 @@ pub struct SyncChange {
     pub created_at: String,
     pub synced_at: Option<String>,
     pub error: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SyncFolderSnapshot {
+    pub id: String,
+    pub name: String,
+    pub parent_id: Option<String>,
+    pub created_at: String,
+    pub updated_at: String,
+    pub sync_version: i64,
+    pub cloud_id: Option<String>,
+    pub deleted_at: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SyncNoteSnapshot {
+    pub id: String,
+    pub title: String,
+    pub content: String,
+    pub tags: Vec<String>,
+    pub folder_id: Option<String>,
+    pub created_at: String,
+    pub updated_at: String,
+    pub sync_version: i64,
+    pub cloud_id: Option<String>,
+    pub deleted_at: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

@@ -13,13 +13,15 @@ interface TitleBarProps {
   mode: ThemeMode;
   cloudUser?: CloudUser | null;
   isCloudLoggedIn?: boolean;
+  isSyncing?: boolean;
   onToggleMode: () => void;
   onToggleSettings: () => void;
   onToggleLogin: () => void;
   onToggleAI: () => void;
+  onSync?: () => void;
 }
 
-export function TitleBar({ settingsOpen, loginOpen, aiOpen, closeToTray, mode, cloudUser, isCloudLoggedIn, onToggleMode, onToggleSettings, onToggleLogin, onToggleAI }: TitleBarProps) {
+export function TitleBar({ settingsOpen, loginOpen, aiOpen, closeToTray, mode, cloudUser, isCloudLoggedIn, isSyncing, onToggleMode, onToggleSettings, onToggleLogin, onToggleAI, onSync }: TitleBarProps) {
   const [pinned, setPinned] = useState(() => {
     const saved = localStorage.getItem("fp-pinned");
     return saved === "true";
@@ -91,6 +93,25 @@ export function TitleBar({ settingsOpen, loginOpen, aiOpen, closeToTray, mode, c
             <path d="M5 17l.5 1.5L7 19l-1.5.5L5 21l-.5-1.5L3 19l1.5-.5L5 17z"/>
           </svg>
         </button>
+        {/* Sync */}
+        {isCloudLoggedIn ? (
+          <button
+            type="button"
+            onClick={onSync}
+            disabled={isSyncing}
+            className={`w-7 h-7 flex items-center justify-center rounded transition-colors ${
+              isSyncing ? "bg-accent-mist text-accent cursor-wait" : "hover:bg-paper-deep text-ink-faint hover:text-ink-soft"
+            }`}
+            title={isSyncing ? "同步中" : "立即同步"}
+          >
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className={isSyncing ? "animate-spin" : ""}>
+              <path d="M21 12a9 9 0 0 1-15.64 6.12"/>
+              <path d="M3 12A9 9 0 0 1 18.64 5.88"/>
+              <path d="M21 3v6h-6"/>
+              <path d="M3 21v-6h6"/>
+            </svg>
+          </button>
+        ) : null}
         {/* Login */}
         <button
           type="button"
