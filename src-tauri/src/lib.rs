@@ -1,7 +1,7 @@
 mod services;
 
 use services::db::Database;
-use services::models::{Note, Folder, Conversation, ChatMessage};
+use services::models::{Note, Folder, Conversation, ChatMessage, SyncChange, SyncStatus};
 use services::ai::AiService;
 use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::OnceLock;
@@ -175,6 +175,16 @@ fn delete_folder(id: String) -> Result<(), String> {
 #[tauri::command]
 fn move_note_to_folder(id: String, folder_id: Option<String>) -> Result<(), String> {
     db().update_note(&id, None, None, None, Some(folder_id.as_deref()))
+}
+
+#[tauri::command]
+fn get_sync_status() -> Result<SyncStatus, String> {
+    db().get_sync_status()
+}
+
+#[tauri::command]
+fn list_pending_sync_changes() -> Result<Vec<SyncChange>, String> {
+    db().list_pending_sync_changes()
 }
 
 #[tauri::command]
@@ -691,6 +701,7 @@ pub fn run() {
             create_note, get_notes, update_note, delete_note,
             save_attachment, read_attachment,
             create_folder, get_folders, update_folder, delete_folder, move_note_to_folder,
+            get_sync_status, list_pending_sync_changes,
             get_data_dir, set_data_dir, import_md_file, import_file, export_note, export_note_html, export_note_txt, export_note_pdf,
             backup_data, restore_data, abort_ai, toggle_conversation_pinned, export_conversation, open_path, write_file, read_file, copy_file, download_font, get_window_size, save_quick_window_size,
             toggle_window, get_cursor_position, create_quick_window, update_quick_shortcut,

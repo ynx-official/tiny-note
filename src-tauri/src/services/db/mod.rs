@@ -3,6 +3,7 @@ mod folders;
 mod conversations;
 mod config;
 mod io;
+mod sync;
 
 use std::fs;
 use std::io::Write;
@@ -55,7 +56,13 @@ impl Database {
                 due_date TEXT,
                 folder_id TEXT,
                 created_at TEXT NOT NULL,
-                updated_at TEXT NOT NULL
+                updated_at TEXT NOT NULL,
+                sync_status TEXT NOT NULL DEFAULT 'pending',
+                sync_version INTEGER NOT NULL DEFAULT 0,
+                cloud_id TEXT,
+                deleted_at TEXT,
+                last_synced_at TEXT,
+                device_id TEXT
             );
             CREATE INDEX IF NOT EXISTS idx_notes_type ON notes(note_type);
             CREATE INDEX IF NOT EXISTS idx_notes_created ON notes(created_at DESC);
@@ -65,9 +72,48 @@ impl Database {
                 name TEXT NOT NULL,
                 parent_id TEXT,
                 created_at TEXT NOT NULL,
-                updated_at TEXT NOT NULL
+                updated_at TEXT NOT NULL,
+                sync_status TEXT NOT NULL DEFAULT 'pending',
+                sync_version INTEGER NOT NULL DEFAULT 0,
+                cloud_id TEXT,
+                deleted_at TEXT,
+                last_synced_at TEXT,
+                device_id TEXT
             );
             CREATE INDEX IF NOT EXISTS idx_folders_parent ON folders(parent_id);
+
+            CREATE TABLE IF NOT EXISTS sync_changes (
+                id TEXT PRIMARY KEY,
+                entity_type TEXT NOT NULL,
+                entity_id TEXT NOT NULL,
+                operation TEXT NOT NULL,
+                payload TEXT NOT NULL DEFAULT '{}',
+                base_version INTEGER NOT NULL DEFAULT 0,
+                device_id TEXT NOT NULL,
+                status TEXT NOT NULL DEFAULT 'pending',
+                created_at TEXT NOT NULL,
+                synced_at TEXT,
+                error TEXT
+            );
+            CREATE INDEX IF NOT EXISTS idx_sync_changes_status ON sync_changes(status, created_at);
+            CREATE INDEX IF NOT EXISTS idx_sync_changes_entity ON sync_changes(entity_type, entity_id);
+
+            CREATE TABLE IF NOT EXISTS sync_state (
+                key TEXT PRIMARY KEY,
+                value TEXT NOT NULL
+            );
+
+            CREATE TABLE IF NOT EXISTS sync_conflicts (
+                id TEXT PRIMARY KEY,
+                entity_type TEXT NOT NULL,
+                entity_id TEXT NOT NULL,
+                local_payload TEXT NOT NULL DEFAULT '{}',
+                remote_payload TEXT NOT NULL DEFAULT '{}',
+                status TEXT NOT NULL DEFAULT 'pending',
+                created_at TEXT NOT NULL,
+                resolved_at TEXT
+            );
+            CREATE INDEX IF NOT EXISTS idx_sync_conflicts_status ON sync_conflicts(status, created_at);
 
             CREATE TABLE IF NOT EXISTS conversations (
                 id TEXT PRIMARY KEY,
@@ -115,6 +161,28 @@ impl Database {
         if !has_pinned {
             let _ = conn.execute_batch("ALTER TABLE conversations ADD COLUMN pinned INTEGER NOT NULL DEFAULT 0");
         }
+
+        let sync_columns = [
+            ("notes", "sync_status", "TEXT NOT NULL DEFAULT 'pending'"),
+            ("notes", "sync_version", "INTEGER NOT NULL DEFAULT 0"),
+            ("notes", "cloud_id", "TEXT"),
+            ("notes", "deleted_at", "TEXT"),
+            ("notes", "last_synced_at", "TEXT"),
+            ("notes", "device_id", "TEXT"),
+            ("folders", "sync_status", "TEXT NOT NULL DEFAULT 'pending'"),
+            ("folders", "sync_version", "INTEGER NOT NULL DEFAULT 0"),
+            ("folders", "cloud_id", "TEXT"),
+            ("folders", "deleted_at", "TEXT"),
+            ("folders", "last_synced_at", "TEXT"),
+            ("folders", "device_id", "TEXT"),
+        ];
+        for (table, column, definition) in sync_columns {
+            if conn.prepare(&format!("SELECT {} FROM {} LIMIT 0", column, table)).is_err() {
+                let _ = conn.execute_batch(&format!("ALTER TABLE {} ADD COLUMN {} {}", table, column, definition));
+            }
+        }
+        let _ = conn.execute_batch("CREATE INDEX IF NOT EXISTS idx_notes_deleted ON notes(deleted_at)");
+        let _ = conn.execute_batch("CREATE INDEX IF NOT EXISTS idx_folders_deleted ON folders(deleted_at)");
 
         Database { conn: Mutex::new(conn), data_dir }
     }

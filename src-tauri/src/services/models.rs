@@ -1,6 +1,30 @@
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SyncStatus {
+    pub mode: String,
+    pub device_id: String,
+    pub pending_changes: i64,
+    pub conflict_count: i64,
+    pub last_synced_at: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SyncChange {
+    pub id: String,
+    pub entity_type: String,
+    pub entity_id: String,
+    pub operation: String,
+    pub payload: String,
+    pub base_version: i64,
+    pub device_id: String,
+    pub status: String,
+    pub created_at: String,
+    pub synced_at: Option<String>,
+    pub error: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Note {
     pub id: String,
     pub title: String,

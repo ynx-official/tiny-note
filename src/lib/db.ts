@@ -1,5 +1,27 @@
 import { invoke } from "@tauri-apps/api/core";
 
+export interface SyncStatus {
+  mode: string;
+  device_id: string;
+  pending_changes: number;
+  conflict_count: number;
+  last_synced_at: string | null;
+}
+
+export interface SyncChange {
+  id: string;
+  entity_type: string;
+  entity_id: string;
+  operation: string;
+  payload: string;
+  base_version: number;
+  device_id: string;
+  status: string;
+  created_at: string;
+  synced_at: string | null;
+  error: string | null;
+}
+
 export interface Note {
   id: string;
   title: string;
@@ -46,6 +68,12 @@ export const db = {
 
   moveToFolder: (id: string, folderId?: string) =>
     invoke<void>("move_note_to_folder", { id, folderId: folderId ?? null }),
+
+  getSyncStatus: () =>
+    invoke<SyncStatus>("get_sync_status"),
+
+  listPendingSyncChanges: () =>
+    invoke<SyncChange[]>("list_pending_sync_changes"),
 
   getDataDir: () =>
     invoke<string>("get_data_dir"),
