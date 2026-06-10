@@ -6,15 +6,17 @@ const appWindow = getCurrentWindow();
 
 interface TitleBarProps {
   settingsOpen: boolean;
+  loginOpen: boolean;
   aiOpen: boolean;
   closeToTray: boolean;
   mode: ThemeMode;
   onToggleMode: () => void;
   onToggleSettings: () => void;
+  onToggleLogin: () => void;
   onToggleAI: () => void;
 }
 
-export function TitleBar({ settingsOpen, aiOpen, closeToTray, mode, onToggleMode, onToggleSettings, onToggleAI }: TitleBarProps) {
+export function TitleBar({ settingsOpen, loginOpen, aiOpen, closeToTray, mode, onToggleMode, onToggleSettings, onToggleLogin, onToggleAI }: TitleBarProps) {
   const [pinned, setPinned] = useState(() => {
     const saved = localStorage.getItem("fp-pinned");
     return saved === "true";
@@ -80,6 +82,20 @@ export function TitleBar({ settingsOpen, aiOpen, closeToTray, mode, onToggleMode
             <path d="M12 3l1.5 4.5L18 9l-4.5 1.5L12 15l-1.5-4.5L6 9l4.5-1.5L12 3z"/>
             <path d="M19 13l.75 2.25L22 16l-2.25.75L19 19l-.75-2.25L16 16l2.25-.75L19 13z"/>
             <path d="M5 17l.5 1.5L7 19l-1.5.5L5 21l-.5-1.5L3 19l1.5-.5L5 17z"/>
+          </svg>
+        </button>
+        {/* Login */}
+        <button
+          type="button"
+          onClick={onToggleLogin}
+          className={`w-7 h-7 flex items-center justify-center rounded transition-colors ${
+            loginOpen ? "bg-accent-mist text-accent" : "hover:bg-paper-deep text-ink-faint hover:text-ink-soft"
+          }`}
+          title="登录"
+        >
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+            <path d="M20 21a8 8 0 0 0-16 0" />
+            <circle cx="12" cy="7" r="4" />
           </svg>
         </button>
         {/* Settings */}
