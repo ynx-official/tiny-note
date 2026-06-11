@@ -45,6 +45,20 @@ function describeConflict(conflict: KovaSyncConflict) {
   };
 }
 
+function conflictTypeLabel(type?: string | null) {
+  const labels: Record<string, string> = {
+    content_modified_both: "正文都被修改",
+    title_modified_both: "标题都被修改",
+    tags_modified_both: "标签都被修改",
+    move_modified_both: "位置都被修改",
+    delete_vs_update: "删除与编辑冲突",
+    folder_modified_both: "目录信息都被修改",
+    folder_delete_vs_update: "目录删除与编辑冲突",
+    mixed_modified_both: "多字段同时冲突",
+  };
+  return type ? labels[type] || type : "双方都修改";
+}
+
 function normalizePayload(payload: ConflictPayload) {
   const hiddenKeys = new Set([
     "id",
@@ -95,7 +109,8 @@ export function SyncConflictDialog({ onClose, onResolved }: SyncConflictDialogPr
   const [loading, setLoading] = useState(true);
   const [busyId, setBusyId] = useState<number | string | null>(null);
   const [editingId, setEditingId] = useState<number | string | null>(null);
-  const [mergedText, setMergedText] = useState("");
+  const [mergedPayloadText, setMergedPayloadText] = useState("");
+  const [mergedContent, setMergedContent] = useState("");
   const [error, setError] = useState<string | null>(null);
 
   const refresh = async () => {
@@ -118,7 +133,8 @@ export function SyncConflictDialog({ onClose, onResolved }: SyncConflictDialogPr
   const finishConflict = (id: number | string) => {
     setConflicts((items) => items.filter((item) => item.id !== id));
     setEditingId(null);
-    setMergedText("");
+    setMergedPayloadText("");
+    setMergedContent("");
     onResolved?.();
   };
 
@@ -151,20 +167,38 @@ export function SyncConflictDialog({ onClose, onResolved }: SyncConflictDialogPr
 
   const startManualMerge = (conflict: KovaSyncConflict) => {
     const local = parsePayload(conflict.localPayload);
+    const server = parsePayload(conflict.serverPayload);
     setEditingId(conflict.id);
-    setMergedText(JSON.stringify(local, null, 2));
+    if (conflict.entityType === "note") {
+      setMergedContent(typeof local.content === "string" ? local.content : typeof server.content === "string" ? server.content : "");
+      setMergedPayloadText("");
+      return;
+    }
+    setMergedPayloadText(JSON.stringify(local, null, 2));
+    setMergedContent("");
+  };
+
+  const buildMergedPayload = (conflict: KovaSyncConflict) => {
+    if (conflict.entityType === "note") {
+      const local = parsePayload(conflict.localPayload);
+      return {
+        ...local,
+        content: mergedContent,
+      };
+    }
+    return JSON.parse(mergedPayloadText) as Record<string, unknown>;
   };
 
   const handleManualMerge = async (conflict: KovaSyncConflict) => {
     setBusyId(conflict.id);
     setError(null);
     try {
-      const mergedPayload = JSON.parse(mergedText) as Record<string, unknown>;
+      const mergedPayload = buildMergedPayload(conflict);
       await db.applySyncPayload({ entity_type: conflict.entityType, payload: JSON.stringify(mergedPayload) });
       await resolveKovaSyncConflict(conflict.id, { status: "resolved", strategy: "manual_merge", mergedPayload });
       finishConflict(conflict.id);
     } catch (err) {
-      setError(err instanceof Error ? err.message : "手动合并失败，请检查 JSON 格式");
+      setError(err instanceof Error ? err.message : "手动合并失败，请检查合并内容");
     } finally {
       setBusyId(null);
     }
@@ -227,7 +261,7 @@ export function SyncConflictDialog({ onClose, onResolved }: SyncConflictDialogPr
                           {detail.entityLabel}冲突：{detail.localTitle || detail.serverTitle}
                         </div>
                         <div className="mt-1 text-[11px] text-ink-ghost">
-                          base v{conflict.baseVersion ?? "-"} / cloud v{conflict.serverVersion ?? "-"} · {conflict.conflictType || "modified_both"}
+                          base v{conflict.baseVersion ?? "-"} / cloud v{conflict.serverVersion ?? "-"} · {conflictTypeLabel(conflict.conflictType)}
                         </div>
                       </div>
                       <span className="rounded-full bg-accent-mist px-2 py-1 text-[11px] text-accent">pending</span>
@@ -246,12 +280,39 @@ export function SyncConflictDialog({ onClose, onResolved }: SyncConflictDialogPr
 
                     {editingId === conflict.id ? (
                       <div className="mt-4 space-y-2">
-                        <div className="text-xs font-medium text-ink-faint">手动合并 JSON</div>
-                        <textarea
-                          value={mergedText}
-                          onChange={(event) => setMergedText(event.target.value)}
-                          className="h-44 w-full resize-none rounded-lg border border-paper-deep/70 bg-paper/70 p-3 font-mono text-xs text-ink-soft outline-none focus:border-accent"
-                        />
+                        {conflict.entityType === "note" ? (
+                          <>
+                            <div className="grid gap-3 md:grid-cols-2">
+                              <div>
+                                <div className="mb-1 text-xs font-medium text-ink-faint">本地正文</div>
+                                <div className="max-h-36 overflow-y-auto whitespace-pre-wrap rounded-lg border border-paper-deep/60 bg-paper/60 p-3 text-xs text-ink-soft">
+                                  {String(detail.local.content ?? "") || "无正文"}
+                                </div>
+                              </div>
+                              <div>
+                                <div className="mb-1 text-xs font-medium text-ink-faint">云端正文</div>
+                                <div className="max-h-36 overflow-y-auto whitespace-pre-wrap rounded-lg border border-paper-deep/60 bg-paper/60 p-3 text-xs text-ink-soft">
+                                  {String(detail.server.content ?? "") || "无正文"}
+                                </div>
+                              </div>
+                            </div>
+                            <div className="mt-3 text-xs font-medium text-ink-faint">合并后的正文</div>
+                            <textarea
+                              value={mergedContent}
+                              onChange={(event) => setMergedContent(event.target.value)}
+                              className="h-52 w-full resize-none rounded-lg border border-paper-deep/70 bg-paper/70 p-3 text-xs text-ink-soft outline-none focus:border-accent"
+                            />
+                          </>
+                        ) : (
+                          <>
+                            <div className="text-xs font-medium text-ink-faint">手动合并 JSON</div>
+                            <textarea
+                              value={mergedPayloadText}
+                              onChange={(event) => setMergedPayloadText(event.target.value)}
+                              className="h-44 w-full resize-none rounded-lg border border-paper-deep/70 bg-paper/70 p-3 font-mono text-xs text-ink-soft outline-none focus:border-accent"
+                            />
+                          </>
+                        )}
                         <div className="flex justify-end gap-2">
                           <button
                             type="button"

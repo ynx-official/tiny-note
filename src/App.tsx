@@ -1,7 +1,7 @@
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { listen } from "@tauri-apps/api/event";
 import { getCurrentWebview } from "@tauri-apps/api/webview";
-import { loadMode, saveMode, applyTheme, loadAllCustomFonts, type ThemeMode } from "./lib/theme";
+import { loadMode, saveMode, applyTheme, loadAllCustomFonts, loadKeepaliveSyncEnabled, loadKeepaliveSyncIntervalMinutes, saveKeepaliveSyncEnabled, saveKeepaliveSyncIntervalMinutes, type ThemeMode } from "./lib/theme";
 import { loadZoom, saveZoom, getZoomDelta } from "./lib/zoom";
 import { restoreWindowSize, listenWindowSize } from "./lib/windowState";
 import { usePanelResize } from "./hooks/usePanelResize";
@@ -15,7 +15,7 @@ import { NoteDetail } from "./components/detail/NoteDetail";
 import { StatusBar } from "./components/StatusBar";
 import { db } from "./lib/db";
 import { getCloudSession, fetchCurrentUser, listKovaSyncConflicts } from "./lib/cloudApi";
-import { syncKovaCloud } from "./lib/sync";
+import { createSkippedSyncDiagnostics, loadLastSyncDiagnostics, syncKovaCloud, type SyncRunDiagnostics } from "./lib/sync";
 import { useNotes } from "./hooks/useNotes";
 import type { Note } from "./lib/db";
 import type { AIContextAttachment } from "./components/layout/AIChatPanel/types";
@@ -30,6 +30,11 @@ document.documentElement.style.fontSize = `${loadZoom() * 16}px`;
 // Init window size
 restoreWindowSize();
 listenWindowSize();
+
+const AUTO_SYNC_DEBOUNCE_MS = 8_000;
+const AUTO_SYNC_STARTUP_DELAY_MS = 1_800;
+const AUTO_SYNC_VISIBLE_DELAY_MS = 1_500;
+const KEEPALIVE_BLOCKED_RETRY_MS = 60 * 1000;
 
 export default function App() {
   const { notes, fetch, create, update, remove } = useNotes();
@@ -52,17 +57,34 @@ export default function App() {
   const [closeToTray, setCloseToTray] = useState(() => localStorage.getItem("fp-close-to-tray") !== "false");
   const [cloudSession, setCloudSession] = useState(() => getCloudSession());
   const [isSyncing, setIsSyncing] = useState(false);
+  const [isOnline, setIsOnline] = useState(() => navigator.onLine);
+  const [syncStatus, setSyncStatus] = useState<import("./lib/db").SyncStatus | null>(null);
+  const [syncFailureCount, setSyncFailureCount] = useState(0);
+  const [lastSyncError, setLastSyncError] = useState<string | null>(null);
+  const [lastSyncDiagnostics, setLastSyncDiagnostics] = useState<SyncRunDiagnostics | null>(() => loadLastSyncDiagnostics());
+  const [keepaliveSyncEnabled, setKeepaliveSyncEnabled] = useState(loadKeepaliveSyncEnabled);
+  const [keepaliveSyncIntervalMinutes, setKeepaliveSyncIntervalMinutes] = useState(loadKeepaliveSyncIntervalMinutes);
+  const [nextKeepaliveSyncAt, setNextKeepaliveSyncAt] = useState<number | null>(null);
+  const [lastSuccessfulSyncAt, setLastSuccessfulSyncAt] = useState<string | null>(() => {
+    const diagnostics = loadLastSyncDiagnostics();
+    return diagnostics?.status === "success" ? (diagnostics.finishedAt ?? diagnostics.startedAt ?? null) : null;
+  });
   const [isEditorDirty, setIsEditorDirty] = useState(false);
   const [showConflicts, setShowConflicts] = useState(false);
   const [cloudConflictCount, setCloudConflictCount] = useState(0);
 
   const sidebar = usePanelResize({ storageKey: "kova-sidebar-width", defaultWidth: 260, minWidth: 180, maxWidth: 400, side: "right" });
-  const settings = usePanelResize({ storageKey: "kova-settings-width", defaultWidth: 360, minWidth: 280, maxWidth: 500, side: "left" });
   const ai = usePanelResize({ storageKey: "kova-ai-width", defaultWidth: 360, minWidth: 300, maxWidth: 600, side: "left" });
-  const isDragging = sidebar.isDragging || settings.isDragging || ai.isDragging;
+  const isDragging = sidebar.isDragging || ai.isDragging;
   const [draggingFiles, setDraggingFiles] = useState(false);
   const [toast, setToast] = useState<string | null>(null);
   const toastTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const autoSyncFailureRef = useRef(0);
+  const nextAutoSyncAtRef = useRef(0);
+  const autoSyncTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const keepaliveSyncTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const isSyncingRef = useRef(false);
+  const isEditorDirtyRef = useRef(false);
 
   const showToast = (message: string) => {
     setToast(message);
@@ -70,11 +92,42 @@ export default function App() {
     toastTimerRef.current = setTimeout(() => setToast(null), 1800);
   };
 
-  useEffect(() => {
-    return () => {
-      if (toastTimerRef.current) clearTimeout(toastTimerRef.current);
-    };
+  const clearKeepaliveSyncTimer = useCallback(() => {
+    if (keepaliveSyncTimerRef.current) {
+      window.clearTimeout(keepaliveSyncTimerRef.current);
+      keepaliveSyncTimerRef.current = null;
+    }
   }, []);
+
+  const refreshSyncStatus = useCallback(async () => {
+    try {
+      const [status, pendingChanges] = await Promise.all([
+        db.getSyncStatus(),
+        db.listPendingSyncChanges(),
+      ]);
+      setSyncStatus(status);
+      setSyncFailureCount(pendingChanges.filter((change) => change.status === "failed").length);
+    } catch {
+      setSyncStatus(null);
+      setSyncFailureCount(0);
+    }
+  }, []);
+
+  useEffect(() => {
+    refreshSyncStatus();
+  }, [refreshSyncStatus]);
+
+  useEffect(() => {
+    const handler = (event: Event) => {
+      setLastSyncDiagnostics((event as CustomEvent<SyncRunDiagnostics>).detail ?? loadLastSyncDiagnostics());
+    };
+    window.addEventListener("kova-sync-diagnostics-changed", handler);
+    return () => window.removeEventListener("kova-sync-diagnostics-changed", handler);
+  }, []);
+
+  useEffect(() => {
+    isEditorDirtyRef.current = isEditorDirty;
+  }, [isEditorDirty]);
 
   // Zoom with Ctrl+scroll, reset with Ctrl+0
   useEffect(() => {
@@ -191,6 +244,7 @@ export default function App() {
         fetch(undefined, selectedFolderId ?? undefined);
         db.list().then((all: Note[]) => setAllNotes(all));
         db.listFolders().then(setFolders);
+        void refreshSyncStatus();
       }
     });
     return () => { unlisten.then((fn) => fn()); };
@@ -248,6 +302,7 @@ export default function App() {
   const handleCreateNote = async (folderId?: string) => {
     const note = await create("", "", [], folderId ?? selectedFolderId ?? undefined);
     setSelectedNote(note);
+    await refreshSyncStatus();
     fetch(undefined, selectedFolderId ?? undefined);
     db.list().then((all: Note[]) => setAllNotes(all));
     showToast("笔记已新建");
@@ -285,6 +340,7 @@ export default function App() {
 
   const handleDelete = (id: string) => {
     remove(id).then(() => {
+      refreshSyncStatus();
       const nextIds = new Set(selectedIds);
       nextIds.delete(id);
       setSelectedIds(nextIds);
@@ -312,26 +368,48 @@ export default function App() {
   };
 
   const handleUpdateTitle = (id: string, title: string) => {
-    update(id, { title });
+    const promise = update(id, { title }).finally(refreshSyncStatus);
     if (selectedNote?.id === id) {
       const now = new Date().toISOString();
       setSelectedNote((prev) => prev ? { ...prev, title, updated_at: now } : null);
     }
+    return promise;
   };
 
   const handleUpdateContent = (id: string, content: string) => {
-    update(id, { content });
+    const promise = update(id, { content }).finally(refreshSyncStatus);
     if (selectedNote?.id === id) {
       const now = new Date().toISOString();
       setSelectedNote((prev) => prev ? { ...prev, content, updated_at: now } : null);
     }
+    return promise;
   };
 
-  const handleSync = async () => {
-    if (isSyncing) return;
+  const handleSync = useCallback(async (options?: { silent?: boolean; trigger?: SyncRunDiagnostics["trigger"] }) => {
+    const trigger = options?.trigger ?? "manual";
+    if (isSyncingRef.current) return false;
+    if (!getCloudSession()) {
+      const diagnostics = createSkippedSyncDiagnostics(trigger, "请先登录", "auth");
+      setLastSyncDiagnostics(diagnostics);
+      if (!options?.silent) showToast("请先登录");
+      return false;
+    }
+    if (!navigator.onLine) {
+      setIsOnline(false);
+      const diagnostics = createSkippedSyncDiagnostics(trigger, "当前离线，稍后自动重试", "network");
+      setLastSyncDiagnostics(diagnostics);
+      if (!options?.silent) showToast("当前离线，稍后自动重试");
+      return false;
+    }
+    isSyncingRef.current = true;
     setIsSyncing(true);
+    setLastSyncError(null);
     try {
-      const result = await syncKovaCloud();
+      const result = await syncKovaCloud(trigger);
+      autoSyncFailureRef.current = 0;
+      nextAutoSyncAtRef.current = 0;
+      setLastSyncDiagnostics(result.diagnostics);
+      setLastSuccessfulSyncAt(result.diagnostics.finishedAt ?? result.diagnostics.startedAt ?? new Date().toISOString());
       const refreshed = await fetch(undefined, selectedFolderId ?? undefined);
       if (selectedNote) {
         const nextSelected = refreshed.find((note) => note.id === selectedNote.id) ?? null;
@@ -344,21 +422,187 @@ export default function App() {
       db.list().then((all: Note[]) => setAllNotes(all));
       db.listFolders().then(setFolders);
       await refreshCloudConflictCount();
+      await refreshSyncStatus();
       if (result.conflicts > 0) {
         setCloudConflictCount(result.conflicts);
         setShowConflicts(true);
         showToast(`同步完成，${result.conflicts} 条冲突待处理`);
-      } else if (result.pushed > 0 || result.pulled > 0) {
+      } else if (result.skipped > 0) {
+        showToast(`同步完成，已保护 ${result.skipped} 条本地未同步内容`);
+      } else if (!options?.silent && (result.pushed > 0 || result.pulled > 0)) {
         showToast(`同步完成：推送 ${result.pushed}，拉取 ${result.pulled}`);
-      } else {
+      } else if (!options?.silent) {
         showToast("已是最新");
       }
+      return true;
     } catch (error) {
-      showToast(error instanceof Error ? error.message : "同步失败");
+      const message = error instanceof Error ? error.message : "同步失败";
+      setLastSyncError(message);
+      await refreshSyncStatus();
+      if (!options?.silent) showToast(message);
+      return false;
     } finally {
+      isSyncingRef.current = false;
       setIsSyncing(false);
     }
-  };
+  }, [fetch, isEditorDirty, refreshSyncStatus, selectedFolderId, selectedNote]);
+
+  useEffect(() => {
+    if (!keepaliveSyncEnabled || !cloudSession || !isOnline) {
+      clearKeepaliveSyncTimer();
+      setNextKeepaliveSyncAt(null);
+      return;
+    }
+
+    let cancelled = false;
+    const intervalMs = keepaliveSyncIntervalMinutes * 60 * 1000;
+
+    const scheduleKeepaliveAttempt = (delayMs: number) => {
+      clearKeepaliveSyncTimer();
+      const normalizedDelay = Math.max(0, delayMs);
+      setNextKeepaliveSyncAt(Date.now() + normalizedDelay);
+      keepaliveSyncTimerRef.current = window.setTimeout(() => {
+        keepaliveSyncTimerRef.current = null;
+        if (cancelled) return;
+        if (document.visibilityState !== "visible" || isEditorDirtyRef.current || isSyncingRef.current) {
+          scheduleKeepaliveAttempt(Math.min(KEEPALIVE_BLOCKED_RETRY_MS, intervalMs));
+          return;
+        }
+        void (async () => {
+          const ok = await handleSync({ silent: true, trigger: "interval" });
+          if (cancelled || ok) return;
+          autoSyncFailureRef.current += 1;
+          const delay = Math.min(30 * 60 * 1000, 60 * 1000 * 2 ** Math.min(autoSyncFailureRef.current, 5));
+          nextAutoSyncAtRef.current = Date.now() + delay;
+          scheduleKeepaliveAttempt(delay);
+        })();
+      }, normalizedDelay);
+    };
+
+    scheduleKeepaliveAttempt(intervalMs);
+
+    return () => {
+      cancelled = true;
+      clearKeepaliveSyncTimer();
+    };
+  }, [clearKeepaliveSyncTimer, cloudSession, handleSync, isOnline, keepaliveSyncEnabled, keepaliveSyncIntervalMinutes, lastSuccessfulSyncAt]);
+
+  const scheduleAutoSyncAttempt = useCallback((delayMs: number, trigger: SyncRunDiagnostics["trigger"]) => {
+    if (autoSyncTimerRef.current) {
+      window.clearTimeout(autoSyncTimerRef.current);
+      autoSyncTimerRef.current = null;
+    }
+    if (!cloudSession || !isOnline) return;
+
+    autoSyncTimerRef.current = window.setTimeout(() => {
+      autoSyncTimerRef.current = null;
+
+      if (document.visibilityState !== "visible" || isEditorDirty) return;
+
+      const now = Date.now();
+      if (now < nextAutoSyncAtRef.current) {
+        scheduleAutoSyncAttempt(nextAutoSyncAtRef.current - now, trigger);
+        return;
+      }
+
+      void (async () => {
+        const ok = await handleSync({ silent: true, trigger });
+        if (ok) return;
+        autoSyncFailureRef.current += 1;
+        const delay = Math.min(30 * 60 * 1000, 60 * 1000 * 2 ** Math.min(autoSyncFailureRef.current, 5));
+        nextAutoSyncAtRef.current = Date.now() + delay;
+        scheduleAutoSyncAttempt(delay, "interval");
+      })();
+    }, Math.max(0, delayMs));
+  }, [cloudSession, handleSync, isEditorDirty, isOnline]);
+
+  useEffect(() => {
+    const handleOnline = () => {
+      setIsOnline(true);
+      refreshSyncStatus();
+      autoSyncFailureRef.current = 0;
+      nextAutoSyncAtRef.current = 0;
+
+      const pendingCount = syncStatus?.pending_changes ?? 0;
+      const hasPendingWork = pendingCount > 0 || syncFailureCount > 0;
+      if (hasPendingWork) {
+        scheduleAutoSyncAttempt(AUTO_SYNC_VISIBLE_DELAY_MS, "online");
+      }
+    };
+    const handleOffline = () => {
+      setIsOnline(false);
+      if (autoSyncTimerRef.current) {
+        window.clearTimeout(autoSyncTimerRef.current);
+        autoSyncTimerRef.current = null;
+      }
+    };
+    window.addEventListener("online", handleOnline);
+    window.addEventListener("offline", handleOffline);
+    return () => {
+      window.removeEventListener("online", handleOnline);
+      window.removeEventListener("offline", handleOffline);
+    };
+  }, [refreshSyncStatus, scheduleAutoSyncAttempt, syncFailureCount, syncStatus]);
+
+  useEffect(() => {
+    if (!cloudSession || !isOnline) return;
+
+    const pendingCount = syncStatus?.pending_changes ?? 0;
+    const hasPendingWork = pendingCount > 0 || syncFailureCount > 0;
+    if (hasPendingWork) {
+      scheduleAutoSyncAttempt(AUTO_SYNC_STARTUP_DELAY_MS, "startup");
+    }
+
+    return () => {
+      if (autoSyncTimerRef.current) {
+        window.clearTimeout(autoSyncTimerRef.current);
+        autoSyncTimerRef.current = null;
+      }
+    };
+  }, [cloudSession, isOnline, scheduleAutoSyncAttempt, syncFailureCount, syncStatus]);
+
+  useEffect(() => {
+    if (!cloudSession || !isOnline || isEditorDirty) return;
+    const pendingCount = syncStatus?.pending_changes ?? 0;
+    const hasPendingWork = pendingCount > 0 || syncFailureCount > 0;
+    if (!hasPendingWork) return;
+    scheduleAutoSyncAttempt(AUTO_SYNC_DEBOUNCE_MS, "interval");
+  }, [cloudSession, isEditorDirty, isOnline, scheduleAutoSyncAttempt, syncFailureCount, syncStatus]);
+
+  useEffect(() => {
+    const handleVisibilityChange = () => {
+      if (document.visibilityState !== "visible" || !cloudSession || !isOnline) return;
+      const pendingCount = syncStatus?.pending_changes ?? 0;
+      const hasPendingWork = pendingCount > 0 || syncFailureCount > 0;
+      if (hasPendingWork) {
+        scheduleAutoSyncAttempt(AUTO_SYNC_VISIBLE_DELAY_MS, "interval");
+      }
+    };
+    document.addEventListener("visibilitychange", handleVisibilityChange);
+    return () => document.removeEventListener("visibilitychange", handleVisibilityChange);
+  }, [cloudSession, isOnline, scheduleAutoSyncAttempt, syncFailureCount, syncStatus]);
+
+  useEffect(() => {
+    const handler = (event: Event) => {
+      const action = (event as CustomEvent<{ action?: string }>).detail?.action;
+      setShowLogin(false);
+      if (action === "upload") {
+        void handleSync();
+        return;
+      }
+      if (action === "restore") {
+        setShowSettings(true);
+        setShowAI(false);
+        showToast("请在设置页打开云备份列表并选择快照恢复");
+        return;
+      }
+      if (action === "merge") {
+        setShowConflicts(true);
+      }
+    };
+    window.addEventListener("kova-cloud-first-sync", handler);
+    return () => window.removeEventListener("kova-cloud-first-sync", handler);
+  }, [handleSync]);
 
   const filteredNotes = search
     ? notes.filter((n) => n.content.toLowerCase().includes(search.toLowerCase()) || n.title.toLowerCase().includes(search.toLowerCase()))
@@ -396,9 +640,10 @@ export default function App() {
                 }
                 await db.createFolder(name, parentId);
                 db.listFolders().then(setFolders);
+                await refreshSyncStatus();
                 showToast("文件夹已新建");
               }}
-              onFolderRename={async (id, name) => { await db.updateFolder(id, name); db.listFolders().then(setFolders); showToast("文件夹已重命名"); }}
+              onFolderRename={async (id, name) => { await db.updateFolder(id, name); db.listFolders().then(setFolders); await refreshSyncStatus(); showToast("文件夹已重命名"); }}
               onFolderDelete={async (id) => {
                 await db.deleteFolder(id);
                 db.listFolders().then((updated) => {
@@ -407,9 +652,10 @@ export default function App() {
                     setSelectedFolderId(updated.length > 0 ? updated[0].id : "");
                   }
                 });
+                await refreshSyncStatus();
                 showToast("文件夹已删除");
               }}
-              onMoveToFolder={async (noteId, folderId) => { await db.moveToFolder(noteId, folderId ?? undefined); fetch(undefined, selectedFolderId ?? undefined); showToast("笔记已移动"); }}
+              onMoveToFolder={async (noteId, folderId) => { await db.moveToFolder(noteId, folderId ?? undefined); await refreshSyncStatus(); fetch(undefined, selectedFolderId ?? undefined); showToast("笔记已移动"); }}
               onMoveMultipleToFolder={async (noteIds, folderId) => {
                 for (const id of noteIds) { await db.moveToFolder(id, folderId ?? undefined); }
                 const updated = await fetch(undefined, selectedFolderId ?? undefined);
@@ -417,10 +663,11 @@ export default function App() {
                   setSelectedNote(updated.length > 0 ? updated[0] : null);
                 }
                 db.list().then((all: Note[]) => setAllNotes(all));
+                await refreshSyncStatus();
                 showToast(noteIds.length > 1 ? `${noteIds.length} 条笔记已移动` : "笔记已移动");
               }}
               onDeselectNote={handleDeselectNote}
-              onImported={() => { fetch(undefined, selectedFolderId ?? undefined); db.list().then((all: Note[]) => setAllNotes(all)); }}
+              onImported={() => { fetch(undefined, selectedFolderId ?? undefined); db.list().then((all: Note[]) => setAllNotes(all)); void refreshSyncStatus(); }}
               onAddToAIContext={handleAddToAIContext}
               onAddToNewAIContext={handleAddToNewAIContext}
             />
@@ -447,15 +694,17 @@ export default function App() {
               </div>
             </>
           )}
-          <StatusBar selectedNote={selectedNote} noteCount={filteredNotes.length} />
-        </div>
-
-        {/* Settings panel */}
-        <div className="relative shrink-0 flex overflow-hidden" style={{ width: showSettings && !showAI ? settings.width : 0, transition: isDragging ? "none" : "width 0.5s cubic-bezier(0.22,1,0.36,1)" }}>
-          <div className="w-1 shrink-0 bg-paper-deep/30 cursor-col-resize hover:bg-accent/40 transition-colors" onMouseDown={settings.handleMouseDown} />
-          <div className="h-full shrink-0 overflow-hidden" style={{ width: settings.width - 4 }}>
-            <SettingsPanel onClose={() => setShowSettings(false)} mode={mode} onImported={() => { fetch(undefined, selectedFolderId ?? undefined); db.list().then((all: Note[]) => setAllNotes(all)); }} />
-          </div>
+          <StatusBar
+            selectedNote={selectedNote}
+            noteCount={filteredNotes.length}
+            syncStatus={syncStatus}
+            failedSyncCount={syncFailureCount}
+            isOnline={isOnline}
+            isSyncing={isSyncing}
+            lastSyncError={lastSyncError}
+            lastSyncDiagnostics={lastSyncDiagnostics}
+            onRetrySync={() => void handleSync()}
+          />
         </div>
 
         {/* AI panel */}
@@ -474,6 +723,27 @@ export default function App() {
           </div>
         </div>
       </div>
+
+      {showSettings && !showAI && (
+        <SettingsPanel
+          onClose={() => setShowSettings(false)}
+          mode={mode}
+          onImported={() => { fetch(undefined, selectedFolderId ?? undefined); db.list().then((all: Note[]) => setAllNotes(all)); }}
+          keepaliveSyncEnabled={keepaliveSyncEnabled}
+          keepaliveSyncIntervalMinutes={keepaliveSyncIntervalMinutes}
+          lastSyncAt={lastSyncDiagnostics?.finishedAt ?? lastSyncDiagnostics?.startedAt ?? null}
+          nextSyncAt={nextKeepaliveSyncAt ? new Date(nextKeepaliveSyncAt).toISOString() : null}
+          onKeepaliveSyncEnabledChange={(enabled) => {
+            setKeepaliveSyncEnabled(enabled);
+            saveKeepaliveSyncEnabled(enabled);
+          }}
+          onKeepaliveSyncIntervalMinutesChange={(minutes) => {
+            const normalized = Math.max(1, Math.round(minutes));
+            setKeepaliveSyncIntervalMinutes(normalized);
+            saveKeepaliveSyncIntervalMinutes(normalized);
+          }}
+        />
+      )}
 
       {showLogin && (
         <div className="fixed inset-0 z-[80] flex items-center justify-center bg-black/25 px-4" onMouseDown={() => setShowLogin(false)}>

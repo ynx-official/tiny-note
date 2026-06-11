@@ -1,7 +1,7 @@
 mod services;
 
 use services::db::Database;
-use services::models::{Note, Folder, Conversation, ChatMessage, SyncAck, SyncApplyPayload, SyncApplyResult, SyncChange, SyncFolderSnapshot, SyncNoteSnapshot, SyncRewriteNoteContentPayload, SyncStatus};
+use services::models::{ChatMessage, Conversation, Folder, Note, RestoreInspection, RestoreResult, SyncAck, SyncApplyPayload, SyncApplyResult, SyncAttachmentIndexItem, SyncChange, SyncFolderSnapshot, SyncNoteSnapshot, SyncRewriteNoteContentPayload, SyncStatus, UpsertAttachmentIndexPayload};
 use services::ai::AiService;
 use std::collections::HashSet;
 use std::sync::atomic::{AtomicU32, Ordering};
@@ -175,6 +175,7 @@ fn cleanup_orphan_attachments() -> Result<serde_json::Value, String> {
 
     let mut removed = 0usize;
     let mut bytes = 0u64;
+    let mut removed_asset_paths = Vec::new();
     for file in files {
         let rel = file
             .strip_prefix(&attachments_dir)
@@ -189,10 +190,13 @@ fn cleanup_orphan_attachments() -> Result<serde_json::Value, String> {
             bytes += metadata.len();
         }
         std::fs::remove_file(&file).map_err(|e| e.to_string())?;
+        removed_asset_paths.push(asset_url);
         removed += 1;
     }
 
-    Ok(serde_json::json!({ "removed": removed, "bytes": bytes }))
+    db().mark_attachment_index_deleted(removed_asset_paths.clone())?;
+
+    Ok(serde_json::json!({ "removed": removed, "bytes": bytes, "assetPaths": removed_asset_paths }))
 }
 
 #[tauri::command]
@@ -318,6 +322,26 @@ fn move_note_to_folder(id: String, folder_id: Option<String>) -> Result<(), Stri
 }
 
 #[tauri::command]
+fn mark_attachment_index_deleted(asset_paths: Vec<String>) -> Result<(), String> {
+    db().mark_attachment_index_deleted(asset_paths)
+}
+
+#[tauri::command]
+fn replace_note_attachment_url(note_id: String, source_url: String, target_url: String) -> Result<(), String> {
+    db().replace_note_attachment_url(note_id, source_url, target_url)
+}
+
+#[tauri::command]
+fn upsert_attachment_index(payload: UpsertAttachmentIndexPayload) -> Result<(), String> {
+    db().upsert_attachment_index(payload)
+}
+
+#[tauri::command]
+fn list_attachment_index() -> Result<Vec<SyncAttachmentIndexItem>, String> {
+    db().list_attachment_index()
+}
+
+#[tauri::command]
 fn get_sync_status() -> Result<SyncStatus, String> {
     db().get_sync_status()
 }
@@ -340,6 +364,11 @@ fn list_sync_note_snapshots() -> Result<Vec<SyncNoteSnapshot>, String> {
 #[tauri::command]
 fn acknowledge_sync_push(acknowledgements: Vec<SyncAck>, cursor: i64) -> Result<(), String> {
     db().acknowledge_sync_push(acknowledgements, cursor)
+}
+
+#[tauri::command]
+fn mark_sync_push_failed(change_ids: Vec<String>, error: String) -> Result<(), String> {
+    db().mark_sync_push_failed(change_ids, error)
 }
 
 #[tauri::command]
@@ -402,12 +431,17 @@ fn export_note_pdf(id: String, dest_dir: String, watermark: String, watermark_op
 }
 
 #[tauri::command]
-fn backup_data(dest_dir: String) -> Result<String, String> {
-    db().backup(&dest_dir)
+fn inspect_restore_data(src_path: String) -> Result<RestoreInspection, String> {
+    db().inspect_restore(&src_path)
 }
 
 #[tauri::command]
-fn restore_data(src_path: String) -> Result<(), String> {
+fn backup_data(dest_dir: String, settings_json: Option<String>) -> Result<String, String> {
+    db().backup(&dest_dir, settings_json.as_deref())
+}
+
+#[tauri::command]
+fn restore_data(src_path: String) -> Result<RestoreResult, String> {
     db().restore(&src_path)
 }
 
@@ -871,9 +905,9 @@ pub fn run() {
             create_note, get_notes, update_note, delete_note,
             save_attachment, read_attachment, cleanup_orphan_attachments, read_binary_file, download_file_to_data_dir, download_remote_image,
             create_folder, get_folders, update_folder, delete_folder, move_note_to_folder,
-            get_sync_status, list_pending_sync_changes, list_sync_folder_snapshots, list_sync_note_snapshots, acknowledge_sync_push, update_pull_cursor, rewrite_note_content_after_sync, apply_sync_payload,
+            get_sync_status, list_pending_sync_changes, list_sync_folder_snapshots, list_sync_note_snapshots, mark_attachment_index_deleted, replace_note_attachment_url, upsert_attachment_index, list_attachment_index, acknowledge_sync_push, mark_sync_push_failed, update_pull_cursor, rewrite_note_content_after_sync, apply_sync_payload,
             get_data_dir, set_data_dir, import_md_file, import_file, export_note, export_note_html, export_note_txt, export_note_pdf,
-            backup_data, restore_data, abort_ai, toggle_conversation_pinned, export_conversation, open_path, write_file, read_file, copy_file, download_font, get_window_size, save_quick_window_size,
+            inspect_restore_data, backup_data, restore_data, abort_ai, toggle_conversation_pinned, export_conversation, open_path, write_file, read_file, copy_file, download_font, get_window_size, save_quick_window_size,
             toggle_window, get_cursor_position, create_quick_window, update_quick_shortcut,
             ai_chat, ai_chat_stream, create_conversation, get_conversations, update_conversation_title, delete_conversation,
             get_messages, get_ai_config, save_ai_config,

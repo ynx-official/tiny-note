@@ -88,6 +88,11 @@ export function LoginPanel({ onClose }: LoginPanelProps) {
     }
   };
 
+  const handleFirstSyncAction = (action: "upload" | "restore" | "merge") => {
+    window.dispatchEvent(new CustomEvent("kova-cloud-first-sync", { detail: { action } }));
+    onClose();
+  };
+
   return (
     <section className="w-[380px] max-w-[calc(100vw-32px)] rounded-2xl border border-paper-deep/70 bg-paper shadow-2xl overflow-hidden">
       <div className="h-13 px-5 flex items-center justify-between border-b border-paper-deep/50 bg-cloud/40">
@@ -138,6 +143,21 @@ export function LoginPanel({ onClose }: LoginPanelProps) {
                   <span className="text-ink-soft truncate">{currentUser.userId}</span>
                 </div>
               )}
+            </div>
+
+            <div className="rounded-xl border border-accent/20 bg-accent-mist/30 px-3 py-3 space-y-2">
+              <div>
+                <div className="text-xs font-medium text-ink-soft">首次同步</div>
+                <div className="text-[11px] text-ink-ghost mt-0.5">选择本机数据和云端数据的初始关系。</div>
+              </div>
+              <div className="grid grid-cols-3 gap-1.5">
+                <button type="button" onClick={() => handleFirstSyncAction("upload")}
+                  className="h-8 rounded-lg bg-accent text-white text-[11px] hover:opacity-90 transition">本地上传</button>
+                <button type="button" onClick={() => handleFirstSyncAction("restore")}
+                  className="h-8 rounded-lg border border-paper-deep/60 text-[11px] text-ink-faint hover:text-accent hover:bg-paper-warm transition">云端恢复</button>
+                <button type="button" onClick={() => handleFirstSyncAction("merge")}
+                  className="h-8 rounded-lg border border-paper-deep/60 text-[11px] text-ink-faint hover:text-accent hover:bg-paper-warm transition">手动合并</button>
+              </div>
             </div>
 
             {message && (

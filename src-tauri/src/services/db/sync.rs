@@ -4,14 +4,112 @@ use serde_json::Value;
 use uuid::Uuid;
 
 use super::Database;
-use crate::services::models::{SyncAck, SyncApplyPayload, SyncApplyResult, SyncChange, SyncFolderSnapshot, SyncNoteSnapshot, SyncRewriteNoteContentPayload, SyncStatus};
+use crate::services::models::{SyncAck, SyncApplyPayload, SyncApplyResult, SyncAttachmentIndexItem, SyncChange, SyncFolderSnapshot, SyncNoteSnapshot, SyncRewriteNoteContentPayload, SyncStatus, UpsertAttachmentIndexPayload};
 
 impl Database {
+    pub fn mark_attachment_index_deleted(&self, asset_paths: Vec<String>) -> Result<(), String> {
+        if asset_paths.is_empty() {
+            return Ok(());
+        }
+        let mut conn = self.conn.lock().map_err(|e| e.to_string())?;
+        let tx = conn.transaction().map_err(|e| e.to_string())?;
+        let now = Utc::now().to_rfc3339();
+        for asset_path in asset_paths {
+            tx.execute(
+                "UPDATE attachment_index SET upload_status = 'deleted', deleted_at = ?1, updated_at = ?1 WHERE asset_path = ?2",
+                params![now, asset_path],
+            ).map_err(|e| e.to_string())?;
+        }
+        tx.commit().map_err(|e| e.to_string())?;
+        Ok(())
+    }
+
+    pub fn replace_note_attachment_url(&self, note_id: String, source_url: String, target_url: String) -> Result<(), String> {
+        if source_url.is_empty() || target_url.is_empty() || source_url == target_url {
+            return Ok(());
+        }
+        let conn = self.conn.lock().map_err(|e| e.to_string())?;
+        let now = Utc::now().to_rfc3339();
+        conn.execute(
+            "UPDATE notes SET content = REPLACE(content, ?1, ?2), updated_at = ?3
+             WHERE id = ?4 AND deleted_at IS NULL AND content LIKE '%' || ?1 || '%'",
+            params![source_url, target_url, now, note_id],
+        ).map_err(|e| e.to_string())?;
+        Ok(())
+    }
+
+    pub fn upsert_attachment_index(&self, payload: UpsertAttachmentIndexPayload) -> Result<(), String> {
+        let conn = self.conn.lock().map_err(|e| e.to_string())?;
+        let now = Utc::now().to_rfc3339();
+        conn.execute(
+            "INSERT INTO attachment_index (
+                asset_path, note_id, file_name, mime_type, file_size, sha256, cloud_url, cloud_file_id,
+                upload_status, created_at, updated_at, deleted_at
+             ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?10, NULL)
+             ON CONFLICT(asset_path) DO UPDATE SET
+                note_id = excluded.note_id,
+                file_name = excluded.file_name,
+                mime_type = excluded.mime_type,
+                file_size = excluded.file_size,
+                sha256 = excluded.sha256,
+                cloud_url = excluded.cloud_url,
+                cloud_file_id = excluded.cloud_file_id,
+                upload_status = excluded.upload_status,
+                updated_at = excluded.updated_at,
+                deleted_at = NULL",
+            params![
+                payload.asset_path,
+                payload.note_id,
+                payload.file_name,
+                payload.mime_type,
+                payload.file_size,
+                payload.sha256,
+                payload.cloud_url,
+                payload.cloud_file_id,
+                payload.upload_status,
+                now,
+            ],
+        ).map_err(|e| e.to_string())?;
+        Ok(())
+    }
+
+    pub fn list_attachment_index(&self) -> Result<Vec<SyncAttachmentIndexItem>, String> {
+        let conn = self.conn.lock().map_err(|e| e.to_string())?;
+        let mut stmt = conn.prepare(
+            "SELECT asset_path, note_id, file_name, mime_type, file_size, sha256, cloud_url, cloud_file_id,
+                    upload_status, updated_at, deleted_at
+             FROM attachment_index
+             WHERE deleted_at IS NULL
+             ORDER BY updated_at ASC"
+        ).map_err(|e| e.to_string())?;
+        let rows = stmt.query_map([], |row| {
+            Ok(SyncAttachmentIndexItem {
+                asset_path: row.get(0)?,
+                note_id: row.get(1)?,
+                file_name: row.get(2)?,
+                mime_type: row.get(3)?,
+                file_size: row.get(4)?,
+                sha256: row.get(5)?,
+                cloud_url: row.get(6)?,
+                cloud_file_id: row.get(7)?,
+                upload_status: row.get(8)?,
+                updated_at: row.get(9)?,
+                deleted_at: row.get(10)?,
+            })
+        }).map_err(|e| e.to_string())?;
+
+        let mut items = Vec::new();
+        for row in rows {
+            items.push(row.map_err(|e| e.to_string())?);
+        }
+        Ok(items)
+    }
+
     pub fn get_sync_status(&self) -> Result<SyncStatus, String> {
         let conn = self.conn.lock().map_err(|e| e.to_string())?;
         let device_id = Self::ensure_device_id(&conn)?;
         let pending_changes = conn.query_row(
-            "SELECT COUNT(*) FROM sync_changes WHERE status = 'pending'",
+            "SELECT COUNT(*) FROM sync_changes WHERE status IN ('pending', 'failed')",
             [],
             |row| row.get::<_, i64>(0),
         ).map_err(|e| e.to_string())?;
@@ -43,8 +141,8 @@ impl Database {
         let mut stmt = conn.prepare(
             "SELECT id, entity_type, entity_id, operation, payload, base_version, device_id, status, created_at, synced_at, error
              FROM sync_changes
-             WHERE status = 'pending'
-             ORDER BY created_at ASC"
+             WHERE status IN ('pending', 'failed')
+             ORDER BY COALESCE(last_attempt_at, created_at) ASC"
         ).map_err(|e| e.to_string())?;
         let rows = stmt.query_map([], |row| {
             Ok(SyncChange {
@@ -136,7 +234,7 @@ impl Database {
             if ack.status == "conflict" {
                 tx.execute(
                     "UPDATE sync_changes SET status = 'conflict', error = 'server conflict', synced_at = ?1
-                     WHERE entity_type = ?2 AND entity_id = ?3 AND status = 'pending'",
+                     WHERE entity_type = ?2 AND entity_id = ?3 AND status IN ('pending', 'failed')",
                     params![now, ack.entity_type, ack.client_id],
                 ).map_err(|e| e.to_string())?;
                 continue;
@@ -154,9 +252,17 @@ impl Database {
                 ).map_err(|e| e.to_string())?;
             }
 
+            if ack.entity_type == "attachment" && ack.status != "conflict" {
+                tx.execute(
+                    "UPDATE attachment_index SET upload_status = 'synced', cloud_file_id = COALESCE(?1, cloud_file_id), updated_at = ?2
+                     WHERE asset_path = ?3",
+                    params![ack.cloud_id, now, ack.client_id],
+                ).map_err(|e| e.to_string())?;
+            }
+
             tx.execute(
                 "UPDATE sync_changes SET status = 'synced', synced_at = ?1, error = NULL
-                 WHERE entity_type = ?2 AND entity_id = ?3 AND status = 'pending'",
+                 WHERE entity_type = ?2 AND entity_id = ?3 AND status IN ('pending', 'failed')",
                 params![now, ack.entity_type, ack.client_id],
             ).map_err(|e| e.to_string())?;
         }
@@ -169,6 +275,25 @@ impl Database {
             "INSERT OR REPLACE INTO sync_state (key, value) VALUES ('last_synced_at', ?1)",
             params![now],
         ).map_err(|e| e.to_string())?;
+        tx.commit().map_err(|e| e.to_string())?;
+        Ok(())
+    }
+
+    pub fn mark_sync_push_failed(&self, change_ids: Vec<String>, error: String) -> Result<(), String> {
+        if change_ids.is_empty() {
+            return Ok(());
+        }
+        let mut conn = self.conn.lock().map_err(|e| e.to_string())?;
+        let tx = conn.transaction().map_err(|e| e.to_string())?;
+        let now = Utc::now().to_rfc3339();
+        for change_id in change_ids {
+            tx.execute(
+                "UPDATE sync_changes
+                 SET status = 'failed', error = ?1, retry_count = retry_count + 1, last_attempt_at = ?2
+                 WHERE id = ?3 AND status IN ('pending', 'failed')",
+                params![&error, &now, change_id],
+            ).map_err(|e| e.to_string())?;
+        }
         tx.commit().map_err(|e| e.to_string())?;
         Ok(())
     }
@@ -197,7 +322,7 @@ impl Database {
             params![payload.content, payload.sync_version, payload.cloud_id, now, payload.client_id],
         ).map_err(|e| e.to_string())?;
         conn.execute(
-            "DELETE FROM sync_changes WHERE entity_type = 'note' AND entity_id = ?1 AND status IN ('pending', 'conflict')",
+            "DELETE FROM sync_changes WHERE entity_type = 'note' AND entity_id = ?1 AND status IN ('pending', 'failed', 'conflict')",
             params![payload.client_id],
         ).map_err(|e| e.to_string())?;
         Ok(())
@@ -206,15 +331,53 @@ impl Database {
     pub fn apply_sync_payload(&self, payload: SyncApplyPayload) -> Result<SyncApplyResult, String> {
         let conn = self.conn.lock().map_err(|e| e.to_string())?;
         let data: Value = serde_json::from_str(&payload.payload).map_err(|e| format!("同步内容格式错误: {}", e))?;
-        let applied = match payload.entity_type.as_str() {
-            "note" => Self::apply_note_payload(&conn, &data)?,
-            "folder" => Self::apply_folder_payload(&conn, &data)?,
-            _ => false,
-        };
-        Ok(SyncApplyResult { applied })
+        match payload.entity_type.as_str() {
+            "note" => Self::apply_note_payload(&conn, &data),
+            "folder" => Self::apply_folder_payload(&conn, &data),
+            "attachment" => Self::apply_attachment_payload(&conn, &data),
+            _ => Ok(SyncApplyResult { applied: false, skipped: false, reason: None }),
+        }
     }
 
-    fn apply_note_payload(conn: &Connection, data: &Value) -> Result<bool, String> {
+    fn entity_has_local_changes(conn: &Connection, entity_type: &str, entity_id: &str, cloud_id: Option<&str>) -> Result<bool, String> {
+        let by_id: i64 = conn.query_row(
+            "SELECT COUNT(*) FROM sync_changes WHERE entity_type = ?1 AND entity_id = ?2 AND status IN ('pending', 'failed', 'conflict')",
+            params![entity_type, entity_id],
+            |row| row.get(0),
+        ).map_err(|e| e.to_string())?;
+        if by_id > 0 {
+            return Ok(true);
+        }
+        if let Some(cloud_id) = cloud_id {
+            let table = match entity_type {
+                "note" => "notes",
+                "folder" => "folders",
+                _ => return Ok(false),
+            };
+            let local_id: Option<String> = conn
+                .query_row(&format!("SELECT id FROM {} WHERE cloud_id = ?1", table), params![cloud_id], |row| row.get(0))
+                .ok();
+            if let Some(local_id) = local_id {
+                let by_cloud_id: i64 = conn.query_row(
+                    "SELECT COUNT(*) FROM sync_changes WHERE entity_type = ?1 AND entity_id = ?2 AND status IN ('pending', 'failed', 'conflict')",
+                    params![entity_type, local_id],
+                    |row| row.get(0),
+                ).map_err(|e| e.to_string())?;
+                return Ok(by_cloud_id > 0);
+            }
+        }
+        Ok(false)
+    }
+
+    fn skip_local_change_conflict(entity_type: &str, entity_id: &str) -> SyncApplyResult {
+        SyncApplyResult {
+            applied: false,
+            skipped: true,
+            reason: Some(format!("{}:{} 存在本地未同步变更，已跳过远端覆盖", entity_type, entity_id)),
+        }
+    }
+
+    fn apply_note_payload(conn: &Connection, data: &Value) -> Result<SyncApplyResult, String> {
         let now = Utc::now().to_rfc3339();
         let id = value_string(data, &["clientId", "client_id", "id"])
             .ok_or_else(|| "缺少笔记本地 ID".to_string())?;
@@ -227,6 +390,10 @@ impl Database {
         let deleted_at = value_string(data, &["deletedAt", "deleted_at"]);
         let updated_at = value_string(data, &["clientUpdatedAt", "client_updated_at", "updated_at"]).unwrap_or_else(|| now.clone());
         let created_at = value_string(data, &["clientCreatedAt", "client_created_at", "created_at"]).unwrap_or_else(|| updated_at.clone());
+
+        if Self::entity_has_local_changes(conn, "note", &id, cloud_id.as_deref())? {
+            return Ok(Self::skip_local_change_conflict("note", &id));
+        }
 
         let existing_id: Option<String> = if let Some(cloud_id) = cloud_id.as_deref() {
             conn.query_row("SELECT id FROM notes WHERE cloud_id = ?1", params![cloud_id], |row| row.get(0)).ok()
@@ -248,12 +415,12 @@ impl Database {
                 params![id, title, content, tags, folder_id, created_at, updated_at, sync_version, cloud_id, deleted_at, now],
             ).map_err(|e| e.to_string())?;
         }
-        conn.execute("DELETE FROM sync_changes WHERE entity_type = 'note' AND entity_id = ?1 AND status IN ('pending', 'conflict')", params![id])
+        conn.execute("DELETE FROM sync_changes WHERE entity_type = 'note' AND entity_id = ?1 AND status IN ('pending', 'failed', 'conflict')", params![id])
             .map_err(|e| e.to_string())?;
-        Ok(true)
+        Ok(SyncApplyResult { applied: true, skipped: false, reason: None })
     }
 
-    fn apply_folder_payload(conn: &Connection, data: &Value) -> Result<bool, String> {
+    fn apply_folder_payload(conn: &Connection, data: &Value) -> Result<SyncApplyResult, String> {
         let now = Utc::now().to_rfc3339();
         let id = value_string(data, &["clientId", "client_id", "id"])
             .ok_or_else(|| "缺少目录本地 ID".to_string())?;
@@ -264,6 +431,10 @@ impl Database {
         let deleted_at = value_string(data, &["deletedAt", "deleted_at"]);
         let updated_at = value_string(data, &["clientUpdatedAt", "client_updated_at", "updated_at"]).unwrap_or_else(|| now.clone());
         let created_at = value_string(data, &["clientCreatedAt", "client_created_at", "created_at"]).unwrap_or_else(|| updated_at.clone());
+
+        if Self::entity_has_local_changes(conn, "folder", &id, cloud_id.as_deref())? {
+            return Ok(Self::skip_local_change_conflict("folder", &id));
+        }
 
         let existing_id: Option<String> = if let Some(cloud_id) = cloud_id.as_deref() {
             conn.query_row("SELECT id FROM folders WHERE cloud_id = ?1", params![cloud_id], |row| row.get(0)).ok()
@@ -284,9 +455,47 @@ impl Database {
                 params![id, name, parent_id, created_at, updated_at, sync_version, cloud_id, deleted_at, now],
             ).map_err(|e| e.to_string())?;
         }
-        conn.execute("DELETE FROM sync_changes WHERE entity_type = 'folder' AND entity_id = ?1 AND status IN ('pending', 'conflict')", params![id])
+        conn.execute("DELETE FROM sync_changes WHERE entity_type = 'folder' AND entity_id = ?1 AND status IN ('pending', 'failed', 'conflict')", params![id])
             .map_err(|e| e.to_string())?;
-        Ok(true)
+        Ok(SyncApplyResult { applied: true, skipped: false, reason: None })
+    }
+
+    fn apply_attachment_payload(conn: &Connection, data: &Value) -> Result<SyncApplyResult, String> {
+        let now = Utc::now().to_rfc3339();
+        let asset_path = value_string(data, &["assetPath", "asset_path"])
+            .or_else(|| value_string(data, &["storageKey", "storage_key"]))
+            .ok_or_else(|| "缺少附件路径".to_string())?;
+        let note_id = value_string(data, &["noteClientId", "note_client_id", "note_id"])
+            .unwrap_or_default();
+        let file_name = value_string(data, &["fileName", "file_name"])
+            .unwrap_or_else(|| asset_path.rsplit('/').next().unwrap_or("attachment").to_string());
+        let mime_type = value_string(data, &["mimeType", "mime_type"]);
+        let file_size = value_i64(data, &["fileSize", "file_size"]).unwrap_or(0);
+        let sha256 = value_string(data, &["sha256"]);
+        let cloud_url = value_string(data, &["storageKey", "storage_key", "cloudUrl", "cloud_url"]);
+        let cloud_file_id = value_string(data, &["fileId", "file_id", "cloudId", "cloud_id"]);
+        let deleted_at = value_string(data, &["deletedAt", "deleted_at"]);
+        let upload_status = if deleted_at.is_some() { "deleted" } else { "synced" };
+
+        conn.execute(
+            "INSERT INTO attachment_index (
+                asset_path, note_id, file_name, mime_type, file_size, sha256, cloud_url, cloud_file_id,
+                upload_status, created_at, updated_at, deleted_at
+             ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?10, ?11)
+             ON CONFLICT(asset_path) DO UPDATE SET
+                note_id = excluded.note_id,
+                file_name = excluded.file_name,
+                mime_type = excluded.mime_type,
+                file_size = excluded.file_size,
+                sha256 = excluded.sha256,
+                cloud_url = excluded.cloud_url,
+                cloud_file_id = excluded.cloud_file_id,
+                upload_status = excluded.upload_status,
+                updated_at = excluded.updated_at,
+                deleted_at = excluded.deleted_at",
+            params![asset_path, note_id, file_name, mime_type, file_size, sha256, cloud_url, cloud_file_id, upload_status, now, deleted_at],
+        ).map_err(|e| e.to_string())?;
+        Ok(SyncApplyResult { applied: true, skipped: false, reason: None })
     }
 
     pub(crate) fn ensure_device_id(conn: &Connection) -> Result<String, String> {
@@ -309,9 +518,44 @@ impl Database {
         payload: &str,
         base_version: i64,
     ) -> Result<(), String> {
-        let id = Uuid::new_v4().to_string();
         let now = Utc::now().to_rfc3339();
         let device_id = Self::ensure_device_id(conn)?;
+        let existing: Option<(String, String, i64)> = conn.query_row(
+            "SELECT id, operation, base_version FROM sync_changes
+             WHERE entity_type = ?1 AND entity_id = ?2 AND status IN ('pending', 'failed')
+             ORDER BY created_at ASC LIMIT 1",
+            params![entity_type, entity_id],
+            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+        ).ok();
+
+        if let Some((existing_id, existing_operation, existing_base_version)) = existing {
+            if existing_operation == "create" && operation == "delete" {
+                conn.execute("DELETE FROM sync_changes WHERE id = ?1", params![existing_id])
+                    .map_err(|e| e.to_string())?;
+                return Ok(());
+            }
+            let next_operation = if existing_operation == "create" && operation != "delete" {
+                "create"
+            } else {
+                operation
+            };
+            let next_base_version = if existing_operation == "create" { existing_base_version } else { base_version };
+            conn.execute(
+                "UPDATE sync_changes
+                 SET operation = ?1, payload = ?2, base_version = ?3, device_id = ?4, status = 'pending',
+                     created_at = ?5, synced_at = NULL, error = NULL, last_attempt_at = NULL
+                 WHERE id = ?6",
+                params![next_operation, payload, next_base_version, device_id, now, existing_id],
+            ).map_err(|e| e.to_string())?;
+            conn.execute(
+                "DELETE FROM sync_changes
+                 WHERE entity_type = ?1 AND entity_id = ?2 AND status IN ('pending', 'failed') AND id <> ?3",
+                params![entity_type, entity_id, existing_id],
+            ).map_err(|e| e.to_string())?;
+            return Ok(());
+        }
+
+        let id = Uuid::new_v4().to_string();
         conn.execute(
             "INSERT INTO sync_changes (id, entity_type, entity_id, operation, payload, base_version, device_id, status, created_at)
              VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, 'pending', ?8)",

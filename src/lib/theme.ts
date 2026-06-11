@@ -17,6 +17,8 @@ export const DEFAULT_VIEW_MODE = "split";
 export const DEFAULT_SPLIT_RATIO = 50;
 export const DEFAULT_QUICK_PINNED = true;
 export const DEFAULT_QUICK_SHORTCUT = "Ctrl+Shift+N";
+export const DEFAULT_KEEPALIVE_SYNC_ENABLED = true;
+export const DEFAULT_KEEPALIVE_SYNC_INTERVAL_MINUTES = 10;
 
 // Preset fonts (only system default)
 export const PRESET_FONTS = [
@@ -222,6 +224,26 @@ export function loadQuickShortcut(): string {
 
 export function saveQuickShortcut(shortcut: string) {
   localStorage.setItem("fp-quick-shortcut", shortcut);
+}
+
+export function loadKeepaliveSyncEnabled(): boolean {
+  const val = localStorage.getItem("fp-keepalive-sync-enabled");
+  return val === null ? DEFAULT_KEEPALIVE_SYNC_ENABLED : val === "true";
+}
+
+export function saveKeepaliveSyncEnabled(enabled: boolean) {
+  localStorage.setItem("fp-keepalive-sync-enabled", String(enabled));
+}
+
+export function loadKeepaliveSyncIntervalMinutes(): number {
+  const raw = Number(localStorage.getItem("fp-keepalive-sync-interval-minutes"));
+  if (!Number.isFinite(raw) || raw <= 0) return DEFAULT_KEEPALIVE_SYNC_INTERVAL_MINUTES;
+  return Math.max(1, Math.round(raw));
+}
+
+export function saveKeepaliveSyncIntervalMinutes(minutes: number) {
+  const normalized = Math.max(1, Math.round(minutes));
+  localStorage.setItem("fp-keepalive-sync-interval-minutes", String(normalized));
 }
 
 // Apply full theme for a mode

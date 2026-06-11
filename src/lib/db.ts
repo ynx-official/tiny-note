@@ -56,6 +56,32 @@ export interface SyncNoteSnapshot {
   deleted_at: string | null;
 }
 
+export interface SyncAttachmentIndexItem {
+  asset_path: string;
+  note_id: string;
+  file_name: string;
+  mime_type: string | null;
+  file_size: number;
+  sha256: string | null;
+  cloud_url: string | null;
+  cloud_file_id: string | null;
+  upload_status: string;
+  updated_at: string;
+  deleted_at: string | null;
+}
+
+export interface UpsertAttachmentIndexPayload {
+  asset_path: string;
+  note_id: string;
+  file_name: string;
+  mime_type?: string | null;
+  file_size: number;
+  sha256?: string | null;
+  cloud_url?: string | null;
+  cloud_file_id?: string | null;
+  upload_status: string;
+}
+
 export interface SyncApplyPayload {
   entity_type: string;
   payload: string;
@@ -70,6 +96,8 @@ export interface SyncRewriteNoteContentPayload {
 
 export interface SyncApplyResult {
   applied: boolean;
+  skipped?: boolean;
+  reason?: string | null;
 }
 
 export interface Note {
@@ -88,6 +116,53 @@ export interface Folder {
   parent_id: string | null;
   created_at: string;
   updated_at: string;
+}
+
+export interface RestoreInspectionItems {
+  has_database: boolean;
+  has_config: boolean;
+  has_settings: boolean;
+  has_attachments: boolean;
+  attachment_file_count: number;
+}
+
+export interface BackupManifestIncludes {
+  database: boolean;
+  config: boolean;
+  settings: boolean;
+  attachments: boolean;
+}
+
+export interface BackupManifest {
+  format: string;
+  version: number;
+  created_at: string;
+  note_count: number;
+  folder_count: number;
+  attachment_file_count: number;
+  includes: BackupManifestIncludes;
+}
+
+export interface RestoreInspection {
+  source_path: string;
+  archive_kind: string;
+  can_restore: boolean;
+  summary: string;
+  warnings: string[];
+  manifest_present: boolean;
+  manifest: BackupManifest | null;
+  items: RestoreInspectionItems;
+}
+
+export interface RestoreResult {
+  source_path: string;
+  restored_database: boolean;
+  restored_config: boolean;
+  restored_settings: boolean;
+  restored_attachment_files: number;
+  restored_settings_json: string | null;
+  pre_restore_backup_path: string;
+  message: string;
 }
 
 export const db = {
@@ -131,8 +206,23 @@ export const db = {
   listSyncNoteSnapshots: () =>
     invoke<SyncNoteSnapshot[]>("list_sync_note_snapshots"),
 
+  upsertAttachmentIndex: (payload: UpsertAttachmentIndexPayload) =>
+    invoke<void>("upsert_attachment_index", { payload }),
+
+  listAttachmentIndex: () =>
+    invoke<SyncAttachmentIndexItem[]>("list_attachment_index"),
+
+  replaceNoteAttachmentUrl: (noteId: string, sourceUrl: string, targetUrl: string) =>
+    invoke<void>("replace_note_attachment_url", { noteId, sourceUrl, targetUrl }),
+
+  markAttachmentIndexDeleted: (assetPaths: string[]) =>
+    invoke<void>("mark_attachment_index_deleted", { assetPaths }),
+
   acknowledgeSyncPush: (acknowledgements: SyncAck[], cursor: number) =>
     invoke<void>("acknowledge_sync_push", { acknowledgements, cursor: Number(cursor) }),
+
+  markSyncPushFailed: (changeIds: string[], error: string) =>
+    invoke<void>("mark_sync_push_failed", { changeIds, error }),
 
   updatePullCursor: (cursor: number) =>
     invoke<void>("update_pull_cursor", { cursor: Number(cursor) }),
@@ -180,13 +270,16 @@ export const db = {
     invoke<[number[], string]>("download_remote_image", { url }),
 
   cleanupOrphanAttachments: () =>
-    invoke<{ removed: number; bytes: number }>("cleanup_orphan_attachments"),
+    invoke<{ removed: number; bytes: number; assetPaths?: string[] }>("cleanup_orphan_attachments"),
 
-  backupData: (destDir: string) =>
-    invoke<string>("backup_data", { destDir }),
+  inspectRestoreData: (srcPath: string) =>
+    invoke<RestoreInspection>("inspect_restore_data", { srcPath }),
+
+  backupData: (destDir: string, settingsJson?: string) =>
+    invoke<string>("backup_data", { destDir, settingsJson: settingsJson ?? null }),
 
   restoreData: (srcPath: string) =>
-    invoke<void>("restore_data", { srcPath }),
+    invoke<RestoreResult>("restore_data", { srcPath }),
 
   readBinaryFile: (path: string) =>
     invoke<number[]>("read_binary_file", { path }),

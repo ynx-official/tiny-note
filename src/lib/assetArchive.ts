@@ -8,6 +8,7 @@ type ArchiveCache = Map<string, Promise<string>>;
 export type ArchivedMarkdown = {
   content: string;
   changed: boolean;
+  reused: number;
 };
 
 export function shouldArchiveImageUrl(url: string) {
@@ -64,6 +65,11 @@ async function loadImageBlob(url: string) {
   };
 }
 
+async function sha256Hex(blob: Blob) {
+  const digest = await crypto.subtle.digest("SHA-256", await blob.arrayBuffer());
+  return Array.from(new Uint8Array(digest)).map((byte) => byte.toString(16).padStart(2, "0")).join("");
+}
+
 function replaceAllImageUrls(content: string, replacements: Map<string, string>) {
   let next = content;
   for (const [source, target] of replacements) {
@@ -78,18 +84,66 @@ export async function uploadImageFileToCloud(file: File) {
   return uploaded.url;
 }
 
-export async function archiveMarkdownImages(content: string, archiveCache: ArchiveCache = new Map()): Promise<ArchivedMarkdown> {
+export async function archiveMarkdownImages(
+  content: string,
+  archiveCache: ArchiveCache = new Map(),
+  noteId?: string,
+): Promise<ArchivedMarkdown> {
   const urls = extractMarkdownImageUrls(content);
-  if (urls.length === 0) return { content, changed: false };
+  if (urls.length === 0) return { content, changed: false, reused: 0 };
+
+  const attachmentIndex = noteId ? await db.listAttachmentIndex().catch(() => []) : [];
+  const reusableCloudUrlBySha = new Map<string, string>(
+    attachmentIndex
+      .filter((item) => item.sha256 && item.cloud_url && !item.deleted_at)
+      .map((item) => [item.sha256 as string, item.cloud_url as string]),
+  );
 
   const replacements = new Map<string, string>();
+  let reused = 0;
+
   for (const url of urls) {
     let archived = archiveCache.get(url);
     if (!archived) {
       archived = (async () => {
         try {
           const { blob, fileName } = await loadImageBlob(url);
+          const sha256 = await sha256Hex(blob);
+          const reusableCloudUrl = reusableCloudUrlBySha.get(sha256) || null;
+
+          if (reusableCloudUrl) {
+            reused += 1;
+            if (noteId) {
+              await db.upsertAttachmentIndex({
+                asset_path: url,
+                note_id: noteId,
+                file_name: fileName,
+                mime_type: blob.type || null,
+                file_size: blob.size,
+                sha256,
+                cloud_url: reusableCloudUrl,
+                cloud_file_id: null,
+                upload_status: "uploaded",
+              });
+            }
+            return reusableCloudUrl;
+          }
+
           const uploaded = await uploadKovaAsset(blob, fileName);
+          if (noteId) {
+            await db.upsertAttachmentIndex({
+              asset_path: url,
+              note_id: noteId,
+              file_name: fileName,
+              mime_type: blob.type || null,
+              file_size: blob.size,
+              sha256,
+              cloud_url: uploaded.url,
+              cloud_file_id: uploaded.fileId == null ? null : String(uploaded.fileId),
+              upload_status: "uploaded",
+            });
+          }
+          reusableCloudUrlBySha.set(sha256, uploaded.url);
           return uploaded.url;
         } catch {
           return url;
@@ -97,6 +151,7 @@ export async function archiveMarkdownImages(content: string, archiveCache: Archi
       })();
       archiveCache.set(url, archived);
     }
+
     try {
       const nextUrl = await archived;
       if (nextUrl !== url) {
@@ -108,5 +163,5 @@ export async function archiveMarkdownImages(content: string, archiveCache: Archi
   }
 
   const nextContent = replaceAllImageUrls(content, replacements);
-  return { content: nextContent, changed: nextContent !== content };
+  return { content: nextContent, changed: nextContent !== content, reused };
 }

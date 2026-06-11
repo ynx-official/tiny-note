@@ -24,8 +24,8 @@ interface NoteDetailProps {
   note: Note | null;
   onToggleSidebar: () => void;
   onDelete: (id: string) => void;
-  onUpdateTitle: (id: string, title: string) => void;
-  onUpdateContent: (id: string, content: string) => void;
+  onUpdateTitle: (id: string, title: string) => void | Promise<void>;
+  onUpdateContent: (id: string, content: string) => void | Promise<void>;
   onDirtyChange?: (dirty: boolean) => void;
   onSaved?: () => void;
 }
@@ -38,10 +38,15 @@ export function NoteDetail({ note, onToggleSidebar, onDelete, onUpdateTitle, onU
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
   const [contextMenu, setContextMenu] = useState<{ x: number; y: number; items: ContextMenuItem[] } | null>(null);
   const [attachmentStatus, setAttachmentStatus] = useState<string | null>(null);
+  const [saveState, setSaveState] = useState<"idle" | "saving" | "failed">("idle");
+  const [saveError, setSaveError] = useState<string | null>(null);
   const editorViewRef = useRef<EditorView | null>(null);
   const titleTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const contentTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const prevNoteIdRef = useRef<string | null>(null);
+  const persistedTitleRef = useRef(note?.title ?? "");
+  const persistedContentRef = useRef(note?.content ?? "");
+  const persistInFlightRef = useRef(false);
   const containerRef = useRef<HTMLDivElement>(null);
   const previewRef = useRef<HTMLDivElement>(null);
   const [tabSize, setTabSize] = useState(loadTabSize);
@@ -49,7 +54,7 @@ export function NoteDetail({ note, onToggleSidebar, onDelete, onUpdateTitle, onU
   const getAutoSaveDelay = () => loadAutoSaveDelay();
 
   useEffect(() => {
-    onDirtyChange?.(Boolean(note && (editTitle !== note.title || editContent !== note.content)));
+    onDirtyChange?.(Boolean(note && (editTitle !== persistedTitleRef.current || editContent !== persistedContentRef.current)));
   }, [note, editTitle, editContent, onDirtyChange]);
 
   const handleEditorScroll = useCallback((scrollTop: number, scrollHeight: number, clientHeight: number) => {
@@ -65,14 +70,29 @@ export function NoteDetail({ note, onToggleSidebar, onDelete, onUpdateTitle, onU
 
     if (note.id !== prevNoteIdRef.current) {
       prevNoteIdRef.current = note.id;
+      persistedTitleRef.current = note.title;
+      persistedContentRef.current = note.content;
       setEditTitle(note.title);
       setEditContent(note.content);
       return;
     }
 
-    setEditTitle((current) => (current === note.title ? current : note.title));
-    setEditContent((current) => (current === note.content ? current : note.content));
-  }, [note?.id, note?.title, note?.content]);
+    const hasLocalDirty = editTitle !== persistedTitleRef.current || editContent !== persistedContentRef.current;
+    const matchesLocalEdit = editTitle === note.title && editContent === note.content;
+
+    if (matchesLocalEdit) {
+      persistedTitleRef.current = note.title;
+      persistedContentRef.current = note.content;
+      return;
+    }
+
+    if (!hasLocalDirty) {
+      persistedTitleRef.current = note.title;
+      persistedContentRef.current = note.content;
+      setEditTitle((current) => (current === note.title ? current : note.title));
+      setEditContent((current) => (current === note.content ? current : note.content));
+    }
+  }, [editContent, editTitle, note?.id, note?.title, note?.content]);
 
   // Persist view mode and split ratio
   useEffect(() => { saveViewMode(mode); }, [mode]);
@@ -107,25 +127,51 @@ export function NoteDetail({ note, onToggleSidebar, onDelete, onUpdateTitle, onU
     document.addEventListener("mouseup", onMouseUp);
   }, []);
 
+  const persistNoteChanges = useCallback(async (title: string, content: string) => {
+    if (!note || persistInFlightRef.current) return false;
+    const titleChanged = title !== persistedTitleRef.current;
+    const contentChanged = content !== persistedContentRef.current;
+    if (!titleChanged && !contentChanged) return false;
+    persistInFlightRef.current = true;
+    setSaveState("saving");
+    setSaveError(null);
+    try {
+      if (titleChanged) await onUpdateTitle(note.id, title);
+      if (contentChanged) await onUpdateContent(note.id, content);
+      persistedTitleRef.current = title;
+      persistedContentRef.current = content;
+      setSaveState("idle");
+      onDirtyChange?.(false);
+      onSaved?.();
+      return true;
+    } catch (error) {
+      setSaveState("failed");
+      setSaveError(error instanceof Error ? error.message : "保存失败");
+      return false;
+    } finally {
+      persistInFlightRef.current = false;
+    }
+  }, [note, onDirtyChange, onSaved, onUpdateContent, onUpdateTitle]);
+
   const handleTitleChange = useCallback((value: string) => {
     setEditTitle(value);
     if (titleTimerRef.current) clearTimeout(titleTimerRef.current);
     if (getAutoSave()) {
       titleTimerRef.current = setTimeout(() => {
-        if (note) onUpdateTitle(note.id, value);
+        void persistNoteChanges(value, editContent);
       }, getAutoSaveDelay());
     }
-  }, [note, onUpdateTitle]);
+  }, [editContent, persistNoteChanges]);
 
   const handleContentChange = useCallback((value: string) => {
     setEditContent(value);
     if (contentTimerRef.current) clearTimeout(contentTimerRef.current);
     if (getAutoSave()) {
       contentTimerRef.current = setTimeout(() => {
-        if (note) onUpdateContent(note.id, value);
+        void persistNoteChanges(editTitle, value);
       }, getAutoSaveDelay());
     }
-  }, [note, onUpdateContent]);
+  }, [editTitle, persistNoteChanges]);
 
   const handleUndo = useCallback(() => {
     const view = editorViewRef.current;
@@ -140,16 +186,8 @@ export function NoteDetail({ note, onToggleSidebar, onDelete, onUpdateTitle, onU
   const handleSave = useCallback(() => {
     if (titleTimerRef.current) clearTimeout(titleTimerRef.current);
     if (contentTimerRef.current) clearTimeout(contentTimerRef.current);
-    if (note) {
-      const changed = editTitle !== note.title || editContent !== note.content;
-      if (editTitle !== note.title) onUpdateTitle(note.id, editTitle);
-      if (editContent !== note.content) onUpdateContent(note.id, editContent);
-      if (changed) {
-        onDirtyChange?.(false);
-        onSaved?.();
-      }
-    }
-  }, [note, editTitle, editContent, onUpdateTitle, onUpdateContent, onDirtyChange, onSaved]);
+    void persistNoteChanges(editTitle, editContent);
+  }, [editTitle, editContent, persistNoteChanges]);
 
   const handleImageFiles = useCallback(async (files: File[]) => {
     const view = editorViewRef.current;
@@ -236,7 +274,14 @@ export function NoteDetail({ note, onToggleSidebar, onDelete, onUpdateTitle, onU
     );
   }
 
-  const isModified = editContent !== note.content || editTitle !== note.title;
+  const isModified = editContent !== persistedContentRef.current || editTitle !== persistedTitleRef.current;
+  const saveStatusText = saveState === "saving"
+    ? "保存中"
+    : saveState === "failed"
+      ? saveError ?? "保存失败"
+      : isModified
+        ? "未保存"
+        : "已保存";
 
   return (
     <>
@@ -268,7 +313,7 @@ export function NoteDetail({ note, onToggleSidebar, onDelete, onUpdateTitle, onU
           </button>
         </div>
         <div className="flex items-center gap-2">
-          <SlidingButtonGroup options={VIEW_MODES} value={mode} onChange={setMode} buttonClassName="h-7 px-4" />
+          <SlidingButtonGroup options={VIEW_MODES} value={mode} onChange={(value) => setMode(value as ViewMode)} buttonClassName="h-7 px-4" />
         </div>
       </div>
 
@@ -280,7 +325,17 @@ export function NoteDetail({ note, onToggleSidebar, onDelete, onUpdateTitle, onU
         <p className="text-[11px] text-ink-ghost mt-1">
           {new Date(note.updated_at).toLocaleString("zh-CN", { year: "numeric", month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit" })}
           {" · "}
-          {isModified ? <span className="text-danger">未保存</span> : <span className="text-accent">已保存</span>}
+          {saveState === "failed" ? (
+            <button type="button" onClick={handleSave} className="text-red-500 hover:text-red-400">
+              {saveStatusText}，点击重试
+            </button>
+          ) : saveState === "saving" ? (
+            <span className="text-amber-600">{saveStatusText}</span>
+          ) : isModified ? (
+            <span className="text-danger">{saveStatusText}</span>
+          ) : (
+            <span className="text-accent">{saveStatusText}</span>
+          )}
           {attachmentStatus && <span className="ml-2 text-accent">{attachmentStatus}</span>}
         </p>
       </div>

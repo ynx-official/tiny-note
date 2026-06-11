@@ -9,6 +9,30 @@ import Lightbox from "yet-another-react-lightbox";
 import Zoom from "yet-another-react-lightbox/plugins/zoom";
 import "yet-another-react-lightbox/styles.css";
 
+const assetPreviewPromiseCache = new Map<string, Promise<string>>();
+const assetPreviewObjectUrlCache = new Map<string, string>();
+
+function revokeAssetPreviewUrl(assetPath: string) {
+  const objectUrl = assetPreviewObjectUrlCache.get(assetPath);
+  if (objectUrl) {
+    URL.revokeObjectURL(objectUrl);
+    assetPreviewObjectUrlCache.delete(assetPath);
+  }
+  assetPreviewPromiseCache.delete(assetPath);
+}
+
+if (typeof window !== "undefined") {
+  window.addEventListener("beforeunload", () => {
+    for (const assetPath of assetPreviewObjectUrlCache.keys()) {
+      revokeAssetPreviewUrl(assetPath);
+    }
+  });
+  window.addEventListener("kova-attachments-cleaned", (event) => {
+    const removed = (event as CustomEvent<string[]>).detail ?? [];
+    removed.forEach(revokeAssetPreviewUrl);
+  });
+}
+
 interface MarkdownPreviewProps {
   content: string;
 }
@@ -38,7 +62,6 @@ const ImageWithLightbox = memo(function ImageWithLightbox({ src, alt }: { src: s
   const [resolvedSrc, setResolvedSrc] = useState(src);
 
   useEffect(() => {
-    let revoked: string | null = null;
     let cancelled = false;
 
     async function resolve() {
@@ -47,10 +70,22 @@ const ImageWithLightbox = memo(function ImageWithLightbox({ src, alt }: { src: s
         return;
       }
 
+      let cached = assetPreviewPromiseCache.get(src);
+      if (!cached) {
+        cached = (async () => {
+          const [bytes, mime] = await db.readAttachment(src);
+          const objectUrl = URL.createObjectURL(new Blob([new Uint8Array(bytes)], { type: mime }));
+          assetPreviewObjectUrlCache.set(src, objectUrl);
+          return objectUrl;
+        })().catch((error) => {
+          assetPreviewPromiseCache.delete(src);
+          throw error;
+        });
+        assetPreviewPromiseCache.set(src, cached);
+      }
+
       try {
-        const [bytes, mime] = await db.readAttachment(src);
-        const objectUrl = URL.createObjectURL(new Blob([new Uint8Array(bytes)], { type: mime }));
-        revoked = objectUrl;
+        const objectUrl = await cached;
         if (!cancelled) setResolvedSrc(objectUrl);
       } catch {
         if (!cancelled) setResolvedSrc("");
@@ -60,7 +95,6 @@ const ImageWithLightbox = memo(function ImageWithLightbox({ src, alt }: { src: s
     resolve();
     return () => {
       cancelled = true;
-      if (revoked) URL.revokeObjectURL(revoked);
     };
   }, [src]);
 

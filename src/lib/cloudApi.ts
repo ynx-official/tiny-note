@@ -92,11 +92,27 @@ export type KovaSettingSyncItem = {
   syncVersion?: number | null;
 };
 
+export type KovaAttachmentSyncItem = {
+  cloudId?: string | null;
+  noteCloudId?: string | null;
+  noteClientId?: string | null;
+  assetPath: string;
+  fileName: string;
+  mimeType?: string | null;
+  fileSize?: number | null;
+  sha256?: string | null;
+  storageKey?: string | null;
+  fileId?: number | string | null;
+  baseVersion?: number | null;
+  syncVersion?: number | null;
+  deletedAt?: string | null;
+};
+
 export type KovaSyncPushRequest = {
   deviceId: string;
   folders: KovaFolderSyncItem[];
   notes: KovaNoteSyncItem[];
-  attachments?: unknown[];
+  attachments?: KovaAttachmentSyncItem[];
   settings?: KovaSettingSyncItem[];
 };
 
@@ -308,6 +324,23 @@ export async function registerKovaDevice(request: KovaDeviceRegisterRequest) {
   return cloudRequest<KovaDevice>("/kova/sync/devices/register", {
     method: "POST",
     body: JSON.stringify(request),
+  });
+}
+
+export async function listKovaDevices() {
+  return cloudRequest<KovaDevice[]>("/kova/sync/devices");
+}
+
+export async function updateKovaDevice(deviceId: string, deviceName: string) {
+  return cloudRequest<void>(`/kova/sync/devices/${encodeURIComponent(deviceId)}`, {
+    method: "PATCH",
+    body: JSON.stringify({ deviceName }),
+  });
+}
+
+export async function revokeKovaDevice(deviceId: string) {
+  return cloudRequest<void>(`/kova/sync/devices/${encodeURIComponent(deviceId)}`, {
+    method: "DELETE",
   });
 }
 

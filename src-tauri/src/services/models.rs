@@ -1,6 +1,58 @@
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct BackupManifest {
+    pub format: String,
+    pub version: i64,
+    pub created_at: String,
+    pub note_count: i64,
+    pub folder_count: i64,
+    pub attachment_file_count: i64,
+    pub includes: BackupManifestIncludes,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct BackupManifestIncludes {
+    pub database: bool,
+    pub config: bool,
+    pub settings: bool,
+    pub attachments: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct RestoreInspection {
+    pub source_path: String,
+    pub archive_kind: String,
+    pub can_restore: bool,
+    pub summary: String,
+    pub warnings: Vec<String>,
+    pub manifest_present: bool,
+    pub manifest: Option<BackupManifest>,
+    pub items: RestoreInspectionItems,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct RestoreInspectionItems {
+    pub has_database: bool,
+    pub has_config: bool,
+    pub has_settings: bool,
+    pub has_attachments: bool,
+    pub attachment_file_count: i64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct RestoreResult {
+    pub source_path: String,
+    pub restored_database: bool,
+    pub restored_config: bool,
+    pub restored_settings: bool,
+    pub restored_attachment_files: i64,
+    pub restored_settings_json: Option<String>,
+    pub pre_restore_backup_path: String,
+    pub message: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SyncAck {
     pub entity_type: String,
     pub client_id: String,
@@ -62,6 +114,34 @@ pub struct SyncNoteSnapshot {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SyncAttachmentIndexItem {
+    pub asset_path: String,
+    pub note_id: String,
+    pub file_name: String,
+    pub mime_type: Option<String>,
+    pub file_size: i64,
+    pub sha256: Option<String>,
+    pub cloud_url: Option<String>,
+    pub cloud_file_id: Option<String>,
+    pub upload_status: String,
+    pub updated_at: String,
+    pub deleted_at: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct UpsertAttachmentIndexPayload {
+    pub asset_path: String,
+    pub note_id: String,
+    pub file_name: String,
+    pub mime_type: Option<String>,
+    pub file_size: i64,
+    pub sha256: Option<String>,
+    pub cloud_url: Option<String>,
+    pub cloud_file_id: Option<String>,
+    pub upload_status: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SyncApplyPayload {
     pub entity_type: String,
     pub payload: String,
@@ -70,6 +150,10 @@ pub struct SyncApplyPayload {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SyncApplyResult {
     pub applied: bool,
+    #[serde(default)]
+    pub skipped: bool,
+    #[serde(default)]
+    pub reason: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
