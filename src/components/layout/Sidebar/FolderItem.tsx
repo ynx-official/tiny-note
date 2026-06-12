@@ -7,10 +7,12 @@ interface FolderItemProps {
   depth: number;
   activeFolderId: string | null;
   selectedNoteId: string | null;
+  selectedFolderIds: Set<string>;
+  selectedNoteIds: Set<string>;
   renamingFolderId: string | null;
   expandedFolderIds: Set<string>;
-  onSelectFolder: (folderId: string) => void;
-  onSelectNote: (note: Note) => void;
+  onSelectFolder: (event: React.MouseEvent, folderId: string) => void;
+  onSelectNote: (event: React.MouseEvent, note: Note) => void;
   onRename: (id: string, name: string) => void;
   onRenameEnd: () => void;
   onDelete: (id: string) => void;
@@ -26,6 +28,8 @@ export function FolderItem({
   depth,
   activeFolderId,
   selectedNoteId,
+  selectedFolderIds,
+  selectedNoteIds,
   renamingFolderId,
   expandedFolderIds,
   onSelectFolder,
@@ -54,15 +58,16 @@ export function FolderItem({
   const expanded = expandedFolderIds.has(node.id);
   const hasChildren = node.children.length > 0 || node.notes.length > 0;
   const isHighlighted = activeFolderId === node.id;
+  const isSelected = selectedFolderIds.has(node.id);
 
   return (
     <div>
       <div
-        className={`group flex items-center rounded transition-colors cursor-pointer ${isHighlighted ? "bg-accent-mist text-accent" : "text-ink-soft hover:bg-paper-warm"} ${dragOver ? "ring-1 ring-accent/50" : ""}`}
+        className={`group flex items-center rounded transition-colors cursor-pointer ${isHighlighted ? "bg-accent-mist text-accent" : isSelected ? "bg-[var(--surface-active)]/55 text-accent" : "text-ink-soft hover:bg-paper-warm"} ${dragOver ? "ring-1 ring-accent/50" : ""}`}
         style={{ paddingLeft: `${depth * 12 + 4}px` }}
-        onClick={() => {
-          onSelectFolder(node.id);
-          if (!expanded) onToggleExpand(node.id);
+        onClick={(event) => {
+          onSelectFolder(event, node.id);
+          if (!expanded && !event.metaKey && !event.ctrlKey && !event.shiftKey) onToggleExpand(node.id);
         }}
         onContextMenu={(e) => {
           e.preventDefault();
@@ -151,18 +156,19 @@ export function FolderItem({
 
       {expanded && node.notes.map((note) => {
         const isActiveNote = selectedNoteId === note.id;
+        const isSelectedNote = selectedNoteIds.has(note.id);
         return (
           <button
             key={note.id}
             type="button"
             data-sidebar-note-id={note.id}
-            onClick={() => onSelectNote(note)}
+            onClick={(event) => onSelectNote(event, note)}
             onContextMenu={(event) => onNoteContextMenu(event, note)}
-            className={`flex w-full items-center gap-2 rounded px-2 py-1.5 text-left transition-colors ${isActiveNote ? "bg-[var(--surface-active)] text-accent" : "text-ink-soft hover:bg-paper-warm"}`}
+            className={`flex w-full items-center gap-2 rounded px-2 py-1.5 text-left transition-colors ${isActiveNote ? "bg-[var(--surface-active)] text-accent" : isSelectedNote ? "bg-[var(--surface-active)]/55 text-accent" : "text-ink-soft hover:bg-paper-warm"}`}
             style={{ paddingLeft: `${(depth + 1) * 12 + 28}px` }}
           >
             <span className="w-1.5 h-1.5 rounded-full bg-current opacity-70 shrink-0" />
-            <span className={`min-w-0 flex-1 truncate text-[11px] leading-5 ${isActiveNote ? "font-medium" : ""}`}>
+            <span className={`min-w-0 flex-1 truncate text-[11px] leading-5 ${isActiveNote || isSelectedNote ? "font-medium" : ""}`}>
               {note.title || note.content.split("\n")[0] || "无标题笔记"}
             </span>
           </button>
@@ -176,6 +182,8 @@ export function FolderItem({
           depth={depth + 1}
           activeFolderId={activeFolderId}
           selectedNoteId={selectedNoteId}
+          selectedFolderIds={selectedFolderIds}
+          selectedNoteIds={selectedNoteIds}
           renamingFolderId={renamingFolderId}
           expandedFolderIds={expandedFolderIds}
           onSelectFolder={onSelectFolder}

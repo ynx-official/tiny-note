@@ -10,11 +10,17 @@ import { FolderPicker } from "../../dialog/FolderPicker";
 import { NoteProperties } from "../../dialog/NoteProperties";
 import { FolderItem } from "./FolderItem";
 import { FolderInfoDialog } from "./FolderInfoDialog";
+import { applySidebarSelection, type SidebarSelectionState } from "./selection";
 import type { FolderNode } from "./types";
 import type { AIContextAttachment } from "../AIChatPanel/types";
 
 const EXPANDED_FOLDERS_STORAGE_KEY = "fp-sidebar-expanded-folders";
 const escapeSelector = (value: string) => value.replace(/\\/g, "\\\\").replace(/"/g, '\\"');
+const EMPTY_SIDEBAR_SELECTION: SidebarSelectionState = {
+  kind: null,
+  ids: new Set(),
+  anchorId: null,
+};
 
 interface SidebarProps {
   search: string;
@@ -87,6 +93,7 @@ export function Sidebar({
     }
   });
   const [exportNotice, setExportNotice] = useState<{ status: "loading" | "success"; message: string } | null>(null);
+  const [sidebarSelection, setSidebarSelection] = useState<SidebarSelectionState>(EMPTY_SIDEBAR_SELECTION);
   const exportNoticeTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const navScrollRef = useRef<HTMLDivElement | null>(null);
 
@@ -112,6 +119,48 @@ export function Sidebar({
     walk(folderTree as FolderNode[]);
     return next;
   }, [expandedFolderIds, folderTree, isSearchFiltering]);
+
+  const visibleFolderIds = useMemo(() => {
+    const ids: string[] = [];
+    const walk = (nodes: FolderNode[]) => {
+      for (const node of nodes) {
+        ids.push(node.id);
+        if (effectiveExpandedFolderIds.has(node.id)) {
+          walk(node.children);
+        }
+      }
+    };
+    walk(folderTree as FolderNode[]);
+    return ids;
+  }, [effectiveExpandedFolderIds, folderTree]);
+
+  const visibleNoteIds = useMemo(() => {
+    const ids: string[] = [];
+    const walk = (nodes: FolderNode[]) => {
+      for (const node of nodes) {
+        if (!effectiveExpandedFolderIds.has(node.id)) continue;
+        for (const note of node.notes) {
+          ids.push(note.id);
+        }
+        walk(node.children);
+      }
+    };
+    walk(folderTree as FolderNode[]);
+    for (const note of uncategorizedNotes) {
+      ids.push(note.id);
+    }
+    return ids;
+  }, [effectiveExpandedFolderIds, folderTree, uncategorizedNotes]);
+
+  const selectedSidebarFolderIds = useMemo(
+    () => sidebarSelection.kind === "folder" ? sidebarSelection.ids : new Set<string>(),
+    [sidebarSelection],
+  );
+
+  const selectedSidebarNoteIds = useMemo(
+    () => sidebarSelection.kind === "note" ? sidebarSelection.ids : new Set<string>(),
+    [sidebarSelection],
+  );
 
   const toggleExpandedFolder = (folderId: string) => {
     setExpandedFolderIds((prev) => {
@@ -202,6 +251,40 @@ export function Sidebar({
   const closeNoteMenu = () => {
     setNoteMenuPos(null);
     setNoteMenuNote(null);
+  };
+
+  const handleSidebarFolderSelect = (event: React.MouseEvent, folderId: string) => {
+    const additive = event.metaKey || event.ctrlKey;
+    const range = event.shiftKey;
+
+    setSidebarSelection((prev) => applySidebarSelection({
+      selection: prev,
+      clickedId: folderId,
+      clickedKind: "folder",
+      visibleIds: visibleFolderIds,
+      additive,
+      range,
+    }));
+
+    if (additive || range) return;
+    onFolderSelect(folderId);
+  };
+
+  const handleSidebarNoteSelect = (event: React.MouseEvent, note: Note) => {
+    const additive = event.metaKey || event.ctrlKey;
+    const range = event.shiftKey;
+
+    setSidebarSelection((prev) => applySidebarSelection({
+      selection: prev,
+      clickedId: note.id,
+      clickedKind: "note",
+      visibleIds: visibleNoteIds,
+      additive,
+      range,
+    }));
+
+    if (additive || range) return;
+    onSelectNote(note);
   };
 
   const handleDeleteSelected = () => {
@@ -509,10 +592,12 @@ export function Sidebar({
                   depth={0}
                   activeFolderId={selectedFolderId}
                   selectedNoteId={selectedId}
+                  selectedFolderIds={selectedSidebarFolderIds}
+                  selectedNoteIds={selectedSidebarNoteIds}
                   renamingFolderId={renamingFolderId}
                   expandedFolderIds={effectiveExpandedFolderIds}
-                  onSelectFolder={onFolderSelect}
-                  onSelectNote={onSelectNote}
+                  onSelectFolder={handleSidebarFolderSelect}
+                  onSelectNote={handleSidebarNoteSelect}
                   onRename={onFolderRename}
                   onRenameEnd={() => setRenamingFolderId(null)}
                   onDelete={onFolderDelete}
@@ -528,17 +613,18 @@ export function Sidebar({
                 <div className="mt-2 space-y-0.5">
                   {uncategorizedNotes.map((note) => {
                     const isActiveNote = selectedId === note.id;
+                    const isSelectedNote = selectedSidebarNoteIds.has(note.id);
                     return (
                       <button
                         key={note.id}
                         type="button"
                         data-sidebar-note-id={note.id}
-                        onClick={() => onSelectNote(note)}
+                        onClick={(event) => handleSidebarNoteSelect(event, note)}
                         onContextMenu={(event) => handleNoteContextMenu(event, note)}
-                        className={`flex w-full items-center gap-2 rounded px-3 py-1.5 text-left transition-colors ${isActiveNote ? "bg-[var(--surface-active)] text-accent" : "text-ink-soft hover:bg-paper-warm"}`}
+                        className={`flex w-full items-center gap-2 rounded px-3 py-1.5 text-left transition-colors ${isActiveNote ? "bg-[var(--surface-active)] text-accent" : isSelectedNote ? "bg-[var(--surface-active)]/55 text-accent" : "text-ink-soft hover:bg-paper-warm"}`}
                       >
                         <span className="w-1.5 h-1.5 rounded-full bg-current opacity-70 shrink-0" />
-                        <span className={`min-w-0 flex-1 truncate text-[11px] leading-5 ${isActiveNote ? "font-medium" : ""}`}>
+                        <span className={`min-w-0 flex-1 truncate text-[11px] leading-5 ${isActiveNote || isSelectedNote ? "font-medium" : ""}`}>
                           {note.title || note.content.split("\n")[0] || "无标题笔记"}
                         </span>
                       </button>
