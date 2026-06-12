@@ -17,6 +17,7 @@ interface FolderItemProps {
   onCreateSub: (parentId: string) => void;
   onDrop: (noteId: string, folderId: string) => void;
   onContextMenu: (e: React.MouseEvent, node: FolderNode) => void;
+  onNoteContextMenu: (e: React.MouseEvent, note: Note) => void;
   onToggleExpand: (folderId: string) => void;
 }
 
@@ -35,6 +36,7 @@ export function FolderItem({
   onCreateSub,
   onDrop,
   onContextMenu,
+  onNoteContextMenu,
   onToggleExpand,
 }: FolderItemProps) {
   const [editing, setEditing] = useState(false);
@@ -153,7 +155,9 @@ export function FolderItem({
           <button
             key={note.id}
             type="button"
+            data-sidebar-note-id={note.id}
             onClick={() => onSelectNote(note)}
+            onContextMenu={(event) => onNoteContextMenu(event, note)}
             className={`flex w-full items-center gap-2 rounded px-2 py-1.5 text-left transition-colors ${isActiveNote ? "bg-[var(--surface-active)] text-accent" : "text-ink-soft hover:bg-paper-warm"}`}
             style={{ paddingLeft: `${(depth + 1) * 12 + 28}px` }}
           >
@@ -182,6 +186,7 @@ export function FolderItem({
           onCreateSub={onCreateSub}
           onDrop={onDrop}
           onContextMenu={onContextMenu}
+          onNoteContextMenu={onNoteContextMenu}
           onToggleExpand={onToggleExpand}
         />
       ))}

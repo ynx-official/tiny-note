@@ -16,6 +16,8 @@ interface NoteCollectionViewProps {
   onMoveMultipleToFolder: (noteIds: string[], folderId: string | undefined) => void;
   onAddToAIContext: (attachments: AIContextAttachment[]) => void;
   onAddToNewAIContext: (attachments: AIContextAttachment[]) => void;
+  emptyActionLabel?: string;
+  onEmptyAction?: () => void;
 }
 
 export function NoteCollectionView({
@@ -32,6 +34,8 @@ export function NoteCollectionView({
   onMoveMultipleToFolder,
   onAddToAIContext,
   onAddToNewAIContext,
+  emptyActionLabel,
+  onEmptyAction,
 }: NoteCollectionViewProps) {
   return (
     <div className="flex min-h-0 flex-1 flex-col min-w-0 bg-[var(--surface-content)] overflow-hidden">
@@ -45,19 +49,43 @@ export function NoteCollectionView({
 
       <div className="min-h-0 flex-1 overflow-y-auto px-4 py-3">
         <div className="min-h-full rounded-[20px] border border-[var(--border-soft)]/70 bg-[var(--surface-content)]/42">
-          <NoteList
-            notes={notes}
-            selectedId={selectedId}
-            selectedIds={selectedIds}
-            onSelectedIdsChange={onSelectedIdsChange}
-            onSelect={onSelectNote}
-            onDeselect={onDeselectNote}
-            onDelete={onDelete}
-            folders={folders}
-            onMoveMultipleToFolder={onMoveMultipleToFolder}
-            onAddToAIContext={onAddToAIContext}
-            onAddToNewAIContext={onAddToNewAIContext}
-          />
+          {notes.length === 0 ? (
+            <div className="flex min-h-full flex-col items-center justify-center px-8 py-12 text-center">
+              <div className="mb-4 flex h-14 w-14 items-center justify-center rounded-2xl border border-[var(--border-soft)]/70 bg-[var(--surface-content)]/88 text-ink-ghost shadow-[0_10px_24px_rgba(26,26,24,0.06)]">
+                <svg width="24" height="24" viewBox="0 0 48 48" fill="none">
+                  <rect x="11" y="8" width="26" height="32" rx="5" stroke="currentColor" strokeWidth="2" />
+                  <path d="M18 18h12M18 25h9" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />
+                </svg>
+              </div>
+              <p className="text-base font-semibold text-ink">这里还没有笔记</p>
+              <p className="mt-2 max-w-[320px] text-xs leading-6 text-ink-ghost">
+                {onEmptyAction ? "这个文件夹还是空的，现在可以直接新建第一条笔记。" : "当前范围暂时是空的。你可以稍后再回来查看。"}
+              </p>
+              {onEmptyAction && emptyActionLabel && (
+                <button
+                  type="button"
+                  onClick={onEmptyAction}
+                  className="mt-5 inline-flex h-10 items-center justify-center rounded-full border border-accent/18 bg-accent px-4 text-xs font-medium text-white shadow-[0_10px_24px_rgba(86,138,106,0.22)] transition hover:opacity-95"
+                >
+                  {emptyActionLabel}
+                </button>
+              )}
+            </div>
+          ) : (
+            <NoteList
+              notes={notes}
+              selectedId={selectedId}
+              selectedIds={selectedIds}
+              onSelectedIdsChange={onSelectedIdsChange}
+              onSelect={onSelectNote}
+              onDeselect={onDeselectNote}
+              onDelete={onDelete}
+              folders={folders}
+              onMoveMultipleToFolder={onMoveMultipleToFolder}
+              onAddToAIContext={onAddToAIContext}
+              onAddToNewAIContext={onAddToNewAIContext}
+            />
+          )}
         </div>
       </div>
     </div>

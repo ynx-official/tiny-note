@@ -348,13 +348,18 @@ export function NoteList({ notes, selectedId, selectedIds, onSelectedIdsChange, 
 
   if (notes.length === 0) {
     return (
-      <div className="flex-1 overflow-y-auto px-3 pb-3">
-        <div className="flex flex-col items-center justify-center h-full rounded-2xl border border-dashed border-[var(--border-soft)] text-ink-ghost px-4 bg-[var(--surface-panel-muted)]/55">
-          <svg width="40" height="40" viewBox="0 0 48 48" fill="none" className="mb-2 opacity-30">
-            <rect x="8" y="6" width="32" height="36" rx="4" stroke="currentColor" strokeWidth="2" />
-            <path d="M16 16h16M16 24h10" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />
-          </svg>
-          <p className="text-xs text-center">暂无记录</p>
+      <div className="flex-1 px-4 py-5">
+        <div className="flex h-full min-h-[280px] flex-col items-center justify-center rounded-[28px] border border-dashed border-[var(--border-soft)]/80 bg-[radial-gradient(circle_at_top,rgba(255,255,255,0.9),rgba(248,244,236,0.72))] px-8 text-center shadow-[inset_0_1px_0_rgba(255,255,255,0.55)]">
+          <div className="mb-4 flex h-14 w-14 items-center justify-center rounded-2xl border border-[var(--border-soft)]/70 bg-[var(--surface-content)]/88 text-ink-ghost shadow-[0_10px_24px_rgba(26,26,24,0.06)]">
+            <svg width="24" height="24" viewBox="0 0 48 48" fill="none">
+              <rect x="11" y="8" width="26" height="32" rx="5" stroke="currentColor" strokeWidth="2" />
+              <path d="M18 18h12M18 25h9" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />
+            </svg>
+          </div>
+          <p className="text-base font-semibold text-ink">这里还没有笔记</p>
+          <p className="mt-2 max-w-[320px] text-xs leading-6 text-ink-ghost">
+            当前范围暂时是空的。你可以在左侧新建一条笔记，或者把现有笔记移动到这里。
+          </p>
         </div>
       </div>
     );

@@ -1,7 +1,7 @@
 import { useState, useEffect } from "react";
 import type { Note, SyncStatus } from "../lib/db";
 import type { NoteSaveStatus } from "../lib/noteSaveStatus";
-import { loadFontSize, loadFontWeight, loadTabSize } from "../lib/theme";
+import { loadFontSize } from "../lib/theme";
 import { loadZoom } from "../lib/zoom";
 import { describeSyncErrorCategory, resolveSyncStatusCopy } from "../lib/syncStatusCopy";
 import type { SyncRunDiagnostics } from "../lib/sync";
@@ -22,8 +22,6 @@ interface StatusBarProps {
 
 export function StatusBar({ selectedNote, noteCount, noteSaveStatus, syncStatus, failedSyncCount, isCloudLoggedIn, isOnline, isSyncing, lastSyncError, lastSyncDiagnostics, onRetrySync }: StatusBarProps) {
   const [fontSize, setFontSize] = useState(loadFontSize);
-  const [fontWeight, setFontWeight] = useState(loadFontWeight);
-  const [tabSize, setTabSize] = useState(loadTabSize);
   const [zoom, setZoom] = useState(() => Math.round(loadZoom() * 100));
 
   const pendingSyncCount = syncStatus?.pending_changes ?? 0;
@@ -69,8 +67,6 @@ export function StatusBar({ selectedNote, noteCount, noteSaveStatus, syncStatus,
     const handler = (e: Event) => {
       const { key, value } = (e as CustomEvent).detail;
       if (key === "font-size") setFontSize(value);
-      if (key === "font-weight") setFontWeight(value);
-      if (key === "tab-size") setTabSize(value);
       if (key === "zoom") setZoom(Math.round(value * 100));
     };
     window.addEventListener("fp-settings-changed", handler);

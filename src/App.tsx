@@ -740,7 +740,7 @@ export default function App() {
                   return;
                 }
                 runWithDraftGuard(() => {
-                  setSelectedFolderId(note.folder_id ?? null);
+                  setSelectedFolderId(null);
                   setSelectedNote(note);
                   setSelectedIds(new Set());
                 }, {
@@ -815,6 +815,7 @@ export default function App() {
                 showToast("笔记已移动");
               }}
               onImported={() => { fetch(undefined, selectedFolderId ?? undefined); db.list().then((all: Note[]) => setAllNotes(all)); void refreshSyncStatus(); }}
+              onDeleteNote={handleDelete}
               onAddToAIContext={handleAddToAIContext}
               onAddToNewAIContext={handleAddToNewAIContext}
             />
@@ -850,7 +851,7 @@ export default function App() {
               onSelectedIdsChange={setSelectedIds}
               onSelectNote={(note) => {
                 runWithDraftGuard(() => {
-                  setSelectedFolderId(note.folder_id ?? null);
+                  setSelectedFolderId(null);
                   setSelectedNote(note);
                   setSelectedIds(new Set());
                 }, {
@@ -874,6 +875,8 @@ export default function App() {
               }}
               onAddToAIContext={handleAddToAIContext}
               onAddToNewAIContext={handleAddToNewAIContext}
+              emptyActionLabel={selectedFolderId ? "新建笔记" : undefined}
+              onEmptyAction={selectedFolderId ? () => { void handleCreateNote(selectedFolderId); } : undefined}
             />
           )}
           <StatusBar
