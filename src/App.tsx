@@ -731,13 +731,13 @@ export default function App() {
   );
 
   return (
-    <div className="h-screen flex flex-col bg-paper">
+    <div className="h-screen flex flex-col bg-[var(--surface-app)] text-ink">
       <TitleBar settingsOpen={showSettings} loginOpen={showLogin} aiOpen={showAI} closeToTray={closeToTray} mode={mode} cloudUser={cloudSession?.user} isCloudLoggedIn={Boolean(cloudSession)} isSyncing={isSyncing} conflictCount={cloudConflictCount} onToggleMode={handleToggleMode} onToggleSettings={() => { setShowSettings((v) => !v); setShowAI(false); }} onToggleLogin={() => setShowLogin((v) => !v)} onToggleAI={() => { setShowAI((v) => !v); setShowSettings(false); }} onSync={handleSync} onOpenConflicts={() => setShowConflicts(true)} />
 
-      <div className="flex flex-1 min-h-0">
+      <div className="flex flex-1 min-h-0 bg-[var(--surface-app)]">
         {/* Sidebar */}
-        <div className="relative shrink-0 flex overflow-hidden" style={{ width: showSidebar ? sidebar.width : 0, transition: isDragging ? "none" : "width 0.5s cubic-bezier(0.22,1,0.36,1)" }}>
-          <div className="h-full shrink-0 overflow-hidden" style={{ width: sidebar.width - 4 }}>
+        <div className="relative shrink-0 flex overflow-hidden border-r border-[var(--border-soft)]" style={{ width: showSidebar ? sidebar.width : 0, transition: isDragging ? "none" : "width 0.5s cubic-bezier(0.22,1,0.36,1)" }}>
+          <div className="h-full shrink-0 overflow-hidden bg-[var(--surface-panel)]" style={{ width: sidebar.width - 4 }}>
             <Sidebar
               search={search}
               filteredNotes={filteredNotes}
@@ -832,20 +832,20 @@ export default function App() {
               onAddToNewAIContext={handleAddToNewAIContext}
             />
           </div>
-          <div className="w-1 shrink-0 bg-paper-deep/30 cursor-col-resize hover:bg-accent/40 transition-colors" onMouseDown={sidebar.handleMouseDown} />
+          <div className="w-1 shrink-0 bg-[var(--surface-panel-muted)] cursor-col-resize hover:bg-accent/30 transition-colors" onMouseDown={sidebar.handleMouseDown} />
         </div>
 
         {/* Detail */}
-        <div className="flex-1 flex flex-col min-w-0">
+        <div className="flex-1 flex flex-col min-w-0 bg-[var(--surface-content)] shadow-[inset_0_1px_0_rgba(255,255,255,0.18)]">
           {selectedNote ? (
             <>
               {!selectedNoteVisibleInList && search.trim() && (
-                <div className="flex items-center justify-between gap-3 border-b border-amber-200/60 bg-amber-50/70 px-4 py-2 text-xs text-amber-700">
+                <div className="flex items-center justify-between gap-3 border-b border-amber-200/60 bg-amber-50/65 px-5 py-2 text-xs text-amber-700">
                   <span>当前正在编辑的笔记不在这次筛选结果里，列表已只显示匹配项。</span>
                   <button
                     type="button"
                     onClick={() => applySearch("")}
-                    className="shrink-0 rounded-full border border-amber-300/70 px-2.5 py-1 text-[11px] transition hover:bg-white/80"
+                    className="shrink-0 rounded-full border border-amber-300/60 px-2.5 py-1 text-[11px] transition hover:bg-white/70"
                   >
                     清空筛选
                   </button>
@@ -855,10 +855,10 @@ export default function App() {
             </>
           ) : (
             <>
-              <div className="flex items-center justify-between px-4 h-10 border-b border-paper-deep/20 shrink-0 bg-paper/20">
+              <div className="flex items-center justify-between px-4 h-10 border-b border-[var(--border-soft)] shrink-0 bg-[var(--surface-panel-muted)]/75">
                 <span className="text-xs text-ink-ghost">选择一条笔记查看</span>
               </div>
-              <div className="flex-1 flex flex-col items-center justify-center text-ink-ghost">
+              <div className="flex-1 flex flex-col items-center justify-center text-ink-ghost bg-[var(--surface-content)]">
                 <svg width="56" height="56" viewBox="0 0 56 56" fill="none" className="mb-3 opacity-20">
                   <rect x="10" y="7" width="36" height="42" rx="5" stroke="currentColor" strokeWidth="2"/>
                   <path d="M19 18h18M19 26h12" stroke="currentColor" strokeWidth="2" strokeLinecap="round"/>
@@ -884,9 +884,9 @@ export default function App() {
         </div>
 
         {/* AI panel */}
-        <div className="relative shrink-0 flex overflow-hidden" style={{ width: showAI ? ai.width : 0, transition: isDragging ? "none" : "width 0.5s cubic-bezier(0.22,1,0.36,1)" }}>
-          <div className="w-1 shrink-0 bg-paper-deep/30 cursor-col-resize hover:bg-accent/40 transition-colors" onMouseDown={ai.handleMouseDown} />
-          <div className="h-full shrink-0" style={{ width: ai.width - 4 }}>
+        <div className="relative shrink-0 flex overflow-hidden border-l border-[var(--border-soft)]" style={{ width: showAI ? ai.width : 0, transition: isDragging ? "none" : "width 0.5s cubic-bezier(0.22,1,0.36,1)" }}>
+          <div className="w-1 shrink-0 bg-[var(--surface-panel-muted)] cursor-col-resize hover:bg-accent/30 transition-colors" onMouseDown={ai.handleMouseDown} />
+          <div className="h-full shrink-0 bg-[var(--surface-panel)]" style={{ width: ai.width - 4 }}>
             <AIChatPanel
               onClose={() => {
                 setShowAI(false);
@@ -970,15 +970,15 @@ export default function App() {
       )}
 
       {toast && (
-        <div className="fixed left-1/2 bottom-10 z-[70] -translate-x-1/2 rounded-full border border-paper-deep/60 bg-cloud/95 px-4 py-2 text-xs text-ink-soft shadow-lg animate-toast-in pointer-events-none">
+        <div className="fixed left-1/2 bottom-10 z-[70] -translate-x-1/2 rounded-full border border-[var(--border-soft)] bg-[var(--surface-content)]/96 px-4 py-2 text-xs text-ink-soft shadow-[0_12px_30px_rgba(26,26,24,0.10)] animate-toast-in pointer-events-none">
           {toast}
         </div>
       )}
 
       {/* File drop overlay */}
       {draggingFiles && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-accent/10 backdrop-blur-sm pointer-events-none border-2 border-dashed border-accent/40 rounded-xl m-2">
-          <div className="flex flex-col items-center gap-2">
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-accent/8 backdrop-blur-sm pointer-events-none border-2 border-dashed border-accent/35 rounded-2xl m-3">
+          <div className="flex flex-col items-center gap-2 rounded-2xl border border-[var(--border-soft)] bg-[var(--surface-content)]/94 px-8 py-7 shadow-[0_18px_40px_rgba(26,26,24,0.10)]">
             <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" className="text-accent animate-bounce">
               <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
               <polyline points="7 10 12 15 17 10" />

@@ -348,8 +348,8 @@ export function NoteList({ notes, selectedId, selectedIds, onSelectedIdsChange, 
 
   if (notes.length === 0) {
     return (
-      <div className="flex-1 overflow-y-auto px-2 pb-2">
-        <div className="flex flex-col items-center justify-center h-full text-ink-ghost px-4">
+      <div className="flex-1 overflow-y-auto px-3 pb-3">
+        <div className="flex flex-col items-center justify-center h-full rounded-2xl border border-dashed border-[var(--border-soft)] text-ink-ghost px-4 bg-[var(--surface-panel-muted)]/55">
           <svg width="40" height="40" viewBox="0 0 48 48" fill="none" className="mb-2 opacity-30">
             <rect x="8" y="6" width="32" height="36" rx="4" stroke="currentColor" strokeWidth="2" />
             <path d="M16 16h16M16 24h10" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />
@@ -362,8 +362,8 @@ export function NoteList({ notes, selectedId, selectedIds, onSelectedIdsChange, 
 
   return (
     <>
-      <div ref={containerRef} className="flex-1 overflow-y-auto px-2 pb-2">
-        <div className="flex flex-col gap-0.5">
+      <div ref={containerRef} className="flex-1 overflow-y-auto px-2.5 pb-2.5">
+        <div className="flex flex-col gap-1">
           {notes.map((note) => (
             <div
               key={note.id}
@@ -382,16 +382,16 @@ export function NoteList({ notes, selectedId, selectedIds, onSelectedIdsChange, 
               onMouseUp={handleMouseUp}
               onMouseLeave={handleMouseUp}
               onContextMenu={(e) => handleContextMenu(e, note)}
-              className={`w-full text-left rounded-xl px-3 py-2.5 transition-colors cursor-pointer group relative ${isHighlighted(note)
-                  ? "bg-accent-mist/70"
-                  : "bg-transparent hover:bg-paper-warm"
+              className={`w-full text-left rounded-[18px] border px-3 py-2.5 transition-all cursor-pointer group relative ${isHighlighted(note)
+                  ? "border-accent/12 bg-[var(--surface-active)]/72 shadow-[inset_0_0_0_1px_rgba(86,138,106,0.05)]"
+                  : "border-transparent bg-transparent hover:border-[var(--border-soft)]/70 hover:bg-[var(--surface-hover)]/72"
                 }`}
             >
-              <div className={`absolute left-0 top-1/2 -translate-y-1/2 w-[3px] rounded-r-full bg-accent/60 transition-all ${isHighlighted(note) ? "h-5" : "h-0"
+              <div className={`absolute left-0 top-2.5 bottom-2.5 w-[2px] rounded-r-full bg-accent/70 transition-all ${isHighlighted(note) ? "opacity-100" : "opacity-0"
                 }`} />
 
               <div className="flex items-start justify-between gap-2">
-                <p className="text-xs leading-relaxed truncate flex-1 text-ink-soft">
+                <p className={`text-[12px] leading-relaxed truncate flex-1 ${isHighlighted(note) ? "text-ink font-medium" : "text-ink-soft"}`}>
                   {note.title || note.content.split("\n")[0]}
                 </p>
                 {(() => {
@@ -403,14 +403,14 @@ export function NoteList({ notes, selectedId, selectedIds, onSelectedIdsChange, 
                   return <span className="text-[10px] text-ink-ghost shrink-0">{dateStr}</span>;
                 })()}
               </div>
-              <div className="flex items-center gap-1.5 mt-1">
+              <div className="flex items-center gap-1.5 mt-1.5 flex-wrap">
                 <span className="text-[10px] text-ink-ghost">
                   {new Date(note.updated_at).toLocaleTimeString("zh-CN", { hour: "2-digit", minute: "2-digit" })}
                   {" · "}
                   {(note.title + note.content).length} 字
                 </span>
                 {note.tags.slice(0, 2).map((tag) => (
-                  <span key={tag} className="text-[10px] px-1 py-0 rounded bg-accent-mist/50 text-accent/70">{tag}</span>
+                  <span key={tag} className="text-[10px] px-1.5 py-0.5 rounded-full bg-[var(--surface-accent-soft)] text-accent/75">{tag}</span>
                 ))}
               </div>
             </div>

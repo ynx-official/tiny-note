@@ -322,7 +322,7 @@ export function Sidebar({
   };
 
   return (
-    <div className="w-full h-full flex flex-col border-r border-paper-deep/30 bg-paper/40">
+    <div className="w-full h-full flex flex-col bg-[var(--surface-panel)] text-ink border-r border-[var(--border-soft)]/80">
       <SearchBar
         value={search}
         resultCount={sortedNotes.length}
@@ -335,151 +335,166 @@ export function Sidebar({
 
       {/* Folder list + Note list in one scrollable area */}
       <div className="flex-1 overflow-y-auto min-h-0 [scrollbar-gutter:stable]" onDragOver={(e) => e.preventDefault()} onClick={() => setShowSortMenu(false)}>
-        {/* Folder section */}
-        {/* "未分类" standalone row */}
-        <div className="px-2 pt-3 pb-1.5 flex items-center justify-between shrink-0">
-          <button type="button" onClick={() => { setSelectedFolderIds(new Set()); onFolderSelect(""); }}
-            className={`flex-1 text-left text-xs px-3 py-1 rounded transition-colors ${selectedFolderId === "" ? "text-accent font-medium" : "text-ink-soft hover:bg-paper-warm hover:text-accent"}`}>
-            未分类
-          </button>
-        </div>
-        {/* "全部" collapsible row with actions */}
-        <div className="px-2 pb-1.5 flex items-center justify-between shrink-0"
-          onContextMenu={(e) => { e.preventDefault(); setAllMenuPos({ x: e.clientX, y: e.clientY }); }}>
-          <div className={`flex-1 flex items-center text-left text-xs px-3 py-1 rounded transition-colors ${selectedFolderId === null ? "text-accent font-medium" : "text-ink-soft hover:bg-paper-warm hover:text-accent"}`}>
-            <button type="button" onClick={(e) => { e.stopPropagation(); setAllExpanded(!allExpanded); }}
-              className="w-4 h-4 flex items-center justify-center shrink-0 mr-1 cursor-pointer">
-              <svg width="8" height="8" viewBox="0 0 8 8" fill="currentColor" className={`transition-transform ${allExpanded ? "rotate-90" : ""}`}><path d="M2 1l4 3-4 3z"/></svg>
-            </button>
-            <button type="button"
-              onClick={() => {
-                if (allClickTimer.current) { clearTimeout(allClickTimer.current); allClickTimer.current = null; }
-                allClickTimer.current = setTimeout(() => { setSelectedFolderIds(new Set()); onFolderSelect(null); }, 250);
-              }}
-              onDoubleClick={() => { if (allClickTimer.current) { clearTimeout(allClickTimer.current); allClickTimer.current = null; } setAllExpanded(!allExpanded); }}
-              className="flex-1 text-left cursor-pointer">
-              全部
-            </button>
-          </div>
-          <div className="flex items-center gap-0.5">
-            <button
-              type="button"
-              onClick={() => {
-                const effectiveSize = selectedFolderIds.size + (selectedFolderId && !selectedFolderIds.has(selectedFolderId) ? 1 : 0);
-                if (effectiveSize === allFolderIds.length && allFolderIds.length > 0) {
-                  setSelectedFolderIds(new Set());
-                  if (selectedFolderId) onFolderSelect(null);
-                } else {
-                  setSelectedFolderIds(new Set(allFolderIds));
-                }
-              }}
-              className={`w-6 h-6 rounded-md flex items-center justify-center transition-colors ${selectedFolderIds.size > 0 ? "text-accent" : "text-ink-ghost hover:text-accent hover:bg-accent-mist"}`}
-              title={selectedFolderIds.size === allFolderIds.length ? "取消全选" : "全选"}>
-              <svg width="14" height="14" viewBox="0 0 14 14" fill="none">
-                <rect x="2" y="2" width="10" height="10" rx="2" stroke="currentColor" strokeWidth="1.5" fill={selectedFolderIds.size > 0 ? "currentColor" : "none"} fillOpacity={selectedFolderIds.size > 0 ? 0.15 : 0}/>
-                {selectedFolderIds.size === allFolderIds.length && allFolderIds.length > 0 && (
-                  <path d="M4.5 7L6.5 9L9.5 5" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"/>
-                )}
-                {selectedFolderIds.size > 0 && selectedFolderIds.size < allFolderIds.length && (
-                  <path d="M4 7H10" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round"/>
-                )}
-              </svg>
-            </button>
-            <button type="button" onClick={() => onFolderCreate("新建文件夹")}
-              className="w-6 h-6 rounded-md flex items-center justify-center transition-colors text-ink-ghost hover:text-accent hover:bg-accent-mist"
-              title="新建文件夹">
-              <svg width="14" height="14" viewBox="0 0 14 14" fill="none">
-                <path d="M7 2v10M2 7h10" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round"/>
-              </svg>
-            </button>
-          </div>
-        </div>
-        <div className={`px-2 pb-2 ${allExpanded ? "" : "hidden"}`}>
-          {folderTree.map(node => (
-            <FolderItem key={node.id} node={node} depth={0} selectedFolderId={selectedFolderId}
-              selectedFolderIds={selectedFolderIds} renamingFolderId={renamingFolderId} expandedFolderIds={expandedFolderIds}
-              onSelect={onFolderSelect} onSelectedIdsChange={setSelectedFolderIds}
-              onDeselectFolder={handleDeselectFolder}
-              onRename={onFolderRename} onRenameEnd={() => setRenamingFolderId(null)}
-              onDelete={onFolderDelete}
-              onCreateSub={(parentId) => onFolderCreate("新建子文件夹", parentId)}
-              onDrop={onMoveToFolder} onContextMenu={handleFolderContextMenu} />
-          ))}
-        </div>
-        <div className="h-px bg-paper-deep/30 mx-3 shrink-0" />
-
-        {/* Note list */}
-        <div className="px-5 pt-3 pb-1.5 flex items-center justify-between shrink-0">
-          <div className="flex items-center gap-1 relative">
-            <span className="text-xs text-ink-soft">{filteredNotes.length} 条笔记</span>
-            <button type="button" onClick={(e) => { e.stopPropagation(); setShowSortMenu(!showSortMenu); }}
-              className="w-4 h-4 flex items-center justify-center text-ink-ghost hover:text-accent transition-colors"
-              title="排序">
-              <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M3 6h18M3 12h12M3 18h6" /></svg>
-            </button>
-            {showSortMenu && (
-              <div className="absolute top-full left-0 mt-1 z-30 bg-cloud border border-paper-deep shadow-lg rounded-lg py-1 w-[140px] animate-dropdown" onClick={(e) => e.stopPropagation()}>
-                {[
-                  { field: "updated_at", label: "更新时间" },
-                  { field: "created_at", label: "创建时间" },
-                  { field: "title", label: "标题" },
-                ].map(opt => (
-                  <button key={opt.field} type="button"
-                    onClick={() => { setSortField(opt.field); localStorage.setItem("kova-sort-field", opt.field); setShowSortMenu(false); }}
-                    className={`w-full text-left px-3 py-1 text-[11px] transition-colors ${sortField === opt.field ? "text-accent bg-accent-mist" : "text-ink-soft hover:bg-paper-warm"}`}>
-                    {opt.label}
-                  </button>
-                ))}
-                <div className="h-px bg-paper-deep/30 mx-2 my-1" />
+        <div className="px-3 pt-2.5 pb-2">
+          <div className="rounded-[20px] border border-[var(--border-soft)]/70 bg-[var(--surface-content)]/46">
+            <div className="px-3 pt-2.5 pb-1 flex items-center justify-between shrink-0">
+              <span className="text-[10px] font-semibold uppercase tracking-[0.16em] text-ink-ghost/80">
+                文件夹
+              </span>
+              <span className="text-[10px] text-ink-ghost">
+                {folders.length} 项
+              </span>
+            </div>
+            {/* Folder section */}
+            {/* "未分类" standalone row */}
+            <div className="px-3 pb-1.5 flex items-center justify-between shrink-0">
+              <button type="button" onClick={() => { setSelectedFolderIds(new Set()); onFolderSelect(""); }}
+                className={`flex-1 text-left text-xs px-3 py-2 rounded-xl transition-colors ${selectedFolderId === "" ? "bg-[var(--surface-active)]/80 text-accent font-medium" : "text-ink-soft hover:bg-[var(--surface-hover)]/80 hover:text-accent"}`}>
+                未分类
+              </button>
+            </div>
+            {/* "全部" collapsible row with actions */}
+            <div className="px-3 pb-2.5 flex items-center justify-between shrink-0"
+              onContextMenu={(e) => { e.preventDefault(); setAllMenuPos({ x: e.clientX, y: e.clientY }); }}>
+              <div className={`flex-1 flex items-center text-left text-xs px-3 py-2 rounded-xl transition-colors ${selectedFolderId === null ? "bg-[var(--surface-active)]/80 text-accent font-medium" : "text-ink-soft hover:bg-[var(--surface-hover)]/80 hover:text-accent"}`}>
+                <button type="button" onClick={(e) => { e.stopPropagation(); setAllExpanded(!allExpanded); }}
+                  className="w-4 h-4 flex items-center justify-center shrink-0 mr-1 cursor-pointer">
+                  <svg width="8" height="8" viewBox="0 0 8 8" fill="currentColor" className={`transition-transform ${allExpanded ? "rotate-90" : ""}`}><path d="M2 1l4 3-4 3z"/></svg>
+                </button>
                 <button type="button"
-                  onClick={() => { const next = sortDir === "desc" ? "asc" : "desc"; setSortDir(next); localStorage.setItem("kova-sort-dir", next); setShowSortMenu(false); }}
-                  className="w-full text-left px-3 py-1 text-[11px] text-ink-soft hover:bg-paper-warm transition-colors">
-                  {sortDir === "desc" ? "↓ 降序" : "↑ 升序"}
+                  onClick={() => {
+                    if (allClickTimer.current) { clearTimeout(allClickTimer.current); allClickTimer.current = null; }
+                    allClickTimer.current = setTimeout(() => { setSelectedFolderIds(new Set()); onFolderSelect(null); }, 250);
+                  }}
+                  onDoubleClick={() => { if (allClickTimer.current) { clearTimeout(allClickTimer.current); allClickTimer.current = null; } setAllExpanded(!allExpanded); }}
+                  className="flex-1 text-left cursor-pointer"
+                >
+                  全部
                 </button>
               </div>
-            )}
+              <div className="flex items-center gap-1 ml-2">
+                <button
+                  type="button"
+                  onClick={() => {
+                    const effectiveSize = selectedFolderIds.size + (selectedFolderId && !selectedFolderIds.has(selectedFolderId) ? 1 : 0);
+                    if (effectiveSize === allFolderIds.length && allFolderIds.length > 0) {
+                      setSelectedFolderIds(new Set());
+                      if (selectedFolderId) onFolderSelect(null);
+                    } else {
+                      setSelectedFolderIds(new Set(allFolderIds));
+                    }
+                  }}
+                  className={`w-7 h-7 rounded-xl flex items-center justify-center transition-colors ${selectedFolderIds.size > 0 ? "bg-[var(--surface-active)] text-accent" : "text-ink-ghost hover:text-accent hover:bg-[var(--surface-hover)]"}`}
+                  title={selectedFolderIds.size === allFolderIds.length ? "取消全选" : "全选"}
+                >
+                  <svg width="14" height="14" viewBox="0 0 14 14" fill="none">
+                    <rect x="2" y="2" width="10" height="10" rx="2" stroke="currentColor" strokeWidth="1.5" fill={selectedFolderIds.size > 0 ? "currentColor" : "none"} fillOpacity={selectedFolderIds.size > 0 ? 0.15 : 0}/>
+                    {selectedFolderIds.size === allFolderIds.length && allFolderIds.length > 0 && (
+                      <path d="M4.5 7L6.5 9L9.5 5" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"/>
+                    )}
+                    {selectedFolderIds.size > 0 && selectedFolderIds.size < allFolderIds.length && (
+                      <path d="M4 7H10" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round"/>
+                    )}
+                  </svg>
+                </button>
+                <button type="button" onClick={() => onFolderCreate("新建文件夹")}
+                  className="w-7 h-7 rounded-xl flex items-center justify-center transition-colors text-ink-ghost hover:text-accent hover:bg-[var(--surface-hover)]"
+                  title="新建文件夹">
+                  <svg width="14" height="14" viewBox="0 0 14 14" fill="none">
+                    <path d="M7 2v10M2 7h10" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round"/>
+                  </svg>
+                </button>
+              </div>
+            </div>
+            <div className={`px-3 pb-3 ${allExpanded ? "" : "hidden"}`}>
+              {folderTree.map(node => (
+                <FolderItem key={node.id} node={node} depth={0} selectedFolderId={selectedFolderId}
+                  selectedFolderIds={selectedFolderIds} renamingFolderId={renamingFolderId} expandedFolderIds={expandedFolderIds}
+                  onSelect={onFolderSelect} onSelectedIdsChange={setSelectedFolderIds}
+                  onDeselectFolder={handleDeselectFolder}
+                  onRename={onFolderRename} onRenameEnd={() => setRenamingFolderId(null)}
+                  onDelete={onFolderDelete}
+                  onCreateSub={(parentId) => onFolderCreate("新建子文件夹", parentId)}
+                  onDrop={onMoveToFolder} onContextMenu={handleFolderContextMenu} />
+              ))}
+            </div>
           </div>
-          <div className="flex items-center gap-0.5">
-            <button
-              type="button"
-              onClick={() => {
-                const effectiveSize = selectedIds.size + (selectedId && !selectedIds.has(selectedId) ? 1 : 0);
-                if (effectiveSize === filteredNotes.length && filteredNotes.length > 0) {
-                  onSelectedIdsChange(new Set());
-                } else {
-                  onSelectedIdsChange(new Set(filteredNotes.map(n => n.id)));
-                }
-              }}
-              className={`w-6 h-6 rounded-md flex items-center justify-center transition-colors ${selectedIds.size > 0 ? "text-accent" : "text-ink-ghost hover:text-accent hover:bg-accent-mist"}`}
-              title={selectedIds.size === filteredNotes.length ? "取消全选" : "全选"}>
-              <svg width="14" height="14" viewBox="0 0 14 14" fill="none">
-                <rect x="2" y="2" width="10" height="10" rx="2" stroke="currentColor" strokeWidth="1.5" fill={selectedIds.size > 0 ? "currentColor" : "none"} fillOpacity={selectedIds.size > 0 ? 0.15 : 0}/>
-                {selectedIds.size === filteredNotes.length && filteredNotes.length > 0 && (
-                  <path d="M4.5 7L6.5 9L9.5 5" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"/>
+
+          <div className="mt-2.5 rounded-[20px] border border-[var(--border-soft)]/70 bg-[var(--surface-content)]/42">
+            <div className="px-4 pt-2.5 pb-2 flex items-center justify-between shrink-0">
+              <div className="flex items-center gap-2 relative">
+                <span className="text-[10px] font-semibold uppercase tracking-[0.16em] text-ink-ghost/80">笔记</span>
+                <span className="text-[10px] text-ink-ghost">{filteredNotes.length} 条</span>
+                <button type="button" onClick={(e) => { e.stopPropagation(); setShowSortMenu(!showSortMenu); }}
+                  className="w-5 h-5 flex items-center justify-center rounded-md text-ink-ghost hover:text-accent hover:bg-[var(--surface-hover)] transition-colors"
+                  title="排序">
+                  <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M3 6h18M3 12h12M3 18h6" /></svg>
+                </button>
+                {showSortMenu && (
+                  <div className="absolute top-full left-0 mt-1 z-30 bg-[var(--surface-content)] border border-[var(--border-soft)] shadow-lg rounded-xl py-1 w-[140px] animate-dropdown" onClick={(e) => e.stopPropagation()}>
+                    {[
+                      { field: "updated_at", label: "更新时间" },
+                      { field: "created_at", label: "创建时间" },
+                      { field: "title", label: "标题" },
+                    ].map(opt => (
+                      <button key={opt.field} type="button"
+                        onClick={() => { setSortField(opt.field); localStorage.setItem("kova-sort-field", opt.field); setShowSortMenu(false); }}
+                        className={`w-full text-left px-3 py-1.5 text-[11px] transition-colors ${sortField === opt.field ? "text-accent bg-[var(--surface-active)]" : "text-ink-soft hover:bg-[var(--surface-hover)]"}`}>
+                        {opt.label}
+                      </button>
+                    ))}
+                    <div className="h-px bg-[var(--border-soft)] mx-2 my-1" />
+                    <button type="button"
+                      onClick={() => { const next = sortDir === "desc" ? "asc" : "desc"; setSortDir(next); localStorage.setItem("kova-sort-dir", next); setShowSortMenu(false); }}
+                      className="w-full text-left px-3 py-1.5 text-[11px] text-ink-soft hover:bg-[var(--surface-hover)] transition-colors">
+                      {sortDir === "desc" ? "↓ 降序" : "↑ 升序"}
+                    </button>
+                  </div>
                 )}
-                {selectedIds.size > 0 && selectedIds.size < filteredNotes.length && (
-                  <path d="M4 7H10" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round"/>
-                )}
-              </svg>
-            </button>
-            <button
-              type="button"
-              onClick={() => onCreateNote()}
-              className="w-6 h-6 rounded-md flex items-center justify-center transition-colors text-ink-ghost hover:text-accent hover:bg-accent-mist"
-              title="新建笔记">
-              <svg width="14" height="14" viewBox="0 0 14 14" fill="none">
-                <path d="M7 2v10M2 7h10" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round"/>
-              </svg>
-            </button>
+              </div>
+              <div className="flex items-center gap-1">
+                <button
+                  type="button"
+                  onClick={() => {
+                    const effectiveSize = selectedIds.size + (selectedId && !selectedIds.has(selectedId) ? 1 : 0);
+                    if (effectiveSize === filteredNotes.length && filteredNotes.length > 0) {
+                      onSelectedIdsChange(new Set());
+                    } else {
+                      onSelectedIdsChange(new Set(filteredNotes.map(n => n.id)));
+                    }
+                  }}
+                  className={`w-7 h-7 rounded-xl flex items-center justify-center transition-colors ${selectedIds.size > 0 ? "bg-[var(--surface-active)] text-accent" : "text-ink-ghost hover:text-accent hover:bg-[var(--surface-hover)]"}`}
+                  title={selectedIds.size === filteredNotes.length ? "取消全选" : "全选"}>
+                  <svg width="14" height="14" viewBox="0 0 14 14" fill="none">
+                    <rect x="2" y="2" width="10" height="10" rx="2" stroke="currentColor" strokeWidth="1.5" fill={selectedIds.size > 0 ? "currentColor" : "none"} fillOpacity={selectedIds.size > 0 ? 0.15 : 0}/>
+                    {selectedIds.size === filteredNotes.length && filteredNotes.length > 0 && (
+                      <path d="M4.5 7L6.5 9L9.5 5" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"/>
+                    )}
+                    {selectedIds.size > 0 && selectedIds.size < filteredNotes.length && (
+                      <path d="M4 7H10" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round"/>
+                    )}
+                  </svg>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => onCreateNote()}
+                  className="w-7 h-7 rounded-xl flex items-center justify-center transition-colors text-ink-ghost hover:text-accent hover:bg-[var(--surface-hover)]"
+                  title="新建笔记">
+                  <svg width="14" height="14" viewBox="0 0 14 14" fill="none">
+                    <path d="M7 2v10M2 7h10" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round"/>
+                  </svg>
+                </button>
+              </div>
+            </div>
+            <NoteList notes={sortedNotes} selectedId={selectedId} selectedIds={selectedIds} onSelectedIdsChange={onSelectedIdsChange} onSelect={onSelectNote} onDeselect={onDeselectNote} onDelete={onDelete} folders={folders} onMoveMultipleToFolder={onMoveMultipleToFolder} onAddToAIContext={onAddToAIContext} onAddToNewAIContext={onAddToNewAIContext} />
           </div>
         </div>
-        <NoteList notes={sortedNotes} selectedId={selectedId} selectedIds={selectedIds} onSelectedIdsChange={onSelectedIdsChange} onSelect={onSelectNote} onDeselect={onDeselectNote} onDelete={onDelete} folders={folders} onMoveMultipleToFolder={onMoveMultipleToFolder} onAddToAIContext={onAddToAIContext} onAddToNewAIContext={onAddToNewAIContext} />
       </div>
 
       {/* Import button */}
-      <div className="px-3 pb-3 pt-1 shrink-0">
+      <div className="px-3 pb-3 pt-2 shrink-0 border-t border-[var(--border-soft)]/70 bg-[var(--surface-panel)]/92">
         <button type="button" onClick={handleImport}
-          className="w-full h-9 rounded-lg bg-paper-warm/45 border border-paper-deep/25 text-xs text-ink-soft hover:border-accent/30 hover:text-accent transition-colors flex items-center px-3 gap-2">
+          className="w-full h-10 rounded-[18px] bg-[var(--surface-content)]/65 border border-[var(--border-soft)]/75 text-xs text-ink-soft hover:border-accent/25 hover:text-accent hover:bg-[var(--surface-hover)]/80 transition-colors flex items-center px-3 gap-2">
           <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
           导入笔记
         </button>

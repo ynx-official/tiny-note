@@ -78,19 +78,22 @@ export function StatusBar({ selectedNote, noteCount, noteSaveStatus, syncStatus,
   }, []);
 
   return (
-    <div className="h-7 px-4 flex items-center justify-between gap-3 text-[11px] text-ink-ghost border-t border-paper-deep/20 bg-paper/30 shrink-0">
-      <div className="min-w-0 truncate">
+    <div className="h-8 px-4 flex items-center justify-between gap-4 text-[11px] border-t border-[var(--border-soft)] bg-[var(--surface-panel)]/92 text-ink-ghost shrink-0">
+      <div className="min-w-0 truncate flex items-center gap-2">
         {selectedNote ? (
-          <span>{(selectedNote.title + selectedNote.content).length} 字 · {fontSize}px · 粗细 {fontWeight} · Tab {tabSize}</span>
+          <>
+            <span className="text-ink-soft">{(selectedNote.title + selectedNote.content).length} 字</span>
+            <span className="hidden md:inline">{fontSize}px · {zoom}%</span>
+          </>
         ) : (
           <span>{noteCount} 条笔记</span>
         )}
       </div>
-      <div className="flex items-center gap-3 shrink-0">
+      <div className="flex items-center gap-3 shrink-0 min-w-0">
         <span className={isOnline ? "text-ink-ghost" : "text-amber-600"}>{isOnline ? "在线" : "离线"}</span>
         {selectedNote && noteSaveStatus && (
           <span className={noteSaveToneClass} title={noteSaveStatus.detail ?? noteSaveStatus.longLabel}>
-            {noteSaveStatus.longLabel}
+            {noteSaveStatus.shortLabel}
           </span>
         )}
         <button
@@ -98,18 +101,17 @@ export function StatusBar({ selectedNote, noteCount, noteSaveStatus, syncStatus,
           onClick={onRetrySync}
           disabled={isSyncing || !isOnline}
           title={syncCopy.detail || lastRunText}
-          className={`transition-colors ${syncToneClass} disabled:opacity-60 disabled:hover:text-inherit`}
+          className={`rounded-full border border-transparent px-2 py-0.5 transition-colors ${syncToneClass} disabled:opacity-60 disabled:hover:text-inherit`}
         >
           {syncCopy.label}
         </button>
         {(lastSyncDiagnostics?.status === "failed" || lastSyncDiagnostics?.status === "skipped" || conflictCount > 0 || !isCloudLoggedIn) && (
-          <span className={syncCopy.tone === "danger" ? "text-red-500" : "text-amber-600"}>
+          <span className={`hidden lg:inline truncate max-w-44 ${syncCopy.tone === "danger" ? "text-red-500" : "text-amber-600"}`}>
             {syncDetailText}
           </span>
         )}
-        <span>最近同步 {lastSyncedAt}</span>
-        {selectedNote && <span>最后保存 {new Date(selectedNote.updated_at).toLocaleString("zh-CN", { month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit" })}</span>}
-        <span>Kova v0.1.0 · {zoom}%</span>
+        <span className="hidden md:inline">最近同步 {lastSyncedAt}</span>
+        {selectedNote && <span className="hidden xl:inline">最后保存 {new Date(selectedNote.updated_at).toLocaleString("zh-CN", { month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit" })}</span>}
       </div>
     </div>
   );

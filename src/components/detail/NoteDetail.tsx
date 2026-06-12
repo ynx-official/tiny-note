@@ -287,45 +287,45 @@ export function NoteDetail({ note, onToggleSidebar, onDelete, onUpdateTitle, onU
   return (
     <>
       {/* Toolbar */}
-      <div className="flex items-center justify-between px-4 h-10 border-b border-paper-deep/20 shrink-0 bg-paper/20">
-        <div className="flex items-center gap-1">
-          <button type="button" onClick={onToggleSidebar} className="w-7 h-7 flex items-center justify-center rounded-lg text-ink-ghost hover:text-ink-faint hover:bg-paper-warm transition-all cursor-pointer" title="切换侧边栏">
+      <div className="flex items-center justify-between px-4 h-11 border-b border-[var(--border-soft)] shrink-0 bg-[var(--surface-panel)]/78">
+        <div className="flex items-center gap-1.5">
+          <button type="button" onClick={onToggleSidebar} className="w-8 h-8 flex items-center justify-center rounded-xl text-ink-ghost hover:text-ink-faint hover:bg-[var(--surface-hover)] transition-all cursor-pointer" title="切换侧边栏">
             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect x="3" y="3" width="18" height="18" rx="2"/><line x1="9" y1="3" x2="9" y2="21"/></svg>
           </button>
-          <div className="h-4 w-px bg-paper-deep/30 mx-0.5" />
+          <div className="h-4 w-px bg-[var(--border-soft)] mx-0.5" />
           <button type="button" onClick={handleUndo}
-            className="w-7 h-7 flex items-center justify-center rounded-lg text-ink-ghost hover:text-ink-faint hover:bg-paper-warm transition-all cursor-pointer" title="撤销 (Ctrl+Z)">
+            className="w-8 h-8 flex items-center justify-center rounded-xl text-ink-ghost hover:text-ink-faint hover:bg-[var(--surface-hover)] transition-all cursor-pointer" title="撤销 (Ctrl+Z)">
             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M3 7v6h6"/><path d="M21 17a9 9 0 0 0-9-9 9 9 0 0 0-6 2.3L3 13"/></svg>
           </button>
           <button type="button" onClick={handleRedo}
-            className="w-7 h-7 flex items-center justify-center rounded-lg text-ink-ghost hover:text-ink-faint hover:bg-paper-warm transition-all cursor-pointer" title="重做 (Ctrl+Shift+Z)">
+            className="w-8 h-8 flex items-center justify-center rounded-xl text-ink-ghost hover:text-ink-faint hover:bg-[var(--surface-hover)] transition-all cursor-pointer" title="重做 (Ctrl+Shift+Z)">
             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M21 7v6h-6"/><path d="M3 17a9 9 0 0 1 9-9 9 9 0 0 1 6 2.3L21 13"/></svg>
           </button>
-          <div className="h-4 w-px bg-paper-deep/30 mx-0.5" />
+          <div className="h-4 w-px bg-[var(--border-soft)] mx-0.5" />
           <button type="button" onClick={handleSave}
-            className={`w-7 h-7 flex items-center justify-center rounded-lg transition-all cursor-pointer ${
-              hasUnsavedChanges ? "text-accent hover:bg-accent-mist" : "text-ink-ghost/30"
+            className={`w-8 h-8 flex items-center justify-center rounded-xl transition-all cursor-pointer ${
+              hasUnsavedChanges ? "text-accent hover:bg-[var(--surface-active)]" : "text-ink-ghost/30"
             }`} title="保存 (Ctrl+S)">
             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z"/><polyline points="17 21 17 13 7 13 7 21"/><polyline points="7 3 7 8 15 8"/></svg>
           </button>
-          <div className="h-4 w-px bg-paper-deep/30 mx-0.5" />
-          <button type="button" onClick={() => setShowDeleteConfirm(true)} className="w-7 h-7 flex items-center justify-center rounded-lg text-ink-ghost hover:text-red-400 hover:bg-danger-bg transition-all cursor-pointer" title="删除">
+          <div className="h-4 w-px bg-[var(--border-soft)] mx-0.5" />
+          <button type="button" onClick={() => setShowDeleteConfirm(true)} className="w-8 h-8 flex items-center justify-center rounded-xl text-ink-ghost hover:text-red-400 hover:bg-danger-bg transition-all cursor-pointer" title="删除">
             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg>
           </button>
         </div>
         <div className="flex items-center gap-2">
-          <SlidingButtonGroup options={VIEW_MODES} value={mode} onChange={(value) => setMode(value as ViewMode)} buttonClassName="h-7 px-4" />
+          <SlidingButtonGroup options={VIEW_MODES} value={mode} onChange={(value) => setMode(value as ViewMode)} buttonClassName="h-8 px-4" />
         </div>
       </div>
 
       {/* Title */}
-      <div className="px-6 pt-4 pb-2 shrink-0 border-b border-paper-deep/15">
+      <div className="px-6 pt-5 pb-3 shrink-0 border-b border-[var(--border-soft)] bg-[var(--surface-content)]">
         <input type="text" value={editTitle} onChange={(e) => handleTitleChange(e.target.value)}
           placeholder="标题（可选）"
-          className="w-full text-[20px] font-bold text-ink bg-transparent focus:outline-none placeholder:text-ink-ghost" />
-        <p className="text-[11px] text-ink-ghost mt-1">
-          {new Date(note.updated_at).toLocaleString("zh-CN", { year: "numeric", month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit" })}
-          {" · "}
+          className="w-full text-[24px] font-semibold tracking-tight text-ink bg-transparent focus:outline-none placeholder:text-ink-ghost" />
+        <p className="text-[11px] text-ink-ghost mt-1.5 flex items-center gap-2 flex-wrap">
+          <span>{new Date(note.updated_at).toLocaleString("zh-CN", { year: "numeric", month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit" })}</span>
+          <span>·</span>
           {saveStatus.phase === "failed" ? (
             <button type="button" onClick={handleSave} title={saveStatus.detail ?? saveStatus.longLabel} className="text-red-500 hover:text-red-400">
               {saveStatus.longLabel}
@@ -337,15 +337,15 @@ export function NoteDetail({ note, onToggleSidebar, onDelete, onUpdateTitle, onU
           ) : (
             <span className="text-accent">{saveStatus.shortLabel}</span>
           )}
-          {attachmentStatus && <span className="ml-2 text-accent">{attachmentStatus}</span>}
+          {attachmentStatus && <span className="text-accent">{attachmentStatus}</span>}
         </p>
       </div>
 
       {/* Content Area */}
-      <div ref={containerRef} className="flex-1 flex min-h-0">
+      <div ref={containerRef} className="flex-1 flex min-h-0 bg-[var(--surface-content)]">
         {(mode === "edit" || mode === "split") && (
           <div className={`${mode === "split" ? "" : "flex-1"} flex flex-col min-h-0`} style={mode === "split" ? { width: `${splitRatio}%` } : undefined}>
-            {mode === "split" && <div className="h-7 px-4 flex items-center border-b border-paper-deep/10 shrink-0"><span className="text-[10px] text-ink-ghost">编辑</span></div>}
+            {mode === "split" && <div className="h-7 px-4 flex items-center border-b border-[var(--border-soft)] shrink-0 bg-[var(--surface-panel)]/55"><span className="text-[10px] text-ink-ghost">编辑</span></div>}
             <FormatToolbar editorViewRef={editorViewRef} />
             <CodeEditor
               value={editContent}
@@ -364,15 +364,15 @@ export function NoteDetail({ note, onToggleSidebar, onDelete, onUpdateTitle, onU
 
         {mode === "split" && (
           <div
-            className="w-1 shrink-0 bg-paper-deep/30 cursor-col-resize hover:bg-accent/40 transition-colors"
+            className="w-1 shrink-0 bg-[var(--surface-panel-muted)] cursor-col-resize hover:bg-accent/30 transition-colors"
             onMouseDown={handleDividerMouseDown}
           />
         )}
 
         {(mode === "preview" || mode === "split") && (
           <div className={`${mode === "split" ? "" : "flex-1"} flex flex-col min-h-0`} style={mode === "split" ? { width: `${100 - splitRatio}%` } : undefined}>
-            {mode === "split" && <div className="h-7 px-4 flex items-center border-b border-paper-deep/10 shrink-0"><span className="text-[10px] text-ink-ghost">预览</span></div>}
-            <div ref={previewRef} className="flex-1 overflow-y-auto px-6 py-4 [&::-webkit-scrollbar]:w-[6px] [&::-webkit-scrollbar-thumb]:bg-paper-deep [&::-webkit-scrollbar-thumb]:rounded-full [&::-webkit-scrollbar-thumb:hover]:bg-ink-ghost [&::-webkit-scrollbar-track]:bg-transparent"
+            {mode === "split" && <div className="h-7 px-4 flex items-center border-b border-[var(--border-soft)] shrink-0 bg-[var(--surface-panel)]/55"><span className="text-[10px] text-ink-ghost">预览</span></div>}
+            <div ref={previewRef} className="flex-1 overflow-y-auto px-8 py-6 bg-[var(--surface-content)] [&::-webkit-scrollbar]:w-[6px] [&::-webkit-scrollbar-thumb]:bg-[var(--border-strong)] [&::-webkit-scrollbar-thumb]:rounded-full [&::-webkit-scrollbar-thumb:hover]:bg-ink-ghost [&::-webkit-scrollbar-track]:bg-transparent"
               onContextMenu={(e) => { e.preventDefault(); setContextMenu({ x: e.clientX, y: e.clientY, items: getPreviewMenuItems() }); }}>
               <MarkdownPreview content={mode === "split" ? editContent : note.content} />
             </div>

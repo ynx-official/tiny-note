@@ -92,6 +92,36 @@ function applyPaperVars(hex: string, mode: ThemeMode) {
   }
 }
 
+function applySemanticSurfaceVars(mode: ThemeMode) {
+  const paper = loadPaper(mode);
+  const accent = loadAccent(mode);
+  const [paperH, paperS, paperL] = hexToHsl(paper);
+  const [accentH, accentS, accentL] = hexToHsl(accent);
+  const root = document.documentElement;
+
+  if (mode === "dark") {
+    root.style.setProperty("--surface-app", hslToHex(paperH, Math.min(paperS + 2, 22), Math.max(paperL - 1, 6)));
+    root.style.setProperty("--surface-panel", hslToHex(paperH, Math.min(paperS + 4, 26), Math.min(paperL + 3, 22)));
+    root.style.setProperty("--surface-panel-muted", hslToHex(paperH, Math.min(paperS + 3, 24), Math.min(paperL + 5, 25)));
+    root.style.setProperty("--surface-content", hslToHex(paperH, Math.min(paperS + 1, 20), Math.min(paperL + 2, 20)));
+    root.style.setProperty("--surface-hover", hslToHex(paperH, Math.min(paperS + 5, 28), Math.min(paperL + 8, 28)));
+    root.style.setProperty("--surface-active", hslToHex(accentH, Math.min(accentS, 36), Math.max(accentL - 48, 18)));
+    root.style.setProperty("--surface-accent-soft", hslToHex(accentH, Math.min(accentS, 28), 22));
+    root.style.setProperty("--border-soft", hslToHex(paperH, Math.min(paperS + 3, 24), Math.min(paperL + 8, 28)));
+    root.style.setProperty("--border-strong", hslToHex(paperH, Math.min(paperS + 5, 28), Math.min(paperL + 16, 38)));
+  } else {
+    root.style.setProperty("--surface-app", hslToHex(paperH, Math.max(paperS - 2, 2), Math.min(paperL + 1, 99)));
+    root.style.setProperty("--surface-panel", hslToHex(paperH, Math.min(paperS + 3, 18), Math.max(paperL - 1, 92)));
+    root.style.setProperty("--surface-panel-muted", hslToHex(paperH, Math.min(paperS + 5, 22), Math.max(paperL - 3, 88)));
+    root.style.setProperty("--surface-content", "#ffffff");
+    root.style.setProperty("--surface-hover", hslToHex(paperH, Math.min(paperS + 6, 24), Math.max(paperL - 5, 84)));
+    root.style.setProperty("--surface-active", hslToHex(accentH, Math.min(accentS, 26), 92));
+    root.style.setProperty("--surface-accent-soft", hslToHex(accentH, Math.min(accentS, 30), 95));
+    root.style.setProperty("--border-soft", hslToHex(paperH, Math.min(paperS + 6, 20), Math.max(paperL - 8, 82)));
+    root.style.setProperty("--border-strong", hslToHex(paperH, Math.min(paperS + 8, 24), Math.max(paperL - 14, 74)));
+  }
+}
+
 // Mode management
 export function loadMode(): ThemeMode {
   return localStorage.getItem("fp-mode") === "dark" ? "dark" : "light";
@@ -251,6 +281,7 @@ export function applyTheme(mode: ThemeMode) {
   document.documentElement.setAttribute("data-theme", mode);
   applyPaperVars(loadPaper(mode), mode);
   applyAccentVars(loadAccent(mode), mode);
+  applySemanticSurfaceVars(mode);
   // Apply editor settings
   const root = document.documentElement;
   root.style.setProperty("--editor-font-size", `${loadFontSize()}px`);
