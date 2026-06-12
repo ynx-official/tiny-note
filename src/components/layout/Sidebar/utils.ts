@@ -5,7 +5,7 @@ export function buildTree(folders: Folder[]): FolderNode[] {
   const map = new Map<string, FolderNode>();
   const roots: FolderNode[] = [];
   for (const f of folders) {
-    map.set(f.id, { ...f, children: [] });
+    map.set(f.id, { ...f, children: [], notes: [] });
   }
   for (const f of folders) {
     const node = map.get(f.id)!;

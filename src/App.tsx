@@ -14,8 +14,10 @@ import { SyncConflictDialog } from "./components/layout/SyncConflictDialog";
 import { ConfirmDialog } from "./components/dialog/ConfirmDialog";
 import { AIChatPanel } from "./components/layout/AIChatPanel";
 import { NoteDetail } from "./components/detail/NoteDetail";
+import { NoteCollectionView } from "./components/detail/NoteCollectionView";
 import { StatusBar } from "./components/StatusBar";
 import { db } from "./lib/db";
+import { resolveCollectionTitle, resolveContextNotes } from "./lib/noteNavigation";
 import { getCloudSession, fetchCurrentUser, listKovaSyncConflicts } from "./lib/cloudApi";
 import { createSkippedSyncDiagnostics, loadLastSyncDiagnostics, syncKovaCloud, type SyncRunDiagnostics } from "./lib/sync";
 import { useNotes } from "./hooks/useNotes";
@@ -46,18 +48,6 @@ const matchesNoteSearch = (note: Note, keyword: string) => {
   return note.title.toLowerCase().includes(keyword) || note.content.toLowerCase().includes(keyword);
 };
 
-const pickPreferredNote = (notes: Note[], preferredId?: string | null, fallbackId?: string | null) => {
-  if (preferredId) {
-    const preferred = notes.find((note) => note.id === preferredId);
-    if (preferred) return preferred;
-  }
-  if (fallbackId) {
-    const fallback = notes.find((note) => note.id === fallbackId);
-    if (fallback) return fallback;
-  }
-  return notes[0] ?? null;
-};
-
 type PendingDraftActionDialog = {
   title: string;
   message: string;
@@ -65,7 +55,7 @@ type PendingDraftActionDialog = {
 };
 
 export default function App() {
-  const { notes, fetch, create, update, remove } = useNotes();
+  const { fetch, create, update, remove } = useNotes();
   const [search, setSearch] = useState("");
   const [mode, setMode] = useState<ThemeMode>(loadMode);
   const [showSettings, setShowSettings] = useState(false);
@@ -78,10 +68,7 @@ export default function App() {
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const [allNotes, setAllNotes] = useState<Note[]>([]);
   const [folders, setFolders] = useState<import("./lib/db").Folder[]>([]);
-  const [selectedFolderId, setSelectedFolderId] = useState<string | null>(() => {
-    const saved = localStorage.getItem("fp-last-folder-id");
-    return saved !== null ? saved : "";
-  });
+  const [selectedFolderId, setSelectedFolderId] = useState<string | null>(null);
 
   const [closeToTray, setCloseToTray] = useState(() => localStorage.getItem("fp-close-to-tray") !== "false");
   const [cloudSession, setCloudSession] = useState(() => getCloudSession());
@@ -246,10 +233,10 @@ export default function App() {
     let cancelled = false;
     fetch(undefined, selectedFolderId ?? undefined).then((fetched: Note[]) => {
       if (cancelled) return;
-      const keyword = normalizeSearchKeyword(searchRef.current);
-      const visibleNotes = fetched.filter((note) => matchesNoteSearch(note, keyword));
-      const lastId = localStorage.getItem("fp-last-note-id");
-      setSelectedNote((current) => pickPreferredNote(visibleNotes, current?.id, lastId));
+      setSelectedNote((current) => {
+        if (!current) return null;
+        return fetched.find((note) => note.id === current.id) ?? null;
+      });
     });
     db.list().then((all: Note[]) => {
       if (!cancelled) setAllNotes(all);
@@ -259,13 +246,10 @@ export default function App() {
     };
   }, [selectedFolderId, fetch]);
 
-  // Persist last selected note and folder
+  // Persist last selected note
   useEffect(() => {
     if (selectedNote) localStorage.setItem("fp-last-note-id", selectedNote.id);
   }, [selectedNote]);
-  useEffect(() => {
-    if (selectedFolderId !== null) localStorage.setItem("fp-last-folder-id", selectedFolderId);
-  }, [selectedFolderId]);
 
   // Listen for quick-note-saved events
   useEffect(() => {
@@ -360,7 +344,7 @@ export default function App() {
         SUPPORTED_EXT.some(ext => p.toLowerCase().endsWith(ext))
       );
       if (paths.length === 0) return;
-      const targetFolderId = selectedFolderId && selectedFolderId !== "" ? selectedFolderId : undefined;
+      const targetFolderId = selectedFolderId ?? undefined;
       (async () => {
         for (const path of paths) {
           try {
@@ -391,10 +375,9 @@ export default function App() {
   const handleCreateNote = async (folderId?: string) => {
     runWithDraftGuard(async () => {
       const targetFolderId = folderId ?? selectedFolderId ?? undefined;
-      const normalizedFolderId = targetFolderId ?? "";
       const note = await create("", "", [], targetFolderId);
       applySearch("");
-      setSelectedFolderId(normalizedFolderId);
+      setSelectedFolderId(targetFolderId ?? null);
       setSelectedNote(note);
       setSelectedIds(new Set());
       await refreshSyncStatus();
@@ -424,13 +407,13 @@ export default function App() {
     const notesSnapshot = allNotes.length > 0 ? allNotes : await db.list();
     const note = notesSnapshot.find((item) => item.id === noteId);
     if (!note || selectedNote?.id === note.id) return;
-    const folderId = note.folder_id ?? "";
+    const folderId = note.folder_id ?? null;
     runWithDraftGuard(async () => {
       applySearch("");
       setSelectedFolderId(folderId);
       setSelectedNote(note);
       setSelectedIds(new Set());
-      await fetch(undefined, folderId || undefined);
+      await fetch(undefined, folderId ?? undefined);
     }, {
       title: "放弃当前草稿并跳转笔记？",
       message: "当前笔记还有未保存内容，继续后会放弃这次本地编辑，并跳转到 AI 选中的笔记。",
@@ -461,11 +444,7 @@ export default function App() {
       setSelectedIds(nextIds);
       db.list().then(setAllNotes);
       if (selectedNote?.id === id) {
-        fetch(undefined, selectedFolderId ?? undefined).then((remaining) => {
-          const keyword = normalizeSearchKeyword(search);
-          const visibleRemaining = remaining.filter((note) => matchesNoteSearch(note, keyword));
-          setSelectedNote(visibleRemaining[0] ?? null);
-        });
+        setSelectedNote(null);
       }
       showToast("笔记已删除");
     });
@@ -477,11 +456,7 @@ export default function App() {
     setSelectedIds(next);
 
     if (selectedNote?.id !== noteId) return;
-
-    const nextNote = [...next]
-      .map(id => allNotes.find(n => n.id === id))
-      .find((note): note is Note => Boolean(note));
-    setSelectedNote(nextNote ?? null);
+    setSelectedNote(null);
   };
 
   const handleUpdateTitle = (id: string, title: string) => {
@@ -715,19 +690,31 @@ export default function App() {
     setShowConflicts(true);
   }, [handleSync]);
 
-  const filteredNotes = useMemo(() => {
+  const contextNotes = useMemo(() => {
+    const base = resolveContextNotes(allNotes, selectedFolderId ? { type: "folder", folderId: selectedFolderId } : { type: "all" });
     const keyword = normalizeSearchKeyword(search);
     return keyword
-      ? notes.filter((note) => matchesNoteSearch(note, keyword))
-      : notes;
-  }, [notes, search]);
+      ? base.filter((note) => matchesNoteSearch(note, keyword))
+      : base;
+  }, [allNotes, search, selectedFolderId]);
+
+  const collectionTitle = useMemo(
+    () => resolveCollectionTitle(folders, selectedFolderId ? { type: "folder", folderId: selectedFolderId } : { type: "all" }),
+    [folders, selectedFolderId],
+  );
+
+  const collectionDescription = search.trim()
+    ? `已按“${search.trim()}”筛选`
+    : selectedFolderId
+      ? "当前文件夹直属笔记"
+      : "全部笔记总视图";
 
   const hasCompletedFirstSync = Boolean(syncStatus?.last_synced_at || lastSuccessfulSyncAt);
-  const selectedNoteVisibleInList = selectedNote ? filteredNotes.some((note) => note.id === selectedNote.id) : false;
+  const selectedNoteVisibleInList = selectedNote ? contextNotes.some((note) => note.id === selectedNote.id) : false;
 
   const visibleSelectedIds = useMemo(
-    () => new Set([...selectedIds].filter((id) => filteredNotes.some((note) => note.id === id))),
-    [filteredNotes, selectedIds],
+    () => new Set([...selectedIds].filter((id) => contextNotes.some((note) => note.id === id))),
+    [contextNotes, selectedIds],
   );
 
   return (
@@ -740,11 +727,9 @@ export default function App() {
           <div className="h-full shrink-0 overflow-hidden bg-[var(--surface-panel)]" style={{ width: sidebar.width - 4 }}>
             <Sidebar
               search={search}
-              filteredNotes={filteredNotes}
-              noteCount={notes.length}
+              currentNotes={contextNotes}
+              allNotes={allNotes}
               selectedId={selectedNote?.id ?? null}
-              selectedIds={visibleSelectedIds}
-              onSelectedIdsChange={setSelectedIds}
               folders={folders}
               selectedFolderId={selectedFolderId}
               onSearchChange={applySearch}
@@ -755,6 +740,7 @@ export default function App() {
                   return;
                 }
                 runWithDraftGuard(() => {
+                  setSelectedFolderId(note.folder_id ?? null);
                   setSelectedNote(note);
                   setSelectedIds(new Set());
                 }, {
@@ -763,12 +749,25 @@ export default function App() {
                   confirmLabel: "放弃并切换",
                 });
               }}
+              onSelectAll={() => {
+                if (selectedFolderId === null && !selectedNote) return;
+                runWithDraftGuard(() => {
+                  setSelectedFolderId(null);
+                  setSelectedNote(null);
+                  setSelectedIds(new Set());
+                }, {
+                  title: "放弃当前草稿并返回全部笔记？",
+                  message: "当前笔记还有未保存内容，继续后会放弃这次本地编辑，并返回全部笔记列表。",
+                  confirmLabel: "放弃并返回",
+                });
+              }}
               onCreateNote={handleCreateNote}
-              onDelete={handleDelete}
               onFolderSelect={(folderId) => {
-                if (selectedFolderId === folderId) return;
+                if (selectedFolderId === folderId && !selectedNote) return;
                 runWithDraftGuard(() => {
                   setSelectedFolderId(folderId);
+                  setSelectedNote(null);
+                  setSelectedIds(new Set());
                 }, {
                   title: "放弃当前草稿并切换文件夹？",
                   message: "当前笔记还有未保存内容，继续后会放弃这次本地编辑，并切换当前列表范围。",
@@ -795,38 +794,26 @@ export default function App() {
                 db.listFolders().then((updated) => {
                   setFolders(updated);
                   if (selectedFolderId === id) {
-                    setSelectedFolderId(updated.length > 0 ? updated[0].id : "");
+                    setSelectedFolderId(null);
+                    setSelectedNote(null);
                   }
                 });
+                db.list().then((all: Note[]) => setAllNotes(all));
                 await refreshSyncStatus();
                 showToast("文件夹已删除");
               }}
               onMoveToFolder={async (noteId, folderId) => {
                 await db.moveToFolder(noteId, folderId ?? undefined);
-                const updated = await fetch(undefined, selectedFolderId ?? undefined);
-                if (selectedNote?.id === noteId) {
-                  const keyword = normalizeSearchKeyword(search);
-                  const visibleUpdated = updated.filter((note) => matchesNoteSearch(note, keyword));
-                  const movedIntoCurrentFolder = visibleUpdated.find((note) => note.id === noteId) ?? null;
-                  setSelectedNote(movedIntoCurrentFolder ?? visibleUpdated[0] ?? null);
-                }
+                await fetch(undefined, selectedFolderId ?? undefined);
+                db.list().then((all: Note[]) => {
+                  setAllNotes(all);
+                  if (selectedNote?.id === noteId) {
+                    setSelectedNote(all.find((note) => note.id === noteId) ?? null);
+                  }
+                });
                 await refreshSyncStatus();
-                db.list().then((all: Note[]) => setAllNotes(all));
                 showToast("笔记已移动");
               }}
-              onMoveMultipleToFolder={async (noteIds, folderId) => {
-                for (const id of noteIds) { await db.moveToFolder(id, folderId ?? undefined); }
-                const updated = await fetch(undefined, selectedFolderId ?? undefined);
-                if (selectedNote && noteIds.includes(selectedNote.id)) {
-                  const keyword = normalizeSearchKeyword(search);
-                  const visibleUpdated = updated.filter((note) => matchesNoteSearch(note, keyword));
-                  setSelectedNote(visibleUpdated[0] ?? null);
-                }
-                db.list().then((all: Note[]) => setAllNotes(all));
-                await refreshSyncStatus();
-                showToast(noteIds.length > 1 ? `${noteIds.length} 条笔记已移动` : "笔记已移动");
-              }}
-              onDeselectNote={handleDeselectNote}
               onImported={() => { fetch(undefined, selectedFolderId ?? undefined); db.list().then((all: Note[]) => setAllNotes(all)); void refreshSyncStatus(); }}
               onAddToAIContext={handleAddToAIContext}
               onAddToNewAIContext={handleAddToNewAIContext}
@@ -836,7 +823,7 @@ export default function App() {
         </div>
 
         {/* Detail */}
-        <div className="flex-1 flex flex-col min-w-0 bg-[var(--surface-content)] shadow-[inset_0_1px_0_rgba(255,255,255,0.18)]">
+        <div className="flex-1 flex flex-col min-w-0 min-h-0 bg-[var(--surface-content)] shadow-[inset_0_1px_0_rgba(255,255,255,0.18)]">
           {selectedNote ? (
             <>
               {!selectedNoteVisibleInList && search.trim() && (
@@ -854,23 +841,44 @@ export default function App() {
               <NoteDetail note={selectedNote} onToggleSidebar={() => setShowSidebar((v) => !v)} onDelete={handleDelete} onUpdateTitle={handleUpdateTitle} onUpdateContent={handleUpdateContent} onDirtyChange={setIsEditorDirty} onSaveStatusChange={setNoteSaveStatus} />
             </>
           ) : (
-            <>
-              <div className="flex items-center justify-between px-4 h-10 border-b border-[var(--border-soft)] shrink-0 bg-[var(--surface-panel-muted)]/75">
-                <span className="text-xs text-ink-ghost">选择一条笔记查看</span>
-              </div>
-              <div className="flex-1 flex flex-col items-center justify-center text-ink-ghost bg-[var(--surface-content)]">
-                <svg width="56" height="56" viewBox="0 0 56 56" fill="none" className="mb-3 opacity-20">
-                  <rect x="10" y="7" width="36" height="42" rx="5" stroke="currentColor" strokeWidth="2"/>
-                  <path d="M19 18h18M19 26h12" stroke="currentColor" strokeWidth="2" strokeLinecap="round"/>
-                </svg>
-                <p className="text-sm">Kova</p>
-                <p className="text-xs mt-1">灵感来了，记一笔</p>
-              </div>
-            </>
+            <NoteCollectionView
+              title={collectionTitle}
+              description={collectionDescription}
+              notes={contextNotes}
+              selectedId={null}
+              selectedIds={visibleSelectedIds}
+              onSelectedIdsChange={setSelectedIds}
+              onSelectNote={(note) => {
+                runWithDraftGuard(() => {
+                  setSelectedFolderId(note.folder_id ?? null);
+                  setSelectedNote(note);
+                  setSelectedIds(new Set());
+                }, {
+                  title: "放弃当前草稿并打开笔记？",
+                  message: "当前笔记还有未保存内容，继续后会放弃这次本地编辑，并打开所选笔记。",
+                  confirmLabel: "放弃并打开",
+                });
+              }}
+              onDeselectNote={handleDeselectNote}
+              onDelete={handleDelete}
+              folders={folders}
+              onMoveMultipleToFolder={async (noteIds, folderId) => {
+                for (const id of noteIds) {
+                  await db.moveToFolder(id, folderId ?? undefined);
+                }
+                await fetch(undefined, selectedFolderId ?? undefined);
+                db.list().then((all: Note[]) => setAllNotes(all));
+                setSelectedIds(new Set());
+                await refreshSyncStatus();
+                showToast(noteIds.length > 1 ? `${noteIds.length} 条笔记已移动` : "笔记已移动");
+              }}
+              onAddToAIContext={handleAddToAIContext}
+              onAddToNewAIContext={handleAddToNewAIContext}
+            />
           )}
           <StatusBar
             selectedNote={selectedNote}
-            noteCount={filteredNotes.length}
+            noteCount={contextNotes.length}
             noteSaveStatus={selectedNote ? noteSaveStatus : null}
             syncStatus={syncStatus}
             failedSyncCount={syncFailureCount}
