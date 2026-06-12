@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { Folder, Note } from "./db";
-import { buildSidebarFolderTree, resolveCollectionTitle, resolveContextNotes } from "./noteNavigation";
+import { buildSidebarFolderTree, resolveCollectionTitle, resolveContextNotes, shouldForceCollectionView } from "./noteNavigation";
 
 const folders: Folder[] = [
   {
@@ -16,6 +16,13 @@ const folders: Folder[] = [
     parent_id: "backend",
     created_at: "2026-01-02T00:00:00.000Z",
     updated_at: "2026-01-02T00:00:00.000Z",
+  },
+  {
+    id: "frontend",
+    name: "Frontend",
+    parent_id: null,
+    created_at: "2026-01-03T00:00:00.000Z",
+    updated_at: "2026-01-03T00:00:00.000Z",
   },
 ];
 
@@ -50,17 +57,27 @@ const notes: Note[] = [
   {
     id: "note-free",
     title: "Loose Note",
-    content: "",
+    content: "search keyword lives here",
     tags: [],
     folder_id: null,
     created_at: "2026-03-04T10:00:00.000Z",
     updated_at: "2026-03-04T10:00:00.000Z",
+  },
+  {
+    id: "note-front",
+    title: "Vue Screen",
+    content: "ui rendering",
+    tags: [],
+    folder_id: "frontend",
+    created_at: "2026-03-05T10:00:00.000Z",
+    updated_at: "2026-03-05T10:00:00.000Z",
   },
 ];
 
 describe("noteNavigation", () => {
   it("全部笔记视图按创建时间倒序返回所有笔记", () => {
     expect(resolveContextNotes(notes, { type: "all" }).map((note) => note.id)).toEqual([
+      "note-front",
       "note-free",
       "note-root-new",
       "note-child",
@@ -78,16 +95,39 @@ describe("noteNavigation", () => {
   it("左侧树只保留文件夹树，并把直属笔记挂到各自文件夹下", () => {
     const tree = buildSidebarFolderTree(folders, notes);
 
-    expect(tree).toHaveLength(1);
-    expect(tree[0]?.id).toBe("backend");
-    expect(tree[0]?.notes.map((note) => note.id)).toEqual(["note-root-new", "note-root-old"]);
-    expect(tree[0]?.children[0]?.id).toBe("java");
-    expect(tree[0]?.children[0]?.notes.map((note) => note.id)).toEqual(["note-child"]);
+    expect(tree).toHaveLength(2);
+    expect(tree[0]?.id).toBe("frontend");
+    expect(tree[0]?.notes.map((note) => note.id)).toEqual(["note-front"]);
+    expect(tree[1]?.id).toBe("backend");
+    expect(tree[1]?.notes.map((note) => note.id)).toEqual(["note-root-new", "note-root-old"]);
+    expect(tree[1]?.children[0]?.id).toBe("java");
+    expect(tree[1]?.children[0]?.notes.map((note) => note.id)).toEqual(["note-child"]);
     expect(tree.flatMap((node) => node.notes).some((note) => note.id === "note-free")).toBe(false);
   });
 
-  it("右侧列表标题只保留全部笔记和文件夹标题，不再生成未分类入口", () => {
-    expect(resolveCollectionTitle(folders, { type: "all" })).toBe("全部笔记");
-    expect(resolveCollectionTitle(folders, { type: "folder", folderId: "backend" })).toBe("Backend");
+  it("右侧搜索态忽略当前文件夹范围，切到全局搜索结果集合", () => {
+    expect(resolveContextNotes(notes, { type: "folder", folderId: "backend" }, "search keyword").map((note) => note.id)).toEqual([
+      "note-free",
+    ]);
+    expect(resolveCollectionTitle(folders, { type: "folder", folderId: "backend" }, "search keyword")).toBe("搜索结果");
+    expect(shouldForceCollectionView("search keyword")).toBe(true);
+  });
+
+  it("左侧搜索过滤会保留命中路径，并隐藏完全无关的文件夹分支", () => {
+    const tree = buildSidebarFolderTree(folders, notes, "child");
+
+    expect(tree).toHaveLength(1);
+    expect(tree[0]?.id).toBe("backend");
+    expect(tree[0]?.notes).toHaveLength(0);
+    expect(tree[0]?.children.map((node) => node.id)).toEqual(["java"]);
+    expect(tree[0]?.children[0]?.notes.map((note) => note.id)).toEqual(["note-child"]);
+  });
+
+  it("左侧搜索过滤允许仅按文件夹名命中显示目录", () => {
+    const tree = buildSidebarFolderTree(folders, notes, "front");
+
+    expect(tree).toHaveLength(1);
+    expect(tree[0]?.id).toBe("frontend");
+    expect(tree[0]?.notes.map((note) => note.id)).toEqual([]);
   });
 });

@@ -1,7 +1,8 @@
 import { useEffect, useMemo, useRef, useState } from "react";
+import { open } from "@tauri-apps/plugin-dialog";
 import { db } from "../../../lib/db";
 import type { Folder, Note } from "../../../lib/db";
-import { buildSidebarFolderTree } from "../../../lib/noteNavigation";
+import { buildSidebarFolderTree, matchesNoteSearch, normalizeSearchKeyword } from "../../../lib/noteNavigation";
 import { SearchBar } from "../../shared/SearchBar";
 import { ContextMenu, type ContextMenuItem } from "../../dialog/ContextMenu";
 import { ConfirmDialog } from "../../dialog/ConfirmDialog";
@@ -17,7 +18,6 @@ const escapeSelector = (value: string) => value.replace(/\\/g, "\\\\").replace(/
 
 interface SidebarProps {
   search: string;
-  currentNotes: Note[];
   allNotes: Note[];
   selectedId: string | null;
   folders: Folder[];
@@ -39,7 +39,6 @@ interface SidebarProps {
 
 export function Sidebar({
   search,
-  currentNotes,
   allNotes,
   selectedId,
   folders,
@@ -58,7 +57,9 @@ export function Sidebar({
   onAddToAIContext,
   onAddToNewAIContext,
 }: SidebarProps) {
-  const folderTree = useMemo(() => buildSidebarFolderTree(folders, allNotes), [folders, allNotes]);
+  const searchKeyword = normalizeSearchKeyword(search);
+  const isSearchFiltering = searchKeyword.length > 0;
+  const folderTree = useMemo(() => buildSidebarFolderTree(folders, allNotes, search), [folders, allNotes, search]);
   const [folderMenuPos, setFolderMenuPos] = useState<{ x: number; y: number } | null>(null);
   const [folderMenuNode, setFolderMenuNode] = useState<FolderNode | null>(null);
   const [folderConfirm, setFolderConfirm] = useState<{ title: string; message: string; onConfirm: () => void | Promise<void>; danger?: boolean; confirmLabel?: string } | null>(null);
@@ -92,9 +93,25 @@ export function Sidebar({
   const uncategorizedNotes = useMemo(
     () => allNotes
       .filter((note) => !note.folder_id)
+      .filter((note) => !isSearchFiltering || matchesNoteSearch(note, searchKeyword))
       .sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime()),
-    [allNotes],
+    [allNotes, isSearchFiltering, searchKeyword],
   );
+
+  const effectiveExpandedFolderIds = useMemo(() => {
+    if (!isSearchFiltering) return expandedFolderIds;
+    const next = new Set<string>();
+    const walk = (nodes: FolderNode[]) => {
+      for (const node of nodes) {
+        next.add(node.id);
+        if (node.children.length > 0) {
+          walk(node.children);
+        }
+      }
+    };
+    walk(folderTree as FolderNode[]);
+    return next;
+  }, [expandedFolderIds, folderTree, isSearchFiltering]);
 
   const toggleExpandedFolder = (folderId: string) => {
     setExpandedFolderIds((prev) => {
@@ -164,7 +181,7 @@ export function Sidebar({
     return () => {
       cancelled = true;
     };
-  }, [expandedFolderIds, selectedId]);
+  }, [effectiveExpandedFolderIds, selectedId]);
 
   const handleFolderContextMenu = (e: React.MouseEvent, node: FolderNode) => {
     setFolderMenuPos({ x: e.clientX, y: e.clientY });
@@ -487,7 +504,7 @@ export function Sidebar({
                   activeFolderId={selectedFolderId}
                   selectedNoteId={selectedId}
                   renamingFolderId={renamingFolderId}
-                  expandedFolderIds={expandedFolderIds}
+                  expandedFolderIds={effectiveExpandedFolderIds}
                   onSelectFolder={onFolderSelect}
                   onSelectNote={onSelectNote}
                   onRename={onFolderRename}

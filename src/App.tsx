@@ -17,7 +17,7 @@ import { NoteDetail } from "./components/detail/NoteDetail";
 import { NoteCollectionView } from "./components/detail/NoteCollectionView";
 import { StatusBar } from "./components/StatusBar";
 import { db } from "./lib/db";
-import { resolveCollectionTitle, resolveContextNotes } from "./lib/noteNavigation";
+import { resolveCollectionTitle, resolveContextNotes, shouldForceCollectionView } from "./lib/noteNavigation";
 import { getCloudSession, fetchCurrentUser, listKovaSyncConflicts } from "./lib/cloudApi";
 import { createSkippedSyncDiagnostics, loadLastSyncDiagnostics, syncKovaCloud, type SyncRunDiagnostics } from "./lib/sync";
 import { useNotes } from "./hooks/useNotes";
@@ -40,13 +40,6 @@ const AUTO_SYNC_DEBOUNCE_MS = 8_000;
 const AUTO_SYNC_STARTUP_DELAY_MS = 1_800;
 const AUTO_SYNC_VISIBLE_DELAY_MS = 1_500;
 const KEEPALIVE_BLOCKED_RETRY_MS = 60 * 1000;
-
-const normalizeSearchKeyword = (value: string) => value.trim().toLowerCase();
-
-const matchesNoteSearch = (note: Note, keyword: string) => {
-  if (!keyword) return true;
-  return note.title.toLowerCase().includes(keyword) || note.content.toLowerCase().includes(keyword);
-};
 
 type PendingDraftActionDialog = {
   title: string;
@@ -143,8 +136,22 @@ export default function App() {
   }, []);
 
   const applySearch = useCallback((value: string) => {
+    const nextSearchMode = shouldForceCollectionView(value);
+    const currentSearchMode = shouldForceCollectionView(searchRef.current);
+
+    if (nextSearchMode && !currentSearchMode && selectedNote && isEditorDirtyRef.current) {
+      runWithDraftGuard(() => {
+        setSearch(value);
+      }, {
+        title: "放弃当前草稿并进入搜索结果？",
+        message: "继续后会放弃这次本地编辑，并切换到搜索结果页。",
+        confirmLabel: "放弃并搜索",
+      });
+      return;
+    }
+
     setSearch(value);
-  }, []);
+  }, [runWithDraftGuard, selectedNote]);
 
   const openFirstSyncWizard = useCallback(() => {
     setShowLogin(false);
@@ -691,19 +698,25 @@ export default function App() {
   }, [handleSync]);
 
   const contextNotes = useMemo(() => {
-    const base = resolveContextNotes(allNotes, selectedFolderId ? { type: "folder", folderId: selectedFolderId } : { type: "all" });
-    const keyword = normalizeSearchKeyword(search);
-    return keyword
-      ? base.filter((note) => matchesNoteSearch(note, keyword))
-      : base;
+    return resolveContextNotes(
+      allNotes,
+      selectedFolderId ? { type: "folder", folderId: selectedFolderId } : { type: "all" },
+      search,
+    );
   }, [allNotes, search, selectedFolderId]);
 
+  const isSearchResultsView = shouldForceCollectionView(search);
+
   const collectionTitle = useMemo(
-    () => resolveCollectionTitle(folders, selectedFolderId ? { type: "folder", folderId: selectedFolderId } : { type: "all" }),
-    [folders, selectedFolderId],
+    () => resolveCollectionTitle(
+      folders,
+      selectedFolderId ? { type: "folder", folderId: selectedFolderId } : { type: "all" },
+      search,
+    ),
+    [folders, search, selectedFolderId],
   );
 
-  const collectionDescription = search.trim()
+  const collectionDescription = isSearchResultsView
     ? `已按“${search.trim()}”筛选`
     : selectedFolderId
       ? "当前文件夹直属笔记"
@@ -727,7 +740,6 @@ export default function App() {
           <div className="h-full shrink-0 overflow-hidden bg-[var(--surface-panel)]" style={{ width: sidebar.width - 4 }}>
             <Sidebar
               search={search}
-              currentNotes={contextNotes}
               allNotes={allNotes}
               selectedId={selectedNote?.id ?? null}
               folders={folders}
@@ -824,7 +836,7 @@ export default function App() {
 
         {/* Detail */}
         <div className="flex-1 flex flex-col min-w-0 min-h-0 bg-[var(--surface-content)] shadow-[inset_0_1px_0_rgba(255,255,255,0.18)]">
-          {selectedNote ? (
+          {selectedNote && !isSearchResultsView ? (
             <>
               {!selectedNoteVisibleInList && search.trim() && (
                 <div className="flex items-center justify-between gap-3 border-b border-amber-200/60 bg-amber-50/65 px-5 py-2 text-xs text-amber-700">

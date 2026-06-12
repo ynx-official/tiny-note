@@ -16,7 +16,21 @@ const byCreatedAtDesc = (a: Note, b: Note) =>
 const byFolderCreatedAtDesc = (a: Folder, b: Folder) =>
   new Date(b.created_at).getTime() - new Date(a.created_at).getTime();
 
-export function resolveContextNotes(notes: Note[], navTarget: NavTarget): Note[] {
+export const normalizeSearchKeyword = (value: string) => value.trim().toLowerCase();
+
+export const matchesNoteSearch = (note: Note, keyword: string) => {
+  if (!keyword) return true;
+  return note.title.toLowerCase().includes(keyword) || note.content.toLowerCase().includes(keyword);
+};
+
+export const shouldForceCollectionView = (search: string) => normalizeSearchKeyword(search).length > 0;
+
+export function resolveContextNotes(notes: Note[], navTarget: NavTarget, search = ""): Note[] {
+  const keyword = normalizeSearchKeyword(search);
+  if (keyword) {
+    return notes.filter((note) => matchesNoteSearch(note, keyword)).sort(byCreatedAtDesc);
+  }
+
   if (navTarget.type === "folder") {
     return notes.filter((note) => note.folder_id === navTarget.folderId).sort(byCreatedAtDesc);
   }
@@ -24,7 +38,11 @@ export function resolveContextNotes(notes: Note[], navTarget: NavTarget): Note[]
   return [...notes].sort(byCreatedAtDesc);
 }
 
-export function resolveCollectionTitle(folders: Folder[], navTarget: NavTarget): string {
+export function resolveCollectionTitle(folders: Folder[], navTarget: NavTarget, search = ""): string {
+  if (shouldForceCollectionView(search)) {
+    return "搜索结果";
+  }
+
   if (navTarget.type === "folder") {
     return folders.find((folder) => folder.id === navTarget.folderId)?.name ?? "当前文件夹";
   }
@@ -32,7 +50,25 @@ export function resolveCollectionTitle(folders: Folder[], navTarget: NavTarget):
   return "全部笔记";
 }
 
-export function buildSidebarFolderTree(folders: Folder[], notes: Note[]): SidebarFolderNode[] {
+function filterSidebarFolderNode(node: SidebarFolderNode, keyword: string): SidebarFolderNode | null {
+  const filteredChildren = node.children
+    .map((child) => filterSidebarFolderNode(child, keyword))
+    .filter((child): child is SidebarFolderNode => child !== null);
+  const filteredNotes = node.notes.filter((note) => matchesNoteSearch(note, keyword));
+  const folderMatched = node.name.toLowerCase().includes(keyword);
+
+  if (!folderMatched && filteredChildren.length === 0 && filteredNotes.length === 0) {
+    return null;
+  }
+
+  return {
+    ...node,
+    children: filteredChildren,
+    notes: filteredNotes,
+  };
+}
+
+export function buildSidebarFolderTree(folders: Folder[], notes: Note[], search = ""): SidebarFolderNode[] {
   const map = new Map<string, SidebarFolderNode>();
   const roots: SidebarFolderNode[] = [];
   const sortedFolders = [...folders].sort(byFolderCreatedAtDesc);
@@ -64,5 +100,12 @@ export function buildSidebarFolderTree(folders: Folder[], notes: Note[]): Sideba
     node.children.sort(byFolderCreatedAtDesc);
   }
 
-  return roots;
+  const keyword = normalizeSearchKeyword(search);
+  if (!keyword) {
+    return roots;
+  }
+
+  return roots
+    .map((node) => filterSidebarFolderNode(node, keyword))
+    .filter((node): node is SidebarFolderNode => node !== null);
 }
