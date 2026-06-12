@@ -115,10 +115,10 @@ export function FolderItem({ node, depth, selectedFolderId, selectedFolderIds, r
             onClick={(e) => e.stopPropagation()}
             onKeyDown={(e) => { if (e.key === "Enter" && editName.trim()) { onRename(node.id, editName.trim()); setEditing(false); onRenameEnd(); } if (e.key === "Escape") { setEditName(node.name); setEditing(false); onRenameEnd(); } }}
             onBlur={() => { if (editName.trim() && editName !== node.name) onRename(node.id, editName.trim()); setEditing(false); onRenameEnd(); }}
-            className="flex-1 min-w-0 h-6 px-1 text-[11px] bg-transparent focus:outline-none"
+            className="flex-1 min-w-0 h-7 px-1.5 text-xs font-medium leading-5 bg-transparent focus:outline-none"
             autoFocus />
         ) : (
-          <span className="flex-1 min-w-0 px-1 py-1 text-[11px] truncate">{node.name}</span>
+          <span className="flex-1 min-w-0 px-1.5 py-1.5 text-xs font-medium leading-5 truncate">{node.name}</span>
         )}
         <div className="invisible group-hover:visible flex items-center gap-0.5 pr-1 shrink-0">
           <button type="button" onClick={(e) => { e.stopPropagation(); onCreateSub(node.id); }} title="新建子文件夹"

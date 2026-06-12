@@ -349,14 +349,14 @@ export function Sidebar({
             {/* "未分类" standalone row */}
             <div className="px-3 pb-1.5 flex items-center justify-between shrink-0">
               <button type="button" onClick={() => { setSelectedFolderIds(new Set()); onFolderSelect(""); }}
-                className={`flex-1 text-left text-xs px-3 py-2 rounded-xl transition-colors ${selectedFolderId === "" ? "bg-[var(--surface-active)]/80 text-accent font-medium" : "text-ink-soft hover:bg-[var(--surface-hover)]/80 hover:text-accent"}`}>
+                className={`flex-1 text-left text-sm font-medium px-3 py-2.5 rounded-xl transition-colors ${selectedFolderId === "" ? "bg-[var(--surface-active)]/80 text-accent" : "text-ink-soft hover:bg-[var(--surface-hover)]/80 hover:text-accent"}`}>
                 未分类
               </button>
             </div>
             {/* "全部" collapsible row with actions */}
             <div className="px-3 pb-2.5 flex items-center justify-between shrink-0"
               onContextMenu={(e) => { e.preventDefault(); setAllMenuPos({ x: e.clientX, y: e.clientY }); }}>
-              <div className={`flex-1 flex items-center text-left text-xs px-3 py-2 rounded-xl transition-colors ${selectedFolderId === null ? "bg-[var(--surface-active)]/80 text-accent font-medium" : "text-ink-soft hover:bg-[var(--surface-hover)]/80 hover:text-accent"}`}>
+              <div className={`flex-1 flex items-center text-left text-sm font-medium px-3 py-2.5 rounded-xl transition-colors ${selectedFolderId === null ? "bg-[var(--surface-active)]/80 text-accent" : "text-ink-soft hover:bg-[var(--surface-hover)]/80 hover:text-accent"}`}>
                 <button type="button" onClick={(e) => { e.stopPropagation(); setAllExpanded(!allExpanded); }}
                   className="w-4 h-4 flex items-center justify-center shrink-0 mr-1 cursor-pointer">
                   <svg width="8" height="8" viewBox="0 0 8 8" fill="currentColor" className={`transition-transform ${allExpanded ? "rotate-90" : ""}`}><path d="M2 1l4 3-4 3z"/></svg>
