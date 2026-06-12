@@ -15,12 +15,14 @@ import type { AIContextAttachment } from "../AIChatPanel/types";
 interface SidebarProps {
   search: string;
   filteredNotes: Note[];
+  noteCount: number;
   selectedId: string | null;
   selectedIds: Set<string>;
   onSelectedIdsChange: (ids: Set<string>) => void;
   folders: Folder[];
   selectedFolderId: string | null;
   onSearchChange: (value: string) => void;
+  onSearchCommit: (value: string) => void;
   onSelectNote: (note: Note) => void;
   onCreateNote: (folderId?: string) => void;
   onDelete: (id: string) => void;
@@ -37,9 +39,9 @@ interface SidebarProps {
 }
 
 export function Sidebar({
-  search, filteredNotes, selectedId, selectedIds, onSelectedIdsChange,
+  search, filteredNotes, noteCount, selectedId, selectedIds, onSelectedIdsChange,
   folders, selectedFolderId,
-  onSearchChange, onSelectNote, onCreateNote, onDelete,
+  onSearchChange, onSearchCommit, onSelectNote, onCreateNote, onDelete,
   onFolderSelect, onFolderCreate, onFolderRename, onFolderDelete, onMoveToFolder, onMoveMultipleToFolder, onDeselectNote, onImported, onAddToAIContext, onAddToNewAIContext,
 }: SidebarProps) {
   const folderTree = buildTree(folders);
@@ -86,6 +88,9 @@ export function Sidebar({
     }
     return sortDir === "desc" ? -cmp : cmp;
   });
+  const scopeLabel = selectedFolderId
+    ? (folders.find((folder) => folder.id === selectedFolderId)?.name ?? "当前文件夹")
+    : "全部笔记";
 
   // On mount, expand the path to the last selected note's folder
   useEffect(() => {
@@ -318,7 +323,15 @@ export function Sidebar({
 
   return (
     <div className="w-full h-full flex flex-col border-r border-paper-deep/30 bg-paper/40">
-      <SearchBar value={search} onChange={onSearchChange} />
+      <SearchBar
+        value={search}
+        resultCount={sortedNotes.length}
+        totalCount={noteCount}
+        scopeLabel={scopeLabel}
+        onChange={onSearchChange}
+        onClear={() => onSearchChange("")}
+        onCommit={onSearchCommit}
+      />
 
       {/* Folder list + Note list in one scrollable area */}
       <div className="flex-1 overflow-y-auto min-h-0 [scrollbar-gutter:stable]" onDragOver={(e) => e.preventDefault()} onClick={() => setShowSortMenu(false)}>

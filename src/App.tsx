@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { listen } from "@tauri-apps/api/event";
 import { getCurrentWebview } from "@tauri-apps/api/webview";
 import { loadMode, saveMode, applyTheme, loadAllCustomFonts, loadKeepaliveSyncEnabled, loadKeepaliveSyncIntervalMinutes, saveKeepaliveSyncEnabled, saveKeepaliveSyncIntervalMinutes, type ThemeMode } from "./lib/theme";
@@ -9,7 +9,9 @@ import { TitleBar } from "./components/layout/TitleBar";
 import { Sidebar } from "./components/layout/Sidebar";
 import { SettingsPanel } from "./components/layout/SettingsPanel";
 import { LoginPanel } from "./components/layout/LoginPanel";
+import { FirstSyncWizard } from "./components/layout/FirstSyncWizard";
 import { SyncConflictDialog } from "./components/layout/SyncConflictDialog";
+import { ConfirmDialog } from "./components/dialog/ConfirmDialog";
 import { AIChatPanel } from "./components/layout/AIChatPanel";
 import { NoteDetail } from "./components/detail/NoteDetail";
 import { StatusBar } from "./components/StatusBar";
@@ -18,6 +20,7 @@ import { getCloudSession, fetchCurrentUser, listKovaSyncConflicts } from "./lib/
 import { createSkippedSyncDiagnostics, loadLastSyncDiagnostics, syncKovaCloud, type SyncRunDiagnostics } from "./lib/sync";
 import { useNotes } from "./hooks/useNotes";
 import type { Note } from "./lib/db";
+import type { NoteSaveStatus } from "./lib/noteSaveStatus";
 import type { AIContextAttachment } from "./components/layout/AIChatPanel/types";
 
 // Init theme and fonts
@@ -36,12 +39,38 @@ const AUTO_SYNC_STARTUP_DELAY_MS = 1_800;
 const AUTO_SYNC_VISIBLE_DELAY_MS = 1_500;
 const KEEPALIVE_BLOCKED_RETRY_MS = 60 * 1000;
 
+const normalizeSearchKeyword = (value: string) => value.trim().toLowerCase();
+
+const matchesNoteSearch = (note: Note, keyword: string) => {
+  if (!keyword) return true;
+  return note.title.toLowerCase().includes(keyword) || note.content.toLowerCase().includes(keyword);
+};
+
+const pickPreferredNote = (notes: Note[], preferredId?: string | null, fallbackId?: string | null) => {
+  if (preferredId) {
+    const preferred = notes.find((note) => note.id === preferredId);
+    if (preferred) return preferred;
+  }
+  if (fallbackId) {
+    const fallback = notes.find((note) => note.id === fallbackId);
+    if (fallback) return fallback;
+  }
+  return notes[0] ?? null;
+};
+
+type PendingDraftActionDialog = {
+  title: string;
+  message: string;
+  confirmLabel?: string;
+};
+
 export default function App() {
   const { notes, fetch, create, update, remove } = useNotes();
   const [search, setSearch] = useState("");
   const [mode, setMode] = useState<ThemeMode>(loadMode);
   const [showSettings, setShowSettings] = useState(false);
   const [showLogin, setShowLogin] = useState(false);
+  const [showFirstSyncWizard, setShowFirstSyncWizard] = useState(false);
   const [showAI, setShowAI] = useState(false);
   const [pendingAIContext, setPendingAIContext] = useState<{ id: number; attachments: AIContextAttachment[]; mode: "current" | "new" } | null>(null);
   const [showSidebar, setShowSidebar] = useState(true);
@@ -70,8 +99,10 @@ export default function App() {
     return diagnostics?.status === "success" ? (diagnostics.finishedAt ?? diagnostics.startedAt ?? null) : null;
   });
   const [isEditorDirty, setIsEditorDirty] = useState(false);
+  const [noteSaveStatus, setNoteSaveStatus] = useState<NoteSaveStatus | null>(null);
   const [showConflicts, setShowConflicts] = useState(false);
   const [cloudConflictCount, setCloudConflictCount] = useState(0);
+  const [pendingDraftActionDialog, setPendingDraftActionDialog] = useState<PendingDraftActionDialog | null>(null);
 
   const sidebar = usePanelResize({ storageKey: "kova-sidebar-width", defaultWidth: 260, minWidth: 180, maxWidth: 400, side: "right" });
   const ai = usePanelResize({ storageKey: "kova-ai-width", defaultWidth: 360, minWidth: 300, maxWidth: 600, side: "left" });
@@ -85,6 +116,8 @@ export default function App() {
   const keepaliveSyncTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const isSyncingRef = useRef(false);
   const isEditorDirtyRef = useRef(false);
+  const searchRef = useRef(search);
+  const pendingDraftActionRef = useRef<(() => void | Promise<void>) | null>(null);
 
   const showToast = (message: string) => {
     setToast(message);
@@ -97,6 +130,42 @@ export default function App() {
       window.clearTimeout(keepaliveSyncTimerRef.current);
       keepaliveSyncTimerRef.current = null;
     }
+  }, []);
+
+  const closePendingDraftActionDialog = useCallback(() => {
+    pendingDraftActionRef.current = null;
+    setPendingDraftActionDialog(null);
+  }, []);
+
+  const runWithDraftGuard = useCallback((action: () => void | Promise<void>, dialog?: PendingDraftActionDialog) => {
+    if (!isEditorDirtyRef.current) {
+      void action();
+      return;
+    }
+    pendingDraftActionRef.current = async () => {
+      setIsEditorDirty(false);
+      setNoteSaveStatus(null);
+      await action();
+      showToast("已放弃当前未保存内容");
+    };
+    setPendingDraftActionDialog(dialog ?? {
+      title: "放弃未保存内容？",
+      message: "当前笔记还有未保存内容，继续后会放弃这次本地编辑。",
+      confirmLabel: "放弃并继续",
+    });
+  }, []);
+
+  const applySearch = useCallback((value: string) => {
+    setSearch(value);
+  }, []);
+
+  const openFirstSyncWizard = useCallback(() => {
+    setShowLogin(false);
+    setShowFirstSyncWizard(true);
+  }, []);
+
+  const closeFirstSyncWizard = useCallback(() => {
+    setShowFirstSyncWizard(false);
   }, []);
 
   const refreshSyncStatus = useCallback(async () => {
@@ -127,6 +196,20 @@ export default function App() {
 
   useEffect(() => {
     isEditorDirtyRef.current = isEditorDirty;
+  }, [isEditorDirty]);
+
+  useEffect(() => {
+    searchRef.current = search;
+  }, [search]);
+
+  useEffect(() => {
+    if (!isEditorDirty) return;
+    const handleBeforeUnload = (event: BeforeUnloadEvent) => {
+      event.preventDefault();
+      event.returnValue = "";
+    };
+    window.addEventListener("beforeunload", handleBeforeUnload);
+    return () => window.removeEventListener("beforeunload", handleBeforeUnload);
   }, [isEditorDirty]);
 
   // Zoom with Ctrl+scroll, reset with Ctrl+0
@@ -160,14 +243,20 @@ export default function App() {
 
   // Fetch notes when folder changes
   useEffect(() => {
+    let cancelled = false;
     fetch(undefined, selectedFolderId ?? undefined).then((fetched: Note[]) => {
-      if (fetched.length > 0 && !selectedNote) {
-        const lastId = localStorage.getItem("fp-last-note-id");
-        const found = lastId ? fetched.find(n => n.id === lastId) : null;
-        setSelectedNote(found ?? fetched[0]);
-      }
+      if (cancelled) return;
+      const keyword = normalizeSearchKeyword(searchRef.current);
+      const visibleNotes = fetched.filter((note) => matchesNoteSearch(note, keyword));
+      const lastId = localStorage.getItem("fp-last-note-id");
+      setSelectedNote((current) => pickPreferredNote(visibleNotes, current?.id, lastId));
     });
-    db.list().then((all: Note[]) => setAllNotes(all));
+    db.list().then((all: Note[]) => {
+      if (!cancelled) setAllNotes(all);
+    });
+    return () => {
+      cancelled = true;
+    };
   }, [selectedFolderId, fetch]);
 
   // Persist last selected note and folder
@@ -300,12 +389,23 @@ export default function App() {
   };
 
   const handleCreateNote = async (folderId?: string) => {
-    const note = await create("", "", [], folderId ?? selectedFolderId ?? undefined);
-    setSelectedNote(note);
-    await refreshSyncStatus();
-    fetch(undefined, selectedFolderId ?? undefined);
-    db.list().then((all: Note[]) => setAllNotes(all));
-    showToast("笔记已新建");
+    runWithDraftGuard(async () => {
+      const targetFolderId = folderId ?? selectedFolderId ?? undefined;
+      const normalizedFolderId = targetFolderId ?? "";
+      const note = await create("", "", [], targetFolderId);
+      applySearch("");
+      setSelectedFolderId(normalizedFolderId);
+      setSelectedNote(note);
+      setSelectedIds(new Set());
+      await refreshSyncStatus();
+      await fetch(undefined, targetFolderId);
+      db.list().then((all: Note[]) => setAllNotes(all));
+      showToast("笔记已新建");
+    }, {
+      title: "放弃当前草稿并新建笔记？",
+      message: "当前笔记还有未保存内容，继续后会放弃这次本地编辑，并打开新笔记。",
+      confirmLabel: "放弃并新建",
+    });
   };
 
   const handleAddToAIContext = (attachments: AIContextAttachment[]) => {
@@ -323,19 +423,34 @@ export default function App() {
   const handleOpenNoteFromAI = async (noteId: string) => {
     const notesSnapshot = allNotes.length > 0 ? allNotes : await db.list();
     const note = notesSnapshot.find((item) => item.id === noteId);
-    if (!note) return;
+    if (!note || selectedNote?.id === note.id) return;
     const folderId = note.folder_id ?? "";
-    setSelectedFolderId(folderId);
-    setSelectedNote(note);
-    setSelectedIds(new Set());
-    await fetch(undefined, folderId || undefined);
+    runWithDraftGuard(async () => {
+      applySearch("");
+      setSelectedFolderId(folderId);
+      setSelectedNote(note);
+      setSelectedIds(new Set());
+      await fetch(undefined, folderId || undefined);
+    }, {
+      title: "放弃当前草稿并跳转笔记？",
+      message: "当前笔记还有未保存内容，继续后会放弃这次本地编辑，并跳转到 AI 选中的笔记。",
+      confirmLabel: "放弃并跳转",
+    });
   };
 
   const handleOpenFolderFromAI = async (folderId: string) => {
-    setSelectedFolderId(folderId);
-    setSelectedNote(null);
-    setSelectedIds(new Set());
-    await fetch(undefined, folderId);
+    if (selectedFolderId === folderId) return;
+    runWithDraftGuard(async () => {
+      applySearch("");
+      setSelectedFolderId(folderId);
+      setSelectedNote(null);
+      setSelectedIds(new Set());
+      await fetch(undefined, folderId);
+    }, {
+      title: "放弃当前草稿并切换文件夹？",
+      message: "当前笔记还有未保存内容，继续后会放弃这次本地编辑，并切换到 AI 选中的文件夹。",
+      confirmLabel: "放弃并切换",
+    });
   };
 
   const handleDelete = (id: string) => {
@@ -347,7 +462,9 @@ export default function App() {
       db.list().then(setAllNotes);
       if (selectedNote?.id === id) {
         fetch(undefined, selectedFolderId ?? undefined).then((remaining) => {
-          setSelectedNote(remaining[0] ?? null);
+          const keyword = normalizeSearchKeyword(search);
+          const visibleRemaining = remaining.filter((note) => matchesNoteSearch(note, keyword));
+          setSelectedNote(visibleRemaining[0] ?? null);
         });
       }
       showToast("笔记已删除");
@@ -582,31 +699,36 @@ export default function App() {
     return () => document.removeEventListener("visibilitychange", handleVisibilityChange);
   }, [cloudSession, isOnline, scheduleAutoSyncAttempt, syncFailureCount, syncStatus]);
 
-  useEffect(() => {
-    const handler = (event: Event) => {
-      const action = (event as CustomEvent<{ action?: string }>).detail?.action;
-      setShowLogin(false);
-      if (action === "upload") {
-        void handleSync();
-        return;
-      }
-      if (action === "restore") {
-        setShowSettings(true);
-        setShowAI(false);
-        showToast("请在设置页打开云备份列表并选择快照恢复");
-        return;
-      }
-      if (action === "merge") {
-        setShowConflicts(true);
-      }
-    };
-    window.addEventListener("kova-cloud-first-sync", handler);
-    return () => window.removeEventListener("kova-cloud-first-sync", handler);
+  const handleFirstSyncAction = useCallback((action: "upload" | "restore" | "merge") => {
+    setShowFirstSyncWizard(false);
+    setShowLogin(false);
+    if (action === "upload") {
+      void handleSync();
+      return;
+    }
+    if (action === "restore") {
+      setShowSettings(true);
+      setShowAI(false);
+      showToast("请在设置页打开云备份列表并选择快照恢复");
+      return;
+    }
+    setShowConflicts(true);
   }, [handleSync]);
 
-  const filteredNotes = search
-    ? notes.filter((n) => n.content.toLowerCase().includes(search.toLowerCase()) || n.title.toLowerCase().includes(search.toLowerCase()))
-    : notes;
+  const filteredNotes = useMemo(() => {
+    const keyword = normalizeSearchKeyword(search);
+    return keyword
+      ? notes.filter((note) => matchesNoteSearch(note, keyword))
+      : notes;
+  }, [notes, search]);
+
+  const hasCompletedFirstSync = Boolean(syncStatus?.last_synced_at || lastSuccessfulSyncAt);
+  const selectedNoteVisibleInList = selectedNote ? filteredNotes.some((note) => note.id === selectedNote.id) : false;
+
+  const visibleSelectedIds = useMemo(
+    () => new Set([...selectedIds].filter((id) => filteredNotes.some((note) => note.id === id))),
+    [filteredNotes, selectedIds],
+  );
 
   return (
     <div className="h-screen flex flex-col bg-paper">
@@ -619,16 +741,40 @@ export default function App() {
             <Sidebar
               search={search}
               filteredNotes={filteredNotes}
+              noteCount={notes.length}
               selectedId={selectedNote?.id ?? null}
-              selectedIds={selectedIds}
+              selectedIds={visibleSelectedIds}
               onSelectedIdsChange={setSelectedIds}
               folders={folders}
               selectedFolderId={selectedFolderId}
-              onSearchChange={setSearch}
-              onSelectNote={(note) => { setSelectedNote(note); setSelectedIds(new Set()); }}
+              onSearchChange={applySearch}
+              onSearchCommit={applySearch}
+              onSelectNote={(note) => {
+                if (selectedNote?.id === note.id) {
+                  setSelectedIds(new Set());
+                  return;
+                }
+                runWithDraftGuard(() => {
+                  setSelectedNote(note);
+                  setSelectedIds(new Set());
+                }, {
+                  title: "放弃当前草稿并切换笔记？",
+                  message: "当前笔记还有未保存内容，继续后会放弃这次本地编辑，并切换到另一条笔记。",
+                  confirmLabel: "放弃并切换",
+                });
+              }}
               onCreateNote={handleCreateNote}
               onDelete={handleDelete}
-              onFolderSelect={setSelectedFolderId}
+              onFolderSelect={(folderId) => {
+                if (selectedFolderId === folderId) return;
+                runWithDraftGuard(() => {
+                  setSelectedFolderId(folderId);
+                }, {
+                  title: "放弃当前草稿并切换文件夹？",
+                  message: "当前笔记还有未保存内容，继续后会放弃这次本地编辑，并切换当前列表范围。",
+                  confirmLabel: "放弃并切换",
+                });
+              }}
               onFolderCreate={async (baseName, parentId) => {
                 const siblings = folders.filter(f => f.parent_id === (parentId ?? null));
                 const names = new Set(siblings.map(f => f.name));
@@ -655,12 +801,26 @@ export default function App() {
                 await refreshSyncStatus();
                 showToast("文件夹已删除");
               }}
-              onMoveToFolder={async (noteId, folderId) => { await db.moveToFolder(noteId, folderId ?? undefined); await refreshSyncStatus(); fetch(undefined, selectedFolderId ?? undefined); showToast("笔记已移动"); }}
+              onMoveToFolder={async (noteId, folderId) => {
+                await db.moveToFolder(noteId, folderId ?? undefined);
+                const updated = await fetch(undefined, selectedFolderId ?? undefined);
+                if (selectedNote?.id === noteId) {
+                  const keyword = normalizeSearchKeyword(search);
+                  const visibleUpdated = updated.filter((note) => matchesNoteSearch(note, keyword));
+                  const movedIntoCurrentFolder = visibleUpdated.find((note) => note.id === noteId) ?? null;
+                  setSelectedNote(movedIntoCurrentFolder ?? visibleUpdated[0] ?? null);
+                }
+                await refreshSyncStatus();
+                db.list().then((all: Note[]) => setAllNotes(all));
+                showToast("笔记已移动");
+              }}
               onMoveMultipleToFolder={async (noteIds, folderId) => {
                 for (const id of noteIds) { await db.moveToFolder(id, folderId ?? undefined); }
                 const updated = await fetch(undefined, selectedFolderId ?? undefined);
                 if (selectedNote && noteIds.includes(selectedNote.id)) {
-                  setSelectedNote(updated.length > 0 ? updated[0] : null);
+                  const keyword = normalizeSearchKeyword(search);
+                  const visibleUpdated = updated.filter((note) => matchesNoteSearch(note, keyword));
+                  setSelectedNote(visibleUpdated[0] ?? null);
                 }
                 db.list().then((all: Note[]) => setAllNotes(all));
                 await refreshSyncStatus();
@@ -678,7 +838,21 @@ export default function App() {
         {/* Detail */}
         <div className="flex-1 flex flex-col min-w-0">
           {selectedNote ? (
-            <NoteDetail note={selectedNote} onToggleSidebar={() => setShowSidebar((v) => !v)} onDelete={handleDelete} onUpdateTitle={handleUpdateTitle} onUpdateContent={handleUpdateContent} onDirtyChange={setIsEditorDirty} onSaved={() => showToast("笔记已保存")} />
+            <>
+              {!selectedNoteVisibleInList && search.trim() && (
+                <div className="flex items-center justify-between gap-3 border-b border-amber-200/60 bg-amber-50/70 px-4 py-2 text-xs text-amber-700">
+                  <span>当前正在编辑的笔记不在这次筛选结果里，列表已只显示匹配项。</span>
+                  <button
+                    type="button"
+                    onClick={() => applySearch("")}
+                    className="shrink-0 rounded-full border border-amber-300/70 px-2.5 py-1 text-[11px] transition hover:bg-white/80"
+                  >
+                    清空筛选
+                  </button>
+                </div>
+              )}
+              <NoteDetail note={selectedNote} onToggleSidebar={() => setShowSidebar((v) => !v)} onDelete={handleDelete} onUpdateTitle={handleUpdateTitle} onUpdateContent={handleUpdateContent} onDirtyChange={setIsEditorDirty} onSaveStatusChange={setNoteSaveStatus} />
+            </>
           ) : (
             <>
               <div className="flex items-center justify-between px-4 h-10 border-b border-paper-deep/20 shrink-0 bg-paper/20">
@@ -697,8 +871,10 @@ export default function App() {
           <StatusBar
             selectedNote={selectedNote}
             noteCount={filteredNotes.length}
+            noteSaveStatus={selectedNote ? noteSaveStatus : null}
             syncStatus={syncStatus}
             failedSyncCount={syncFailureCount}
+            isCloudLoggedIn={Boolean(cloudSession)}
             isOnline={isOnline}
             isSyncing={isSyncing}
             lastSyncError={lastSyncError}
@@ -748,7 +924,23 @@ export default function App() {
       {showLogin && (
         <div className="fixed inset-0 z-[80] flex items-center justify-center bg-black/25 px-4" onMouseDown={() => setShowLogin(false)}>
           <div onMouseDown={(event) => event.stopPropagation()}>
-            <LoginPanel onClose={() => setShowLogin(false)} />
+            <LoginPanel
+              onClose={() => setShowLogin(false)}
+              hasCompletedFirstSync={hasCompletedFirstSync}
+              onOpenFirstSyncWizard={openFirstSyncWizard}
+            />
+          </div>
+        </div>
+      )}
+
+      {showFirstSyncWizard && (
+        <div className="fixed inset-0 z-[85] flex items-center justify-center bg-black/35 px-4" onMouseDown={closeFirstSyncWizard}>
+          <div onMouseDown={(event) => event.stopPropagation()}>
+            <FirstSyncWizard
+              hasCompletedFirstSync={hasCompletedFirstSync}
+              onClose={closeFirstSyncWizard}
+              onSelect={handleFirstSyncAction}
+            />
           </div>
         </div>
       )}
@@ -757,6 +949,23 @@ export default function App() {
         <SyncConflictDialog
           onClose={() => setShowConflicts(false)}
           onResolved={refreshCloudConflictCount}
+        />
+      )}
+
+      {pendingDraftActionDialog && (
+        <ConfirmDialog
+          title={pendingDraftActionDialog.title}
+          message={pendingDraftActionDialog.message}
+          confirmLabel={pendingDraftActionDialog.confirmLabel ?? "放弃并继续"}
+          cancelLabel="继续编辑"
+          danger
+          onCancel={closePendingDraftActionDialog}
+          onConfirm={() => {
+            const pendingAction = pendingDraftActionRef.current;
+            closePendingDraftActionDialog();
+            if (!pendingAction) return;
+            void pendingAction();
+          }}
         />
       )}
 

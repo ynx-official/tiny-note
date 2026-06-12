@@ -5,6 +5,7 @@ import type { Note } from "../../lib/db";
 import { db } from "../../lib/db";
 import { uploadImageFileToCloud } from "../../lib/assetArchive";
 import { loadAutoSave, loadAutoSaveDelay, loadViewMode, saveViewMode, loadSplitRatio, saveSplitRatio, loadTabSize } from "../../lib/theme";
+import { resolveNoteSaveStatus, type NotePersistState, type NoteSaveStatus } from "../../lib/noteSaveStatus";
 import { MarkdownPreview } from "../shared/MarkdownPreview";
 import { CodeEditor, insertAtCursor, insertTextAtCursor } from "../shared/CodeEditor";
 import { FormatToolbar } from "../shared/FormatToolbar";
@@ -28,9 +29,10 @@ interface NoteDetailProps {
   onUpdateContent: (id: string, content: string) => void | Promise<void>;
   onDirtyChange?: (dirty: boolean) => void;
   onSaved?: () => void;
+  onSaveStatusChange?: (status: NoteSaveStatus) => void;
 }
 
-export function NoteDetail({ note, onToggleSidebar, onDelete, onUpdateTitle, onUpdateContent, onDirtyChange, onSaved }: NoteDetailProps) {
+export function NoteDetail({ note, onToggleSidebar, onDelete, onUpdateTitle, onUpdateContent, onDirtyChange, onSaved, onSaveStatusChange }: NoteDetailProps) {
   const [mode, setMode] = useState<ViewMode>(() => loadViewMode() as ViewMode);
   const [editTitle, setEditTitle] = useState(note?.title ?? "");
   const [editContent, setEditContent] = useState(note?.content ?? "");
@@ -38,7 +40,7 @@ export function NoteDetail({ note, onToggleSidebar, onDelete, onUpdateTitle, onU
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
   const [contextMenu, setContextMenu] = useState<{ x: number; y: number; items: ContextMenuItem[] } | null>(null);
   const [attachmentStatus, setAttachmentStatus] = useState<string | null>(null);
-  const [saveState, setSaveState] = useState<"idle" | "saving" | "failed">("idle");
+  const [saveState, setSaveState] = useState<NotePersistState>("idle");
   const [saveError, setSaveError] = useState<string | null>(null);
   const editorViewRef = useRef<EditorView | null>(null);
   const titleTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -52,10 +54,16 @@ export function NoteDetail({ note, onToggleSidebar, onDelete, onUpdateTitle, onU
   const [tabSize, setTabSize] = useState(loadTabSize);
   const getAutoSave = () => loadAutoSave();
   const getAutoSaveDelay = () => loadAutoSaveDelay();
+  const hasUnsavedChanges = Boolean(note && (editTitle !== persistedTitleRef.current || editContent !== persistedContentRef.current));
 
   useEffect(() => {
-    onDirtyChange?.(Boolean(note && (editTitle !== persistedTitleRef.current || editContent !== persistedContentRef.current)));
-  }, [note, editTitle, editContent, onDirtyChange]);
+    onDirtyChange?.(hasUnsavedChanges);
+  }, [hasUnsavedChanges, onDirtyChange]);
+
+  useEffect(() => {
+    if (!note) return;
+    onSaveStatusChange?.(resolveNoteSaveStatus({ isDirty: hasUnsavedChanges, saveState, saveError }));
+  }, [hasUnsavedChanges, note, onSaveStatusChange, saveError, saveState]);
 
   const handleEditorScroll = useCallback((scrollTop: number, scrollHeight: number, clientHeight: number) => {
     const pv = previewRef.current;
@@ -274,14 +282,7 @@ export function NoteDetail({ note, onToggleSidebar, onDelete, onUpdateTitle, onU
     );
   }
 
-  const isModified = editContent !== persistedContentRef.current || editTitle !== persistedTitleRef.current;
-  const saveStatusText = saveState === "saving"
-    ? "保存中"
-    : saveState === "failed"
-      ? saveError ?? "保存失败"
-      : isModified
-        ? "未保存"
-        : "已保存";
+  const saveStatus = resolveNoteSaveStatus({ isDirty: hasUnsavedChanges, saveState, saveError });
 
   return (
     <>
@@ -303,7 +304,7 @@ export function NoteDetail({ note, onToggleSidebar, onDelete, onUpdateTitle, onU
           <div className="h-4 w-px bg-paper-deep/30 mx-0.5" />
           <button type="button" onClick={handleSave}
             className={`w-7 h-7 flex items-center justify-center rounded-lg transition-all cursor-pointer ${
-              isModified ? "text-accent hover:bg-accent-mist" : "text-ink-ghost/30"
+              hasUnsavedChanges ? "text-accent hover:bg-accent-mist" : "text-ink-ghost/30"
             }`} title="保存 (Ctrl+S)">
             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z"/><polyline points="17 21 17 13 7 13 7 21"/><polyline points="7 3 7 8 15 8"/></svg>
           </button>
@@ -325,16 +326,16 @@ export function NoteDetail({ note, onToggleSidebar, onDelete, onUpdateTitle, onU
         <p className="text-[11px] text-ink-ghost mt-1">
           {new Date(note.updated_at).toLocaleString("zh-CN", { year: "numeric", month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit" })}
           {" · "}
-          {saveState === "failed" ? (
-            <button type="button" onClick={handleSave} className="text-red-500 hover:text-red-400">
-              {saveStatusText}，点击重试
+          {saveStatus.phase === "failed" ? (
+            <button type="button" onClick={handleSave} title={saveStatus.detail ?? saveStatus.longLabel} className="text-red-500 hover:text-red-400">
+              {saveStatus.longLabel}
             </button>
-          ) : saveState === "saving" ? (
-            <span className="text-amber-600">{saveStatusText}</span>
-          ) : isModified ? (
-            <span className="text-danger">{saveStatusText}</span>
+          ) : saveStatus.phase === "saving" ? (
+            <span className="text-amber-600">{saveStatus.shortLabel}</span>
+          ) : saveStatus.phase === "dirty" ? (
+            <span className="text-danger">{saveStatus.shortLabel}</span>
           ) : (
-            <span className="text-accent">{saveStatusText}</span>
+            <span className="text-accent">{saveStatus.shortLabel}</span>
           )}
           {attachmentStatus && <span className="ml-2 text-accent">{attachmentStatus}</span>}
         </p>

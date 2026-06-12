@@ -1,14 +1,18 @@
 import { useState, useEffect } from "react";
 import type { Note, SyncStatus } from "../lib/db";
+import type { NoteSaveStatus } from "../lib/noteSaveStatus";
 import { loadFontSize, loadFontWeight, loadTabSize } from "../lib/theme";
 import { loadZoom } from "../lib/zoom";
+import { describeSyncErrorCategory, resolveSyncStatusCopy } from "../lib/syncStatusCopy";
 import type { SyncRunDiagnostics } from "../lib/sync";
 
 interface StatusBarProps {
   selectedNote: Note | null;
   noteCount: number;
+  noteSaveStatus: NoteSaveStatus | null;
   syncStatus: SyncStatus | null;
   failedSyncCount: number;
+  isCloudLoggedIn: boolean;
   isOnline: boolean;
   isSyncing: boolean;
   lastSyncError: string | null;
@@ -16,7 +20,7 @@ interface StatusBarProps {
   onRetrySync: () => void;
 }
 
-export function StatusBar({ selectedNote, noteCount, syncStatus, failedSyncCount, isOnline, isSyncing, lastSyncError, lastSyncDiagnostics, onRetrySync }: StatusBarProps) {
+export function StatusBar({ selectedNote, noteCount, noteSaveStatus, syncStatus, failedSyncCount, isCloudLoggedIn, isOnline, isSyncing, lastSyncError, lastSyncDiagnostics, onRetrySync }: StatusBarProps) {
   const [fontSize, setFontSize] = useState(loadFontSize);
   const [fontWeight, setFontWeight] = useState(loadFontWeight);
   const [tabSize, setTabSize] = useState(loadTabSize);
@@ -30,15 +34,36 @@ export function StatusBar({ selectedNote, noteCount, syncStatus, failedSyncCount
   const lastRunText = lastSyncDiagnostics
     ? `${lastSyncDiagnostics.runId} · ${lastSyncDiagnostics.status}${lastSyncDiagnostics.error ? ` · ${lastSyncDiagnostics.error.category}` : ""}`
     : `最近同步 ${lastSyncedAt}`;
-  const syncText = isSyncing
-    ? "同步中"
-    : !isOnline
-      ? "离线"
-      : failedSyncCount > 0
-        ? `${failedSyncCount} 条失败`
-        : pendingSyncCount > 0
-          ? `${pendingSyncCount} 条待同步`
-          : "已同步";
+  const syncCopy = resolveSyncStatusCopy({
+    isCloudLoggedIn,
+    isOnline,
+    isSyncing,
+    failedSyncCount,
+    pendingSyncCount,
+    conflictCount,
+    lastSyncError,
+    lastSyncDiagnostics,
+    lastSyncedAt,
+  });
+  const syncToneClass = syncCopy.tone === "danger"
+    ? "text-red-500 hover:text-red-400"
+    : syncCopy.tone === "warning"
+      ? "text-amber-600 hover:text-amber-500"
+      : syncCopy.tone === "success"
+        ? "hover:text-accent"
+        : "text-ink-ghost hover:text-ink-soft";
+  const syncDetailText = lastSyncDiagnostics?.status === "failed"
+    ? describeSyncErrorCategory(lastSyncDiagnostics.error?.category)
+    : lastSyncDiagnostics?.status === "skipped"
+      ? describeSyncErrorCategory(lastSyncDiagnostics.error?.category)
+      : syncCopy.detail;
+  const noteSaveToneClass = noteSaveStatus?.tone === "danger"
+    ? "text-red-500"
+    : noteSaveStatus?.tone === "warning"
+      ? "text-amber-600"
+      : noteSaveStatus?.tone === "success"
+        ? "text-accent"
+        : "text-ink-ghost";
 
   useEffect(() => {
     const handler = (e: Event) => {
@@ -63,17 +88,24 @@ export function StatusBar({ selectedNote, noteCount, syncStatus, failedSyncCount
       </div>
       <div className="flex items-center gap-3 shrink-0">
         <span className={isOnline ? "text-ink-ghost" : "text-amber-600"}>{isOnline ? "在线" : "离线"}</span>
+        {selectedNote && noteSaveStatus && (
+          <span className={noteSaveToneClass} title={noteSaveStatus.detail ?? noteSaveStatus.longLabel}>
+            {noteSaveStatus.longLabel}
+          </span>
+        )}
         <button
           type="button"
           onClick={onRetrySync}
           disabled={isSyncing || !isOnline}
-          title={lastSyncError ?? lastRunText}
-          className={`transition-colors ${failedSyncCount > 0 || lastSyncError ? "text-red-500 hover:text-red-400" : pendingSyncCount > 0 || conflictCount > 0 ? "text-amber-600 hover:text-amber-500" : "hover:text-accent"} disabled:opacity-60 disabled:hover:text-inherit`}
+          title={syncCopy.detail || lastRunText}
+          className={`transition-colors ${syncToneClass} disabled:opacity-60 disabled:hover:text-inherit`}
         >
-          {syncText}{conflictCount > 0 ? ` · ${conflictCount} 条冲突` : ""}
+          {syncCopy.label}
         </button>
-        {lastSyncDiagnostics?.status === "failed" && (
-          <span className="text-red-500">{lastSyncDiagnostics.error?.category ?? "unknown"} · {lastSyncDiagnostics.runId.slice(-6)}</span>
+        {(lastSyncDiagnostics?.status === "failed" || lastSyncDiagnostics?.status === "skipped" || conflictCount > 0 || !isCloudLoggedIn) && (
+          <span className={syncCopy.tone === "danger" ? "text-red-500" : "text-amber-600"}>
+            {syncDetailText}
+          </span>
         )}
         <span>最近同步 {lastSyncedAt}</span>
         {selectedNote && <span>最后保存 {new Date(selectedNote.updated_at).toLocaleString("zh-CN", { month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit" })}</span>}

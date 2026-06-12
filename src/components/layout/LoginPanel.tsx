@@ -14,9 +14,11 @@ const TENANTS: TenantOption[] = [
 
 interface LoginPanelProps {
   onClose: () => void;
+  hasCompletedFirstSync: boolean;
+  onOpenFirstSyncWizard: () => void;
 }
 
-export function LoginPanel({ onClose }: LoginPanelProps) {
+export function LoginPanel({ onClose, hasCompletedFirstSync, onOpenFirstSyncWizard }: LoginPanelProps) {
   const [tenantUrl, setTenantUrl] = useState(() => getCloudSession()?.apiBaseUrl ?? TENANTS[0].baseUrl);
   const [username, setUsername] = useState(() => getCloudSession()?.user?.username ?? "");
   const [password, setPassword] = useState("");
@@ -88,11 +90,6 @@ export function LoginPanel({ onClose }: LoginPanelProps) {
     }
   };
 
-  const handleFirstSyncAction = (action: "upload" | "restore" | "merge") => {
-    window.dispatchEvent(new CustomEvent("kova-cloud-first-sync", { detail: { action } }));
-    onClose();
-  };
-
   return (
     <section className="w-[380px] max-w-[calc(100vw-32px)] rounded-2xl border border-paper-deep/70 bg-paper shadow-2xl overflow-hidden">
       <div className="h-13 px-5 flex items-center justify-between border-b border-paper-deep/50 bg-cloud/40">
@@ -147,17 +144,20 @@ export function LoginPanel({ onClose }: LoginPanelProps) {
 
             <div className="rounded-xl border border-accent/20 bg-accent-mist/30 px-3 py-3 space-y-2">
               <div>
-                <div className="text-xs font-medium text-ink-soft">首次同步</div>
-                <div className="text-[11px] text-ink-ghost mt-0.5">选择本机数据和云端数据的初始关系。</div>
+                <div className="text-xs font-medium text-ink-soft">首次同步向导</div>
+                <div className="text-[11px] text-ink-ghost mt-0.5">
+                  {hasCompletedFirstSync
+                    ? "如果要重新确认本机和云端谁作为起点，可以再次打开向导。"
+                    : "先用向导确认本机、云端、手动合并三条路径，再开始首次同步。"}
+                </div>
               </div>
-              <div className="grid grid-cols-3 gap-1.5">
-                <button type="button" onClick={() => handleFirstSyncAction("upload")}
-                  className="h-8 rounded-lg bg-accent text-white text-[11px] hover:opacity-90 transition">本地上传</button>
-                <button type="button" onClick={() => handleFirstSyncAction("restore")}
-                  className="h-8 rounded-lg border border-paper-deep/60 text-[11px] text-ink-faint hover:text-accent hover:bg-paper-warm transition">云端恢复</button>
-                <button type="button" onClick={() => handleFirstSyncAction("merge")}
-                  className="h-8 rounded-lg border border-paper-deep/60 text-[11px] text-ink-faint hover:text-accent hover:bg-paper-warm transition">手动合并</button>
-              </div>
+              <button
+                type="button"
+                onClick={onOpenFirstSyncWizard}
+                className="w-full h-8 rounded-lg border border-paper-deep/60 text-[11px] text-ink-faint hover:text-accent hover:bg-paper-warm transition"
+              >
+                {hasCompletedFirstSync ? "重新打开同步向导" : "打开首次同步向导"}
+              </button>
             </div>
 
             {message && (
