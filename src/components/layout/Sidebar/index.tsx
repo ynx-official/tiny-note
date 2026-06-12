@@ -80,9 +80,25 @@ export function Sidebar({
     [allNotes, selectedFolderId],
   );
 
+  const uncategorizedNotes = useMemo(
+    () => allNotes
+      .filter((note) => !note.folder_id)
+      .sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime()),
+    [allNotes],
+  );
+
   const scopeLabel = selectedFolderId
     ? (folders.find((folder) => folder.id === selectedFolderId)?.name ?? "当前文件夹")
     : "全部笔记";
+
+  const toggleExpandedFolder = (folderId: string) => {
+    setExpandedFolderIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(folderId)) next.delete(folderId);
+      else next.add(folderId);
+      return next;
+    });
+  };
 
   const showExportNotice = (status: "loading" | "success", message: string) => {
     setExportNotice({ status, message });
@@ -256,42 +272,40 @@ export function Sidebar({
       </div>
 
       <div className="flex-1 overflow-y-auto min-h-0 [scrollbar-gutter:stable]">
-        <div className="px-3 pt-2.5 pb-2 space-y-2.5">
-          <div className="rounded-[20px] border border-[var(--border-soft)]/70 bg-[var(--surface-content)]/46">
-            <div className="px-3 pt-2.5 pb-2 flex items-center justify-between shrink-0">
-              <span className="text-[10px] font-semibold uppercase tracking-[0.16em] text-ink-ghost/80">导航</span>
-              <div className="flex items-center gap-1">
-                <button
-                  type="button"
-                  onClick={() => onFolderCreate("新建文件夹")}
-                  className="w-7 h-7 rounded-xl flex items-center justify-center transition-colors text-ink-ghost hover:text-accent hover:bg-[var(--surface-hover)]"
-                  title="新建文件夹"
-                >
-                  <svg width="14" height="14" viewBox="0 0 14 14" fill="none"><path d="M7 2v10M2 7h10" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round"/></svg>
-                </button>
-                <button
-                  type="button"
-                  onClick={() => onCreateNote(selectedFolderId ?? undefined)}
-                  className="w-7 h-7 rounded-xl flex items-center justify-center transition-colors text-ink-ghost hover:text-accent hover:bg-[var(--surface-hover)]"
-                  title="新建笔记"
-                >
-                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="12" y1="18" x2="12" y2="12"/><line x1="9" y1="15" x2="15" y2="15"/></svg>
-                </button>
-              </div>
-            </div>
-
-            <div className="px-3 pb-2">
+        <div className="px-3 pt-2 pb-3">
+          <div className="px-1 pt-1 pb-2 flex items-center justify-between shrink-0">
+            <span className="text-[10px] font-semibold uppercase tracking-[0.16em] text-ink-ghost/80">导航</span>
+            <div className="flex items-center gap-1">
               <button
                 type="button"
-                onClick={onSelectAll}
-                className={`flex w-full items-center rounded-xl px-3 py-2.5 text-left text-sm font-medium transition-colors ${selectedFolderId === null ? "bg-[var(--surface-active)]/80 text-accent" : "text-ink-soft hover:bg-[var(--surface-hover)]/80 hover:text-accent"}`}
+                onClick={() => onFolderCreate("新建文件夹")}
+                className="w-7 h-7 rounded-xl flex items-center justify-center transition-colors text-ink-ghost hover:text-accent hover:bg-[var(--surface-hover)]"
+                title="新建文件夹"
               >
-                <span className="truncate">全部笔记</span>
-                <span className="ml-auto text-[11px] opacity-70">{allNotes.length}</span>
+                <svg width="14" height="14" viewBox="0 0 14 14" fill="none"><path d="M7 2v10M2 7h10" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round"/></svg>
+              </button>
+              <button
+                type="button"
+                onClick={() => onCreateNote(selectedFolderId ?? undefined)}
+                className="w-7 h-7 rounded-xl flex items-center justify-center transition-colors text-ink-ghost hover:text-accent hover:bg-[var(--surface-hover)]"
+                title="新建笔记"
+              >
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="12" y1="18" x2="12" y2="12"/><line x1="9" y1="15" x2="15" y2="15"/></svg>
               </button>
             </div>
+          </div>
 
-            <div className="px-3 pb-3">
+          <div className="space-y-1">
+            <button
+              type="button"
+              onClick={onSelectAll}
+              className={`flex w-full items-center rounded-xl px-3 py-2.5 text-left text-sm font-medium transition-colors ${selectedFolderId === null ? "bg-[var(--surface-active)]/80 text-accent" : "text-ink-soft hover:bg-[var(--surface-hover)]/80 hover:text-accent"}`}
+            >
+              <span className="truncate">全部笔记</span>
+              <span className="ml-auto text-[11px] opacity-70">{allNotes.length}</span>
+            </button>
+
+            <div className="space-y-0.5 pt-1">
               {folderTree.map((node) => (
                 <FolderItem
                   key={node.id}
@@ -309,16 +323,33 @@ export function Sidebar({
                   onCreateSub={(parentId) => onFolderCreate("新建子文件夹", parentId)}
                   onDrop={onMoveToFolder}
                   onContextMenu={handleFolderContextMenu}
-                  onToggleExpand={(folderId) => {
-                    setExpandedFolderIds((prev) => {
-                      const next = new Set(prev);
-                      if (next.has(folderId)) next.delete(folderId);
-                      else next.add(folderId);
-                      return next;
-                    });
-                  }}
+                  onToggleExpand={toggleExpandedFolder}
                 />
               ))}
+
+              {uncategorizedNotes.length > 0 && (
+                <div className="pt-2">
+                  <div className="px-3 pb-1 text-[10px] font-semibold uppercase tracking-[0.14em] text-ink-ghost/75">
+                    未分类
+                  </div>
+                  {uncategorizedNotes.map((note) => {
+                    const isActiveNote = selectedId === note.id;
+                    return (
+                      <button
+                        key={note.id}
+                        type="button"
+                        onClick={() => onSelectNote(note)}
+                        className={`flex w-full items-center gap-2 rounded px-3 py-1.5 text-left transition-colors ${isActiveNote ? "bg-[var(--surface-active)] text-accent" : "text-ink-soft hover:bg-paper-warm"}`}
+                      >
+                        <span className="w-1.5 h-1.5 rounded-full bg-current opacity-70 shrink-0" />
+                        <span className={`min-w-0 flex-1 truncate text-[11px] leading-5 ${isActiveNote ? "font-medium" : ""}`}>
+                          {note.title || note.content.split("\n")[0] || "无标题笔记"}
+                        </span>
+                      </button>
+                    );
+                  })}
+                </div>
+              )}
             </div>
           </div>
         </div>
