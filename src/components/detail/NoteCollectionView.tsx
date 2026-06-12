@@ -16,6 +16,8 @@ interface NoteCollectionViewProps {
   onMoveMultipleToFolder: (noteIds: string[], folderId: string | undefined) => void;
   onAddToAIContext: (attachments: AIContextAttachment[]) => void;
   onAddToNewAIContext: (attachments: AIContextAttachment[]) => void;
+  onCreateFolder: () => void;
+  onCreateNote: () => void;
   emptyActionLabel?: string;
   onEmptyAction?: () => void;
 }
@@ -34,16 +36,38 @@ export function NoteCollectionView({
   onMoveMultipleToFolder,
   onAddToAIContext,
   onAddToNewAIContext,
+  onCreateFolder,
+  onCreateNote,
   emptyActionLabel,
   onEmptyAction,
 }: NoteCollectionViewProps) {
   return (
     <div className="flex min-h-0 flex-1 flex-col min-w-0 bg-[var(--surface-content)] overflow-hidden">
       <div className="shrink-0 border-b border-[var(--border-soft)] bg-[var(--surface-content)] px-6 pt-6 pb-4">
-        <div className="text-[28px] font-semibold tracking-tight text-ink">{title}</div>
-        <div className="mt-1 flex items-center gap-2 text-xs text-ink-ghost">
-          <span>{notes.length} 条</span>
-          {description ? <span>{description}</span> : null}
+        <div className="flex items-start justify-between gap-4">
+          <div className="min-w-0">
+            <div className="text-[28px] font-semibold tracking-tight text-ink">{title}</div>
+            <div className="mt-1 flex items-center gap-2 text-xs text-ink-ghost">
+              <span>{notes.length} 条</span>
+              {description ? <span>{description}</span> : null}
+            </div>
+          </div>
+          <div className="flex shrink-0 items-center gap-2">
+            <button
+              type="button"
+              onClick={onCreateFolder}
+              className="inline-flex h-9 items-center justify-center rounded-xl border border-[var(--border-soft)] bg-[var(--surface-content)] px-3 text-xs font-medium text-ink-soft transition hover:border-accent/30 hover:text-accent hover:bg-[var(--surface-hover)]"
+            >
+              新建文件夹
+            </button>
+            <button
+              type="button"
+              onClick={onCreateNote}
+              className="inline-flex h-9 items-center justify-center rounded-xl bg-accent px-3 text-xs font-medium text-white shadow-[0_10px_24px_rgba(86,138,106,0.22)] transition hover:opacity-95"
+            >
+              新建笔记
+            </button>
+          </div>
         </div>
       </div>
 

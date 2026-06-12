@@ -886,6 +886,27 @@ export default function App() {
               }}
               onAddToAIContext={handleAddToAIContext}
               onAddToNewAIContext={handleAddToNewAIContext}
+              onCreateFolder={() => {
+                void (async () => {
+                  const parentId = selectedFolderId ?? undefined;
+                  const siblings = folders.filter((folder) => folder.parent_id === (parentId ?? null));
+                  const names = new Set(siblings.map((folder) => folder.name));
+                  const baseName = "新建文件夹";
+                  let name = baseName;
+                  if (names.has(name)) {
+                    let i = 1;
+                    while (names.has(`${baseName}${i}`)) i++;
+                    name = `${baseName}${i}`;
+                  }
+                  await db.createFolder(name, parentId);
+                  db.listFolders().then(setFolders);
+                  await refreshSyncStatus();
+                  showToast("文件夹已新建");
+                })();
+              }}
+              onCreateNote={() => {
+                void handleCreateNote(selectedFolderId ?? undefined);
+              }}
               emptyActionLabel={selectedFolderId ? "新建笔记" : undefined}
               onEmptyAction={selectedFolderId ? () => { void handleCreateNote(selectedFolderId); } : undefined}
             />

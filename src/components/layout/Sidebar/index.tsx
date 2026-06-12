@@ -456,43 +456,49 @@ export function Sidebar({
       </div>
 
       <div ref={navScrollRef} className="flex-1 overflow-y-auto min-h-0 [scrollbar-gutter:stable]">
-        <div className="px-3 pt-2 pb-3">
-          <div className="px-1 pt-1 pb-2 flex items-center justify-between shrink-0">
-            <span className="text-[10px] font-semibold uppercase tracking-[0.16em] text-ink-ghost/80">导航</span>
-            <div className="flex items-center gap-1">
-              <button
-                type="button"
-                onClick={() => onFolderCreate("新建文件夹")}
-                className="w-7 h-7 rounded-xl flex items-center justify-center transition-colors text-ink-ghost hover:text-accent hover:bg-[var(--surface-hover)]"
-                title="新建文件夹"
-              >
-                <svg width="14" height="14" viewBox="0 0 14 14" fill="none"><path d="M7 2v10M2 7h10" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round"/></svg>
-              </button>
-              <button
-                type="button"
-                onClick={() => onCreateNote(selectedFolderId ?? undefined)}
-                className="w-7 h-7 rounded-xl flex items-center justify-center transition-colors text-ink-ghost hover:text-accent hover:bg-[var(--surface-hover)]"
-                title="新建笔记"
-              >
-                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="12" y1="18" x2="12" y2="12"/><line x1="9" y1="15" x2="15" y2="15"/></svg>
-              </button>
-            </div>
-          </div>
-
+        <div className="px-3 py-3">
           <div className="space-y-1">
             <div className="sticky top-0 z-10 -mx-1 px-1 py-1 bg-[var(--surface-panel)]/96 backdrop-blur supports-[backdrop-filter]:bg-[var(--surface-panel)]/88">
-              <button
-                type="button"
-                onMouseDown={(event) => event.preventDefault()}
-                onClick={() => {
-                  navScrollRef.current?.scrollTo({ top: 0, behavior: "smooth" });
-                  onSelectAll();
-                }}
-                className={`flex w-full items-center rounded-xl px-3 py-2.5 text-left text-sm font-medium transition-colors ${selectedFolderId === null && !selectedId ? "bg-[var(--surface-active)]/80 text-accent" : "text-ink-soft hover:bg-[var(--surface-hover)]/80 hover:text-accent"}`}
-              >
-                <span className="truncate">全部笔记</span>
-                <span className="ml-auto text-[11px] opacity-70">{allNotes.length}</span>
-              </button>
+              <div className={`flex items-center gap-1 rounded-xl px-1 py-1 transition-colors ${selectedFolderId === null && !selectedId ? "bg-[var(--surface-active)]/80 text-accent" : "text-ink-soft hover:bg-[var(--surface-hover)]/80 hover:text-accent"}`}>
+                <button
+                  type="button"
+                  onMouseDown={(event) => event.preventDefault()}
+                  onClick={() => {
+                    navScrollRef.current?.scrollTo({ top: 0, behavior: "smooth" });
+                    onSelectAll();
+                  }}
+                  className="flex min-w-0 flex-1 items-center px-2 py-1.5 text-left text-sm font-medium"
+                >
+                  <span className="truncate">全部笔记</span>
+                  <span className="ml-auto text-[11px] opacity-70">{allNotes.length}</span>
+                </button>
+                <div className="flex shrink-0 items-center gap-1">
+                  <button
+                    type="button"
+                    onMouseDown={(event) => event.preventDefault()}
+                    onClick={(event) => {
+                      event.stopPropagation();
+                      onFolderCreate("新建文件夹");
+                    }}
+                    className="flex h-7 w-7 items-center justify-center rounded-lg transition-colors hover:bg-black/5"
+                    title="新建文件夹"
+                  >
+                    <svg width="14" height="14" viewBox="0 0 14 14" fill="none"><path d="M7 2v10M2 7h10" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round"/></svg>
+                  </button>
+                  <button
+                    type="button"
+                    onMouseDown={(event) => event.preventDefault()}
+                    onClick={(event) => {
+                      event.stopPropagation();
+                      onCreateNote(undefined);
+                    }}
+                    className="flex h-7 w-7 items-center justify-center rounded-lg transition-colors hover:bg-black/5"
+                    title="新建笔记"
+                  >
+                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="12" y1="18" x2="12" y2="12"/><line x1="9" y1="15" x2="15" y2="15"/></svg>
+                  </button>
+                </div>
+              </div>
             </div>
 
             <div className="space-y-0.5 pt-1">
