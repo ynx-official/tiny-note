@@ -814,7 +814,6 @@ export default function App() {
                 await refreshSyncStatus();
                 showToast("笔记已移动");
               }}
-              onImported={() => { fetch(undefined, selectedFolderId ?? undefined); db.list().then((all: Note[]) => setAllNotes(all)); void refreshSyncStatus(); }}
               onDeleteNote={handleDelete}
               onAddToAIContext={handleAddToAIContext}
               onAddToNewAIContext={handleAddToNewAIContext}

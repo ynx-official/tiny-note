@@ -6,6 +6,7 @@ import { db } from "../../../lib/db";
 import { getCloudSession, listKovaBackupSnapshots, listKovaDevices, registerKovaBackupSnapshot, revokeKovaDevice, updateKovaDevice, uploadKovaAsset, type KovaBackupSnapshot, type KovaDevice } from "../../../lib/cloudApi";
 import { loadLastSyncDiagnostics, type SyncRunDiagnostics } from "../../../lib/sync";
 import { ConfirmDialog } from "../../dialog/ConfirmDialog";
+import { DataImportSection } from "./DataImportSection";
 import { ColorRow, ToggleRow, SliderRow, FontRow, TabSizeRow, ViewModeRow } from "./ui-rows";
 import { SETTINGS_CATEGORIES, type SettingsCategoryId } from "./settings-schema";
 import {
@@ -60,6 +61,7 @@ interface SettingsPanelProps {
 
 export function SettingsPanel({
   onClose,
+  onImported,
   mode,
   keepaliveSyncEnabled,
   keepaliveSyncIntervalMinutes,
@@ -848,6 +850,10 @@ export function SettingsPanel({
                         更改
                       </button>
                     </div>
+                  </SettingsGroup>
+
+                  <SettingsGroup title="导入" description="从本地文件导入单篇笔记。">
+                    <DataImportSection onImported={onImported} onMessage={showMsg} />
                   </SettingsGroup>
 
                   <SettingsGroup title="备份与恢复" description="支持本地打包备份，也支持通过云端快照恢复。">

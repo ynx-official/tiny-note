@@ -1,5 +1,4 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { open } from "@tauri-apps/plugin-dialog";
 import { db } from "../../../lib/db";
 import type { Folder, Note } from "../../../lib/db";
 import { buildSidebarFolderTree } from "../../../lib/noteNavigation";
@@ -34,7 +33,6 @@ interface SidebarProps {
   onFolderDelete: (id: string) => Promise<void>;
   onMoveToFolder: (noteId: string, folderId: string | null) => void;
   onDeleteNote: (noteId: string) => void;
-  onImported: () => void;
   onAddToAIContext: (attachments: AIContextAttachment[]) => void;
   onAddToNewAIContext: (attachments: AIContextAttachment[]) => void;
 }
@@ -57,7 +55,6 @@ export function Sidebar({
   onFolderDelete,
   onMoveToFolder,
   onDeleteNote,
-  onImported,
   onAddToAIContext,
   onAddToNewAIContext,
 }: SidebarProps) {
@@ -92,21 +89,12 @@ export function Sidebar({
   const exportNoticeTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const navScrollRef = useRef<HTMLDivElement | null>(null);
 
-  const contextTotalCount = useMemo(
-    () => (selectedFolderId ? allNotes.filter((note) => note.folder_id === selectedFolderId).length : allNotes.length),
-    [allNotes, selectedFolderId],
-  );
-
   const uncategorizedNotes = useMemo(
     () => allNotes
       .filter((note) => !note.folder_id)
       .sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime()),
     [allNotes],
   );
-
-  const scopeLabel = selectedFolderId
-    ? (folders.find((folder) => folder.id === selectedFolderId)?.name ?? "当前文件夹")
-    : "全部笔记";
 
   const toggleExpandedFolder = (folderId: string) => {
     setExpandedFolderIds((prev) => {
@@ -439,21 +427,11 @@ export function Sidebar({
     ];
   };
 
-  const handleImport = async () => {
-    const path = await open({ multiple: false, filters: [{ name: "Markdown/TXT/HTML", extensions: ["md", "txt", "html", "htm"] }] });
-    if (!path || Array.isArray(path)) return;
-    await db.importFile(path);
-    onImported();
-  };
-
   return (
     <div className="h-full flex flex-col bg-[var(--surface-panel)]/98">
       <div className="px-3 pt-3 pb-2 shrink-0 border-b border-[var(--border-soft)]/70 bg-[var(--surface-panel)]/92">
         <SearchBar
           value={search}
-          resultCount={currentNotes.length}
-          totalCount={contextTotalCount}
-          scopeLabel={scopeLabel}
           onChange={onSearchChange}
           onClear={() => onSearchChange("")}
           onCommit={onSearchCommit}
@@ -548,14 +526,6 @@ export function Sidebar({
             </div>
           </div>
         </div>
-      </div>
-
-      <div className="px-3 pb-3 pt-2 shrink-0 border-t border-[var(--border-soft)]/70 bg-[var(--surface-panel)]/92">
-        <button type="button" onClick={handleImport}
-          className="w-full h-10 rounded-[18px] bg-[var(--surface-content)]/65 border border-[var(--border-soft)]/75 text-xs text-ink-soft hover:border-accent/25 hover:text-accent hover:bg-[var(--surface-hover)]/80 transition-colors flex items-center px-3 gap-2">
-          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
-          导入笔记
-        </button>
       </div>
 
       {folderMenuPos && folderMenuNode && (
