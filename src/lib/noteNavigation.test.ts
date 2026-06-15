@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { Folder, Note } from "./db";
-import { buildSidebarFolderTree, resolveCollectionTitle, resolveContextNotes, resolveSearchNavigation, resolveSearchScope, shouldForceCollectionView, shouldResetSearchSelection, shouldShowCollectionView } from "./noteNavigation";
+import { buildSearchExcerpt, buildSidebarFolderTree, resolveCollectionTitle, resolveContextNotes, resolveRecentNotes, resolveSearchNavigation, resolveSearchScope, shouldForceCollectionView, shouldResetSearchSelection, shouldShowCollectionView } from "./noteNavigation";
 
 const folders: Folder[] = [
   {
@@ -89,6 +89,19 @@ describe("noteNavigation", () => {
     expect(resolveContextNotes(notes, { type: "folder", folderId: "backend" }).map((note) => note.id)).toEqual([
       "note-root-new",
       "note-root-old",
+    ]);
+  });
+
+  it("搜索摘要会截取命中关键字附近的正文片段", () => {
+    expect(buildSearchExcerpt("第一段 第二段 docker pull alpine 第三段 第四段", "docker", 10)).toBe("第一段 第二段 docker pull alpi…");
+    expect(buildSearchExcerpt("这是一段很长的内容，但是没有命中关键词，所以只展示开头部分。", "missing", 8)).toBe("这是一段很长的内容，但是没有命中…");
+  });
+
+  it("默认最新笔记会按创建时间倒序截取前几条", () => {
+    expect(resolveRecentNotes(notes, 3).map((note) => note.id)).toEqual([
+      "note-front",
+      "note-free",
+      "note-root-new",
     ]);
   });
 

@@ -2,7 +2,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { open } from "@tauri-apps/plugin-dialog";
 import { db } from "../../../lib/db";
 import type { Folder, Note } from "../../../lib/db";
-import { buildSidebarFolderTree, matchesNoteSearch, normalizeSearchKeyword } from "../../../lib/noteNavigation";
+import { buildSearchExcerpt, buildSidebarFolderTree, matchesNoteSearch, normalizeSearchKeyword, resolveRecentNotes } from "../../../lib/noteNavigation";
 import { SearchBar } from "../../shared/SearchBar";
 import { ContextMenu, type ContextMenuItem } from "../../dialog/ContextMenu";
 import { ConfirmDialog } from "../../dialog/ConfirmDialog";
@@ -15,11 +15,31 @@ import type { FolderNode } from "./types";
 import type { AIContextAttachment } from "../AIChatPanel/types";
 
 const EXPANDED_FOLDERS_STORAGE_KEY = "fp-sidebar-expanded-folders";
+const SEARCH_HISTORY_STORAGE_KEY = "fp-sidebar-search-history";
+const SEARCH_HISTORY_VISIBLE_LIMIT = 5;
+const SEARCH_HISTORY_MAX = 20;
+const SEARCH_LATEST_VISIBLE_LIMIT = 8;
+const SEARCH_RESULT_VISIBLE_LIMIT = 50;
 const escapeSelector = (value: string) => value.replace(/\\/g, "\\\\").replace(/"/g, '\\"');
 const EMPTY_SIDEBAR_SELECTION: SidebarSelectionState = {
   kind: null,
   ids: new Set(),
   anchorId: null,
+};
+
+const escapeRegExp = (value: string) => value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+
+const renderHighlightedText = (text: string, keyword: string) => {
+  if (!keyword) return text;
+  const matcher = new RegExp(`(${escapeRegExp(keyword)})`, "ig");
+  const segments = text.split(matcher).filter(Boolean);
+  const normalizedKeyword = normalizeSearchKeyword(keyword);
+
+  return segments.map((segment, index) => (
+    normalizeSearchKeyword(segment) === normalizedKeyword
+      ? <mark key={`${segment}-${index}`} className="rounded-sm bg-amber-200/80 px-0.5 text-inherit">{segment}</mark>
+      : <span key={`${segment}-${index}`}>{segment}</span>
+  ));
 };
 
 interface SidebarProps {
@@ -98,16 +118,53 @@ export function Sidebar({
   });
   const [exportNotice, setExportNotice] = useState<{ status: "loading" | "success"; message: string } | null>(null);
   const [sidebarSelection, setSidebarSelection] = useState<SidebarSelectionState>(EMPTY_SIDEBAR_SELECTION);
+  const [isSearchPanelOpen, setIsSearchPanelOpen] = useState(false);
+  const [searchHistory, setSearchHistory] = useState<string[]>(() => {
+    try {
+      const raw = localStorage.getItem(SEARCH_HISTORY_STORAGE_KEY);
+      if (!raw) return [];
+      const parsed = JSON.parse(raw);
+      return Array.isArray(parsed)
+        ? parsed.filter((item): item is string => typeof item === "string").slice(0, SEARCH_HISTORY_MAX)
+        : [];
+    } catch {
+      return [];
+    }
+  });
   const exportNoticeTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const navScrollRef = useRef<HTMLDivElement | null>(null);
+  const searchPanelRef = useRef<HTMLDivElement | null>(null);
 
   const uncategorizedNotes = useMemo(
     () => allNotes
       .filter((note) => !note.folder_id)
-      .filter((note) => !isSearchFiltering || matchesNoteSearch(note, searchKeyword))
       .sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime()),
+    [allNotes],
+  );
+
+  const latestNotes = useMemo(
+    () => resolveRecentNotes(allNotes, SEARCH_LATEST_VISIBLE_LIMIT),
+    [allNotes],
+  );
+
+  const searchResults = useMemo(
+    () => isSearchFiltering
+      ? resolveRecentNotes(allNotes.filter((note) => matchesNoteSearch(note, searchKeyword)), SEARCH_RESULT_VISIBLE_LIMIT)
+      : [],
     [allNotes, isSearchFiltering, searchKeyword],
   );
+
+  const folderNameById = useMemo(
+    () => new Map(folders.map((folder) => [folder.id, folder.name])),
+    [folders],
+  );
+
+  const visibleSearchHistory = useMemo(
+    () => searchHistory.slice(0, SEARCH_HISTORY_VISIBLE_LIMIT),
+    [searchHistory],
+  );
+
+  const isSearchPanelVisible = isSearchPanelOpen || isSearchFiltering;
 
   const effectiveExpandedFolderIds = useMemo(() => {
     if (!isSearchFiltering) return expandedFolderIds;
@@ -194,6 +251,31 @@ export function Sidebar({
   }, [expandedFolderIds]);
 
   useEffect(() => {
+    localStorage.setItem(SEARCH_HISTORY_STORAGE_KEY, JSON.stringify(searchHistory));
+  }, [searchHistory]);
+
+  useEffect(() => {
+    if (!isSearchPanelOpen || isSearchFiltering) return;
+
+    const handlePointerDown = (event: MouseEvent) => {
+      if (searchPanelRef.current?.contains(event.target as Node)) return;
+      setIsSearchPanelOpen(false);
+    };
+
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key !== "Escape") return;
+      setIsSearchPanelOpen(false);
+    };
+
+    document.addEventListener("mousedown", handlePointerDown);
+    window.addEventListener("keydown", handleKeyDown);
+    return () => {
+      document.removeEventListener("mousedown", handlePointerDown);
+      window.removeEventListener("keydown", handleKeyDown);
+    };
+  }, [isSearchFiltering, isSearchPanelOpen]);
+
+  useEffect(() => {
     const path = new Set<string>();
     const selectedNote = selectedId ? allNotes.find((note) => note.id === selectedId) : null;
     const activeFolderId = selectedFolderId ?? selectedNote?.folder_id ?? null;
@@ -235,6 +317,42 @@ export function Sidebar({
       cancelled = true;
     };
   }, [effectiveExpandedFolderIds, selectedId]);
+
+  const handleSearchFocus = () => {
+    setIsSearchPanelOpen(true);
+  };
+
+  const handleSearchClose = () => {
+    setIsSearchPanelOpen(false);
+    onSearchChange("");
+    onSearchCommit("");
+  };
+
+  const handleSearchCommit = (value: string) => {
+    const trimmed = value.trim();
+    onSearchCommit(value);
+
+    if (!trimmed) return;
+
+    setSearchHistory((prev) => {
+      const deduped = prev.filter((item) => normalizeSearchKeyword(item) !== normalizeSearchKeyword(trimmed));
+      return [trimmed, ...deduped].slice(0, SEARCH_HISTORY_MAX);
+    });
+  };
+
+  const handleSearchHistorySelect = (keyword: string) => {
+    setIsSearchPanelOpen(true);
+    onSearchChange(keyword);
+    handleSearchCommit(keyword);
+  };
+
+  const handleClearSearchHistory = () => {
+    setSearchHistory([]);
+  };
+
+  const handleOpenSearchNote = (note: Note) => {
+    onSelectNote(note);
+  };
 
   const handleFolderContextMenu = (e: React.MouseEvent, node: FolderNode) => {
     setFolderMenuPos({ x: e.clientX, y: e.clientY });
@@ -575,118 +693,240 @@ export function Sidebar({
   };
 
   return (
-    <div className="h-full flex flex-col bg-[var(--surface-panel)]/98">
+    <div ref={searchPanelRef} className="h-full flex flex-col bg-[var(--surface-panel)]/98">
       <div className="px-3 pt-3 pb-2 shrink-0 border-b border-[var(--border-soft)]/70 bg-[var(--surface-panel)]/92">
         <SearchBar
           value={search}
+          isActive={isSearchPanelVisible}
+          onFocus={handleSearchFocus}
           onChange={onSearchChange}
-          onClear={() => onSearchChange("")}
-          onCommit={onSearchCommit}
+          onClear={() => {
+            onSearchChange("");
+            onSearchCommit("");
+          }}
+          onClose={handleSearchClose}
+          onCommit={handleSearchCommit}
         />
       </div>
 
       <div ref={navScrollRef} className="flex-1 overflow-y-auto min-h-0 [scrollbar-gutter:stable]">
-        <div className="px-3 py-3">
-          <div className="space-y-1">
-            <div className="sticky top-0 z-10 -mx-1 px-1 py-1 bg-[var(--surface-panel)]/96 backdrop-blur supports-[backdrop-filter]:bg-[var(--surface-panel)]/88">
-              <div className={`flex items-center gap-1 rounded-xl px-1 py-1 transition-colors ${selectedFolderId === null && !selectedId ? "bg-[var(--surface-active)]/80 text-accent" : "text-ink-soft hover:bg-[var(--surface-hover)]/80 hover:text-accent"}`}>
-                <button
-                  type="button"
-                  onMouseDown={(event) => event.preventDefault()}
-                  onClick={() => {
-                    navScrollRef.current?.scrollTo({ top: 0, behavior: "smooth" });
-                    onSelectAll();
-                  }}
-                  className="flex min-w-0 flex-1 items-center px-2 py-1.5 text-left text-sm font-medium"
-                >
-                  <span className="truncate">全部笔记</span>
-                  <span className="ml-auto text-[11px] opacity-70">{allNotes.length}</span>
-                </button>
-                <div className="flex shrink-0 items-center gap-1">
+        {isSearchPanelVisible ? (
+          <div className="px-3 py-3 space-y-4">
+            {!isSearchFiltering ? (
+              <>
+                <section className="space-y-2">
+                  <div className="flex items-center justify-between px-1">
+                    <div className="text-xs font-medium tracking-[0.02em] text-ink-faint">最近搜索</div>
+                    {searchHistory.length > 0 ? (
+                      <button
+                        type="button"
+                        onClick={handleClearSearchHistory}
+                        className="inline-flex h-6 w-6 items-center justify-center rounded-md text-ink-ghost transition hover:bg-[var(--surface-hover)] hover:text-ink-soft"
+                        title="清空搜索历史"
+                      >
+                        <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
+                          <polyline points="3 6 5 6 21 6" />
+                          <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2" />
+                        </svg>
+                      </button>
+                    ) : null}
+                  </div>
+                  {visibleSearchHistory.length > 0 ? (
+                    <div className="space-y-1 rounded-2xl border border-[var(--border-soft)]/70 bg-[var(--surface-content)]/60 p-2">
+                      {visibleSearchHistory.map((keyword) => (
+                        <button
+                          key={keyword}
+                          type="button"
+                          onClick={() => handleSearchHistorySelect(keyword)}
+                          className="flex w-full items-center gap-2 rounded-xl px-3 py-2 text-left text-sm text-ink-soft transition hover:bg-[var(--surface-hover)] hover:text-accent"
+                        >
+                          <svg width="13" height="13" viewBox="0 0 16 16" fill="none" className="shrink-0 text-ink-ghost">
+                            <circle cx="7" cy="7" r="5" stroke="currentColor" strokeWidth="1.5" />
+                            <path d="M11 11l3 3" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
+                          </svg>
+                          <span className="truncate">{keyword}</span>
+                        </button>
+                      ))}
+                    </div>
+                  ) : (
+                    <div className="rounded-2xl border border-dashed border-[var(--border-soft)]/80 bg-[var(--surface-content)]/45 px-4 py-5 text-xs leading-6 text-ink-ghost">
+                      还没有搜索记录。
+                    </div>
+                  )}
+                </section>
+
+                <section className="space-y-2">
+                  <div className="px-1 text-xs font-medium tracking-[0.02em] text-ink-faint">最新笔记</div>
+                  <div className="space-y-2">
+                    {latestNotes.map((note) => {
+                      const folderName = note.folder_id ? (folderNameById.get(note.folder_id) ?? "未命名文件夹") : "未分类";
+                      const noteTitle = note.title || note.content.split("\n")[0] || "无标题笔记";
+                      const noteExcerpt = buildSearchExcerpt(note.content || noteTitle, "", 36);
+                      const isActiveNote = selectedId === note.id;
+
+                      return (
+                        <button
+                          key={note.id}
+                          type="button"
+                          onClick={() => handleOpenSearchNote(note)}
+                          className={`w-full rounded-2xl border px-3 py-3 text-left transition ${isActiveNote ? "border-accent/30 bg-[var(--surface-active)]/70 shadow-[0_10px_24px_rgba(86,138,106,0.12)]" : "border-[var(--border-soft)]/70 bg-[var(--surface-content)]/70 hover:border-accent/20 hover:bg-[var(--surface-hover)]/80"}`}
+                        >
+                          <div className="text-sm font-medium text-ink line-clamp-1">{noteTitle}</div>
+                          <div className="mt-1 line-clamp-2 text-xs leading-5 text-ink-ghost">{noteExcerpt || "暂无正文预览"}</div>
+                          <div className="mt-2 flex items-center gap-2 text-[11px] text-ink-ghost">
+                            <span className="truncate">{folderName}</span>
+                            <span>·</span>
+                            <span>{new Date(note.updated_at).toLocaleDateString("zh-CN")}</span>
+                          </div>
+                        </button>
+                      );
+                    })}
+                  </div>
+                </section>
+              </>
+            ) : (
+              <section className="space-y-2">
+                <div className="flex items-center justify-between px-1">
+                  <div className="text-xs font-medium tracking-[0.02em] text-ink-faint">搜索结果</div>
+                  <div className="text-[11px] text-ink-ghost">{searchResults.length} 条命中</div>
+                </div>
+                {searchResults.length > 0 ? (
+                  <div className="space-y-2">
+                    {searchResults.map((note) => {
+                      const noteTitle = note.title || note.content.split("\n")[0] || "无标题笔记";
+                      const noteExcerpt = buildSearchExcerpt(note.content || noteTitle, searchKeyword, 36);
+                      const folderName = note.folder_id ? (folderNameById.get(note.folder_id) ?? "未命名文件夹") : "未分类";
+                      const isActiveNote = selectedId === note.id;
+
+                      return (
+                        <button
+                          key={note.id}
+                          type="button"
+                          onClick={() => handleOpenSearchNote(note)}
+                          className={`w-full rounded-2xl border px-3 py-3 text-left transition ${isActiveNote ? "border-accent/30 bg-[var(--surface-active)]/70 shadow-[0_10px_24px_rgba(86,138,106,0.12)]" : "border-[var(--border-soft)]/70 bg-[var(--surface-content)]/70 hover:border-accent/20 hover:bg-[var(--surface-hover)]/80"}`}
+                        >
+                          <div className="text-sm font-medium text-ink line-clamp-1">{renderHighlightedText(noteTitle, searchKeyword)}</div>
+                          <div className="mt-1 line-clamp-2 text-xs leading-5 text-ink-ghost">{renderHighlightedText(noteExcerpt || "标题命中，正文暂无可预览片段", searchKeyword)}</div>
+                          <div className="mt-2 flex items-center gap-2 text-[11px] text-ink-ghost">
+                            <span className="truncate">{folderName}</span>
+                            <span>·</span>
+                            <span>{new Date(note.updated_at).toLocaleDateString("zh-CN")}</span>
+                          </div>
+                        </button>
+                      );
+                    })}
+                  </div>
+                ) : (
+                  <div className="rounded-2xl border border-dashed border-[var(--border-soft)]/80 bg-[var(--surface-content)]/45 px-4 py-8 text-center text-xs leading-6 text-ink-ghost">
+                    没有找到和“{search.trim()}”相关的笔记。
+                  </div>
+                )}
+              </section>
+            )}
+          </div>
+        ) : (
+          <div className="px-3 py-3">
+            <div className="space-y-1">
+              <div className="sticky top-0 z-10 -mx-1 px-1 py-1 bg-[var(--surface-panel)]/96 backdrop-blur supports-[backdrop-filter]:bg-[var(--surface-panel)]/88">
+                <div className={`flex items-center gap-1 rounded-xl px-1 py-1 transition-colors ${selectedFolderId === null && !selectedId ? "bg-[var(--surface-active)]/80 text-accent" : "text-ink-soft hover:bg-[var(--surface-hover)]/80 hover:text-accent"}`}>
                   <button
                     type="button"
                     onMouseDown={(event) => event.preventDefault()}
-                    onClick={(event) => {
-                      event.stopPropagation();
-                      void handleSidebarFolderCreate("新建文件夹");
+                    onClick={() => {
+                      navScrollRef.current?.scrollTo({ top: 0, behavior: "smooth" });
+                      onSelectAll();
                     }}
-                    className="flex h-7 w-7 items-center justify-center rounded-lg transition-colors hover:bg-black/5"
-                    title="新建文件夹"
+                    className="flex min-w-0 flex-1 items-center px-2 py-1.5 text-left text-sm font-medium"
                   >
-                    <svg width="14" height="14" viewBox="0 0 14 14" fill="none"><path d="M7 2v10M2 7h10" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round"/></svg>
+                    <span className="truncate">全部笔记</span>
+                    <span className="ml-auto text-[11px] opacity-70">{allNotes.length}</span>
                   </button>
-                  <button
-                    type="button"
-                    onMouseDown={(event) => event.preventDefault()}
-                    onClick={(event) => {
-                      event.stopPropagation();
-                      onCreateNote(undefined);
-                    }}
-                    className="flex h-7 w-7 items-center justify-center rounded-lg transition-colors hover:bg-black/5"
-                    title="新建笔记"
-                  >
-                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="12" y1="18" x2="12" y2="12"/><line x1="9" y1="15" x2="15" y2="15"/></svg>
-                  </button>
+                  <div className="flex shrink-0 items-center gap-1">
+                    <button
+                      type="button"
+                      onMouseDown={(event) => event.preventDefault()}
+                      onClick={(event) => {
+                        event.stopPropagation();
+                        void handleSidebarFolderCreate("新建文件夹");
+                      }}
+                      className="flex h-7 w-7 items-center justify-center rounded-lg transition-colors hover:bg-black/5"
+                      title="新建文件夹"
+                    >
+                      <svg width="14" height="14" viewBox="0 0 14 14" fill="none"><path d="M7 2v10M2 7h10" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round"/></svg>
+                    </button>
+                    <button
+                      type="button"
+                      onMouseDown={(event) => event.preventDefault()}
+                      onClick={(event) => {
+                        event.stopPropagation();
+                        onCreateNote(undefined);
+                      }}
+                      className="flex h-7 w-7 items-center justify-center rounded-lg transition-colors hover:bg-black/5"
+                      title="新建笔记"
+                    >
+                      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="12" y1="18" x2="12" y2="12"/><line x1="9" y1="15" x2="15" y2="15"/></svg>
+                    </button>
+                  </div>
                 </div>
               </div>
-            </div>
 
-            <div className="space-y-0.5 pt-1">
-              {folderTree.map((node) => (
-                <FolderItem
-                  key={node.id}
-                  node={node}
-                  depth={0}
-                  activeFolderId={selectedFolderId}
-                  selectedNoteId={selectedId}
-                  selectedFolderIds={selectedSidebarFolderIds}
-                  selectedNoteIds={selectedSidebarNoteIds}
-                  renamingFolderId={renamingFolderId}
-                  expandedFolderIds={effectiveExpandedFolderIds}
-                  onSelectFolder={handleSidebarFolderSelect}
-                  onSelectNote={handleSidebarNoteSelect}
-                  onRename={onFolderRename}
-                  onRenameEnd={() => setRenamingFolderId(null)}
-                  onDelete={(folderId) => {
-                const targetFolder = folders.find((folder) => folder.id === folderId);
-                handleFolderDeleteRequest(folderId, targetFolder?.name ?? "未命名文件夹");
-              }}
-                  onCreateSub={(parentId) => {
-                    void handleSidebarFolderCreate("新建子文件夹", parentId);
-                  }}
-                  onDrop={onMoveToFolder}
-                  onContextMenu={handleFolderContextMenu}
-                  onNoteContextMenu={handleNoteContextMenu}
-                  onToggleExpand={toggleExpandedFolder}
-                />
-              ))}
+              <div className="space-y-0.5 pt-1">
+                {folderTree.map((node) => (
+                  <FolderItem
+                    key={node.id}
+                    node={node}
+                    depth={0}
+                    activeFolderId={selectedFolderId}
+                    selectedNoteId={selectedId}
+                    selectedFolderIds={selectedSidebarFolderIds}
+                    selectedNoteIds={selectedSidebarNoteIds}
+                    renamingFolderId={renamingFolderId}
+                    expandedFolderIds={effectiveExpandedFolderIds}
+                    onSelectFolder={handleSidebarFolderSelect}
+                    onSelectNote={handleSidebarNoteSelect}
+                    onRename={onFolderRename}
+                    onRenameEnd={() => setRenamingFolderId(null)}
+                    onDelete={(folderId) => {
+                  const targetFolder = folders.find((folder) => folder.id === folderId);
+                  handleFolderDeleteRequest(folderId, targetFolder?.name ?? "未命名文件夹");
+                }}
+                    onCreateSub={(parentId) => {
+                      void handleSidebarFolderCreate("新建子文件夹", parentId);
+                    }}
+                    onDrop={onMoveToFolder}
+                    onContextMenu={handleFolderContextMenu}
+                    onNoteContextMenu={handleNoteContextMenu}
+                    onToggleExpand={toggleExpandedFolder}
+                  />
+                ))}
 
-              {uncategorizedNotes.length > 0 && (
-                <div className="mt-2 space-y-0.5">
-                  {uncategorizedNotes.map((note) => {
-                    const isActiveNote = selectedId === note.id;
-                    const isSelectedNote = selectedSidebarNoteIds.has(note.id);
-                    return (
-                      <button
-                        key={note.id}
-                        type="button"
-                        data-sidebar-note-id={note.id}
-                        onClick={(event) => handleSidebarNoteSelect(event, note)}
-                        onContextMenu={(event) => handleNoteContextMenu(event, note)}
-                        className={`flex w-full items-center gap-2 rounded px-3 py-1.5 text-left transition-colors ${isActiveNote ? "bg-[var(--surface-active)] text-accent" : isSelectedNote ? "bg-[var(--surface-active)]/55 text-accent" : "text-ink-soft hover:bg-paper-warm"}`}
-                      >
-                        <span className="w-1.5 h-1.5 rounded-full bg-current opacity-70 shrink-0" />
-                        <span className={`min-w-0 flex-1 truncate text-[11px] leading-5 ${isActiveNote || isSelectedNote ? "font-medium" : ""}`}>
-                          {note.title || note.content.split("\n")[0] || "无标题笔记"}
-                        </span>
-                      </button>
-                    );
-                  })}
-                </div>
-              )}
+                {uncategorizedNotes.length > 0 && (
+                  <div className="mt-2 space-y-0.5">
+                    {uncategorizedNotes.map((note) => {
+                      const isActiveNote = selectedId === note.id;
+                      const isSelectedNote = selectedSidebarNoteIds.has(note.id);
+                      return (
+                        <button
+                          key={note.id}
+                          type="button"
+                          data-sidebar-note-id={note.id}
+                          onClick={(event) => handleSidebarNoteSelect(event, note)}
+                          onContextMenu={(event) => handleNoteContextMenu(event, note)}
+                          className={`flex w-full items-center gap-2 rounded px-3 py-1.5 text-left transition-colors ${isActiveNote ? "bg-[var(--surface-active)] text-accent" : isSelectedNote ? "bg-[var(--surface-active)]/55 text-accent" : "text-ink-soft hover:bg-paper-warm"}`}
+                        >
+                          <span className="w-1.5 h-1.5 rounded-full bg-current opacity-70 shrink-0" />
+                          <span className={`min-w-0 flex-1 truncate text-[11px] leading-5 ${isActiveNote || isSelectedNote ? "font-medium" : ""}`}>
+                            {note.title || note.content.split("\n")[0] || "无标题笔记"}
+                          </span>
+                        </button>
+                      );
+                    })}
+                  </div>
+                )}
+              </div>
             </div>
           </div>
-        </div>
+        )}
       </div>
 
       {folderMenuPos && folderMenuNode && (

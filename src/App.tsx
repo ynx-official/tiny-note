@@ -17,7 +17,7 @@ import { NoteDetail } from "./components/detail/NoteDetail";
 import { NoteCollectionView } from "./components/detail/NoteCollectionView";
 import { StatusBar } from "./components/StatusBar";
 import { db } from "./lib/db";
-import { resolveCollectionTitle, resolveContextNotes, resolveSearchNavigation, shouldShowCollectionView } from "./lib/noteNavigation";
+import { resolveCollectionTitle, resolveContextNotes, shouldShowCollectionView } from "./lib/noteNavigation";
 import { getCloudSession, fetchCurrentUser, listKovaSyncConflicts } from "./lib/cloudApi";
 import { createSkippedSyncDiagnostics, loadLastSyncDiagnostics, syncKovaCloud, type SyncRunDiagnostics } from "./lib/sync";
 import { useNotes } from "./hooks/useNotes";
@@ -96,7 +96,6 @@ export default function App() {
   const keepaliveSyncTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const isSyncingRef = useRef(false);
   const isEditorDirtyRef = useRef(false);
-  const searchRef = useRef(search);
   const pendingDraftActionRef = useRef<(() => void | Promise<void>) | null>(null);
 
   const showToast = (message: string) => {
@@ -136,39 +135,8 @@ export default function App() {
   }, []);
 
   const applySearch = useCallback((value: string) => {
-    const previousSearch = searchRef.current;
-    const searchNavigation = resolveSearchNavigation(previousSearch, value, selectedNote?.id ?? null);
-    const shouldInterruptEditing = selectedNote !== null && searchNavigation.currentScope !== searchNavigation.nextScope;
-
-    if (shouldInterruptEditing && isEditorDirtyRef.current) {
-      const dialog = searchNavigation.nextScope === "search-results"
-        ? {
-            title: "放弃当前草稿并更新搜索结果？",
-            message: "继续后会放弃这次本地编辑，并回到最新的搜索结果列表。",
-            confirmLabel: "放弃并更新",
-          }
-        : {
-            title: "放弃当前草稿并进入搜索态？",
-            message: "继续后会放弃这次本地编辑，并保留当前文章，同时按新关键词刷新左侧与结果区。",
-            confirmLabel: "放弃并搜索",
-          };
-
-      runWithDraftGuard(() => {
-        setSearch(value);
-        if (searchNavigation.shouldResetSelection) {
-          setSelectedNote(null);
-          setSelectedIds(new Set());
-        }
-      }, dialog);
-      return;
-    }
-
     setSearch(value);
-    if (searchNavigation.shouldResetSelection) {
-      setSelectedNote(null);
-      setSelectedIds(new Set());
-    }
-  }, [runWithDraftGuard, selectedNote]);
+  }, []);
 
   const openFirstSyncWizard = useCallback(() => {
     setShowLogin(false);
@@ -211,10 +179,6 @@ export default function App() {
   useEffect(() => {
     isEditorDirtyRef.current = isEditorDirty;
   }, [isEditorDirty]);
-
-  useEffect(() => {
-    searchRef.current = search;
-  }, [search]);
 
   useEffect(() => {
     if (!isEditorDirty) return;
@@ -781,29 +745,24 @@ export default function App() {
     return resolveContextNotes(
       allNotes,
       selectedFolderId ? { type: "folder", folderId: selectedFolderId } : { type: "all" },
-      search,
     );
-  }, [allNotes, search, selectedFolderId]);
+  }, [allNotes, selectedFolderId]);
 
-  const isCollectionView = shouldShowCollectionView(search, selectedNote?.id ?? null);
+  const isCollectionView = shouldShowCollectionView("", selectedNote?.id ?? null);
 
   const collectionTitle = useMemo(
     () => resolveCollectionTitle(
       folders,
       selectedFolderId ? { type: "folder", folderId: selectedFolderId } : { type: "all" },
-      search,
     ),
-    [folders, search, selectedFolderId],
+    [folders, selectedFolderId],
   );
 
-  const collectionDescription = search.trim()
-    ? `已按“${search.trim()}”筛选`
-    : selectedFolderId
-      ? "当前文件夹直属笔记"
-      : "全部笔记总视图";
+  const collectionDescription = selectedFolderId
+    ? "当前文件夹直属笔记"
+    : "全部笔记总视图";
 
   const hasCompletedFirstSync = Boolean(syncStatus?.last_synced_at || lastSuccessfulSyncAt);
-  const selectedNoteVisibleInList = selectedNote ? contextNotes.some((note) => note.id === selectedNote.id) : false;
 
   const visibleSelectedIds = useMemo(
     () => new Set([...selectedIds].filter((id) => contextNotes.some((note) => note.id === id))),
@@ -908,21 +867,7 @@ export default function App() {
         {/* Detail */}
         <div className="flex-1 flex flex-col min-w-0 min-h-0 bg-[var(--surface-content)] shadow-[inset_0_1px_0_rgba(255,255,255,0.18)]">
           {selectedNote && !isCollectionView ? (
-            <>
-              {!selectedNoteVisibleInList && search.trim() && (
-                <div className="flex items-center justify-between gap-3 border-b border-amber-200/60 bg-amber-50/65 px-5 py-2 text-xs text-amber-700">
-                  <span>当前正在编辑的笔记不在这次筛选结果里，列表已只显示匹配项。</span>
-                  <button
-                    type="button"
-                    onClick={() => applySearch("")}
-                    className="shrink-0 rounded-full border border-amber-300/60 px-2.5 py-1 text-[11px] transition hover:bg-white/70"
-                  >
-                    清空筛选
-                  </button>
-                </div>
-              )}
-              <NoteDetail note={selectedNote} onToggleSidebar={() => setShowSidebar((v) => !v)} onDelete={handleDelete} onUpdateTitle={handleUpdateTitle} onUpdateContent={handleUpdateContent} onDirtyChange={setIsEditorDirty} onSaveStatusChange={setNoteSaveStatus} />
-            </>
+            <NoteDetail note={selectedNote} onToggleSidebar={() => setShowSidebar((v) => !v)} onDelete={handleDelete} onUpdateTitle={handleUpdateTitle} onUpdateContent={handleUpdateContent} onDirtyChange={setIsEditorDirty} onSaveStatusChange={setNoteSaveStatus} />
           ) : (
             <NoteCollectionView
               title={collectionTitle}

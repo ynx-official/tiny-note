@@ -25,6 +25,35 @@ export const matchesNoteSearch = (note: Note, keyword: string) => {
   return note.title.toLowerCase().includes(keyword) || note.content.toLowerCase().includes(keyword);
 };
 
+export const buildSearchExcerpt = (content: string, keyword: string, radius = 32) => {
+  const normalizedContent = content.replace(/\s+/g, " ").trim();
+  if (!normalizedContent) return "";
+
+  if (!keyword) {
+    return normalizedContent.length <= radius * 2
+      ? normalizedContent
+      : `${normalizedContent.slice(0, radius * 2).trimEnd()}…`;
+  }
+
+  const normalizedKeyword = normalizeSearchKeyword(keyword);
+  const matchIndex = normalizedContent.toLowerCase().indexOf(normalizedKeyword);
+
+  if (matchIndex === -1) {
+    return normalizedContent.length <= radius * 2
+      ? normalizedContent
+      : `${normalizedContent.slice(0, radius * 2).trimEnd()}…`;
+  }
+
+  const start = Math.max(0, matchIndex - radius);
+  const end = Math.min(normalizedContent.length, matchIndex + normalizedKeyword.length + radius);
+
+  return `${start > 0 ? "…" : ""}${normalizedContent.slice(start, end).trim()}${end < normalizedContent.length ? "…" : ""}`;
+};
+
+export const resolveRecentNotes = (notes: Note[], limit = 8) => {
+  return [...notes].sort(byCreatedAtDesc).slice(0, limit);
+};
+
 export const shouldForceCollectionView = (search: string) => normalizeSearchKeyword(search).length > 0;
 
 export const resolveSearchScope = (search: string, selectedNoteId: string | null): SearchScope => {
