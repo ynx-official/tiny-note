@@ -185,6 +185,7 @@ const ImageWithLightbox = memo(function ImageWithLightbox({ src, alt }: { src: s
 
 export const MarkdownPreview = memo(function MarkdownPreview({ content, showOutline = false, scrollContainerRef }: MarkdownPreviewProps) {
   const rootRef = useRef<HTMLDivElement | null>(null);
+  const contentRef = useRef<HTMLDivElement | null>(null);
   const activeOutlineIdRef = useRef<string | null>(null);
   const isEmpty = !content.trim();
   const outline = useMemo(() => extractMarkdownOutline(content), [content]);
@@ -194,10 +195,17 @@ export const MarkdownPreview = memo(function MarkdownPreview({ content, showOutl
     return scrollContainerRef?.current ?? rootRef.current?.parentElement ?? null;
   }, [scrollContainerRef]);
 
-  const getHeadingOffset = useCallback((heading: HTMLElement, container: HTMLElement) => {
-    const containerRect = container.getBoundingClientRect();
-    const headingRect = heading.getBoundingClientRect();
-    return container.scrollTop + headingRect.top - containerRect.top;
+  const getHeadingOffset = useCallback((heading: HTMLElement) => {
+    const content = contentRef.current;
+    if (!content) return heading.offsetTop;
+
+    let offset = 0;
+    let node: HTMLElement | null = heading;
+    while (node && node !== content) {
+      offset += node.offsetTop;
+      node = node.offsetParent as HTMLElement | null;
+    }
+    return offset;
   }, []);
 
   const syncActiveOutline = useCallback(() => {
@@ -215,7 +223,7 @@ export const MarkdownPreview = memo(function MarkdownPreview({ content, showOutl
     const threshold = container.scrollTop + 56;
     const ordered = Array.from(headings);
     const current = ordered.reduce<HTMLElement | null>((matched, heading) => {
-      return getHeadingOffset(heading, container) <= threshold ? heading : matched;
+      return getHeadingOffset(heading) <= threshold ? heading : matched;
     }, null) ?? ordered[0];
 
     const nextId = current.dataset.headingId ?? outline[0]?.id ?? null;
@@ -235,7 +243,7 @@ export const MarkdownPreview = memo(function MarkdownPreview({ content, showOutl
     }
     if (!container || !target) return;
 
-    const nextTop = Math.max(0, getHeadingOffset(target, container) - 12);
+    const nextTop = Math.max(0, getHeadingOffset(target) - 16);
     container.scrollTo({ top: nextTop, behavior: "smooth" });
   }, [getHeadingOffset, getScrollContainer]);
 
@@ -243,7 +251,11 @@ export const MarkdownPreview = memo(function MarkdownPreview({ content, showOutl
   const createHeading = (tag: "h1" | "h2" | "h3" | "h4" | "h5" | "h6") => {
     return function Heading({ children }: { children?: React.ReactNode }) {
       const item = outline[headingIndex++];
-      return createElement(tag, item?.id ? { id: item.id, "data-heading-id": item.id } : undefined, children);
+      return createElement(
+        tag,
+        item?.id ? { id: item.id, "data-heading-id": item.id } : undefined,
+        children,
+      );
     };
   };
 
@@ -308,7 +320,7 @@ export const MarkdownPreview = memo(function MarkdownPreview({ content, showOutl
 
   return (
     <div ref={rootRef} className={showOutline && outline.length > 0 ? "flex items-start gap-8" : undefined}>
-      <div className="markdown-body min-w-0 flex-1">
+      <div ref={contentRef} className="markdown-body min-w-0 flex-1">
         <Markdown
           remarkPlugins={[remarkGfm, remarkMath]}
           rehypePlugins={[rehypeKatex]}

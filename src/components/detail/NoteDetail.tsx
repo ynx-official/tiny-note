@@ -370,7 +370,7 @@ export function NoteDetail({ note, onToggleSidebar, onDelete, onUpdateTitle, onU
               className="flex-1 min-h-0"
               tabSize={tabSize}
               editorViewRef={editorViewRef}
-              onScroll={mode === "split" ? handleEditorScroll : undefined}
+              onScroll={mode === "split" && !showOutline ? handleEditorScroll : undefined}
               onPasteFiles={handleImageFiles}
               onDropFiles={handleImageFiles}
               onContextMenu={(e) => { e.preventDefault(); setContextMenu({ x: e.clientX, y: e.clientY, items: getEditorMenuItems() }); }}
