@@ -15,6 +15,7 @@ export const DEFAULT_AUTO_SAVE_DELAY = 800;
 export const DEFAULT_TAB_SIZE = 2;
 export const DEFAULT_VIEW_MODE = "split";
 export const DEFAULT_SPLIT_RATIO = 50;
+export const DEFAULT_PREVIEW_OUTLINE = false;
 export const DEFAULT_QUICK_PINNED = true;
 export const DEFAULT_QUICK_SHORTCUT = "Ctrl+Shift+N";
 export const DEFAULT_KEEPALIVE_SYNC_ENABLED = true;
@@ -235,6 +236,15 @@ export function loadSplitRatio(): number {
 
 export function saveSplitRatio(ratio: number) {
   localStorage.setItem("fp-split-ratio", String(ratio));
+}
+
+export function loadPreviewOutline(): boolean {
+  const val = localStorage.getItem("fp-preview-outline");
+  return val === null ? DEFAULT_PREVIEW_OUTLINE : val === "true";
+}
+
+export function savePreviewOutline(enabled: boolean) {
+  localStorage.setItem("fp-preview-outline", String(enabled));
 }
 
 // Quick note settings

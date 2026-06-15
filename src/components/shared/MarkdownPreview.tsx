@@ -1,4 +1,4 @@
-import { memo, useState, useCallback, useEffect, useMemo } from "react";
+import { memo, useState, useCallback, useEffect, useMemo, createElement, useRef, type RefObject } from "react";
 import { db } from "../../lib/db";
 import Markdown from "react-markdown";
 import remarkGfm from "remark-gfm";
@@ -35,11 +35,62 @@ if (typeof window !== "undefined") {
 
 interface MarkdownPreviewProps {
   content: string;
+  showOutline?: boolean;
+  scrollContainerRef?: RefObject<HTMLElement | null>;
 }
+
+type OutlineItem = {
+  id: string;
+  text: string;
+  level: number;
+};
 
 function transformMarkdownUrl(url: string) {
   if (url.startsWith("kova-asset://")) return url;
   return url;
+}
+
+function createOutlineId(text: string, usedIds: Map<string, number>) {
+  const normalized = Array.from(text.trim().toLowerCase())
+    .filter((char) => char >= " ")
+    .join("");
+  const base = normalized
+    .replace(/[^\p{L}\p{N}\s-]+/gu, " ")
+    .replace(/\s+/g, "-")
+    .replace(/^-+|-+$/g, "") || "section";
+  const count = usedIds.get(base) ?? 0;
+  usedIds.set(base, count + 1);
+  return count === 0 ? base : `${base}-${count + 1}`;
+}
+
+function extractMarkdownOutline(content: string): OutlineItem[] {
+  const usedIds = new Map<string, number>();
+  const outline: OutlineItem[] = [];
+  const lines = content.split(/\r?\n/);
+  let inFence = false;
+
+  for (const line of lines) {
+    const trimmed = line.trim();
+    if (/^(```|~~~)/.test(trimmed)) {
+      inFence = !inFence;
+      continue;
+    }
+    if (inFence) continue;
+
+    const match = trimmed.match(/^(#{1,6})\s+(.+?)\s*#*\s*$/);
+    if (!match) continue;
+
+    const text = match[2].trim();
+    if (!text) continue;
+
+    outline.push({
+      id: createOutlineId(text, usedIds),
+      text,
+      level: match[1].length,
+    });
+  }
+
+  return outline;
 }
 
 function CopyButton({ text }: { text: string }) {
@@ -132,15 +183,83 @@ const ImageWithLightbox = memo(function ImageWithLightbox({ src, alt }: { src: s
   );
 });
 
-export const MarkdownPreview = memo(function MarkdownPreview({ content }: MarkdownPreviewProps) {
-  if (!content.trim()) {
-    return <p className="text-ink-ghost leading-[1.9]">暂无内容</p>;
-  }
+export const MarkdownPreview = memo(function MarkdownPreview({ content, showOutline = false, scrollContainerRef }: MarkdownPreviewProps) {
+  const rootRef = useRef<HTMLDivElement | null>(null);
+  const activeOutlineIdRef = useRef<string | null>(null);
+  const isEmpty = !content.trim();
+  const outline = useMemo(() => extractMarkdownOutline(content), [content]);
+  const [activeOutlineId, setActiveOutlineId] = useState<string | null>(outline[0]?.id ?? null);
 
-  const components = useMemo(() => ({
+  const getScrollContainer = useCallback(() => {
+    return scrollContainerRef?.current ?? rootRef.current?.parentElement ?? null;
+  }, [scrollContainerRef]);
+
+  const getHeadingOffset = useCallback((heading: HTMLElement, container: HTMLElement) => {
+    const containerRect = container.getBoundingClientRect();
+    const headingRect = heading.getBoundingClientRect();
+    return container.scrollTop + headingRect.top - containerRect.top;
+  }, []);
+
+  const syncActiveOutline = useCallback(() => {
+    const container = getScrollContainer();
+    const headings = rootRef.current?.querySelectorAll<HTMLElement>("[data-heading-id]");
+    if (!container || !headings?.length) {
+      const fallbackId = outline[0]?.id ?? null;
+      if (activeOutlineIdRef.current !== fallbackId) {
+        activeOutlineIdRef.current = fallbackId;
+        setActiveOutlineId(fallbackId);
+      }
+      return;
+    }
+
+    const threshold = container.scrollTop + 56;
+    const ordered = Array.from(headings);
+    const current = ordered.reduce<HTMLElement | null>((matched, heading) => {
+      return getHeadingOffset(heading, container) <= threshold ? heading : matched;
+    }, null) ?? ordered[0];
+
+    const nextId = current.dataset.headingId ?? outline[0]?.id ?? null;
+    if (activeOutlineIdRef.current !== nextId) {
+      activeOutlineIdRef.current = nextId;
+      setActiveOutlineId(nextId);
+    }
+  }, [getHeadingOffset, getScrollContainer, outline]);
+
+  const handleOutlineJump = useCallback((id: string) => {
+    const container = getScrollContainer();
+    const headings = rootRef.current?.querySelectorAll<HTMLElement>("[data-heading-id]");
+    const target = Array.from(headings ?? []).find((node) => node.dataset.headingId === id);
+    if (activeOutlineIdRef.current !== id) {
+      activeOutlineIdRef.current = id;
+      setActiveOutlineId(id);
+    }
+    if (!container || !target) return;
+
+    const nextTop = Math.max(0, getHeadingOffset(target, container) - 12);
+    container.scrollTo({ top: nextTop, behavior: "smooth" });
+  }, [getHeadingOffset, getScrollContainer]);
+
+  let headingIndex = 0;
+  const createHeading = (tag: "h1" | "h2" | "h3" | "h4" | "h5" | "h6") => {
+    return function Heading({ children }: { children?: React.ReactNode }) {
+      const item = outline[headingIndex++];
+      return createElement(tag, item?.id ? { id: item.id, "data-heading-id": item.id } : undefined, children);
+    };
+  };
+
+  const components = {
     pre({ children }: { children?: React.ReactNode }) {
-      const codeChild = Array.isArray(children) ? children.find((c: React.ReactNode) => c && (c as React.ReactElement).type === "code") as React.ReactElement | undefined : undefined;
-      const codeText = (codeChild?.props as any)?.children?.[0] ?? (typeof children === "string" ? children : "");
+      const codeChild = Array.isArray(children)
+        ? children.find((c: React.ReactNode) => c && (c as React.ReactElement).type === "code") as React.ReactElement<{ children?: React.ReactNode }> | undefined
+        : undefined;
+      const codeChildContent = codeChild?.props.children;
+      const codeText = typeof codeChildContent === "string"
+        ? codeChildContent
+        : Array.isArray(codeChildContent) && typeof codeChildContent[0] === "string"
+          ? codeChildContent[0]
+          : typeof children === "string"
+            ? children
+            : "";
       return (
         <div className="relative group/code">
           <CopyButton text={typeof codeText === "string" ? codeText : ""} />
@@ -151,18 +270,84 @@ export const MarkdownPreview = memo(function MarkdownPreview({ content }: Markdo
     img({ src, alt }: { src?: string; alt?: string }) {
       return <ImageWithLightbox src={src || ""} alt={alt} />;
     },
-  }), []);
+    h1: createHeading("h1"),
+    h2: createHeading("h2"),
+    h3: createHeading("h3"),
+    h4: createHeading("h4"),
+    h5: createHeading("h5"),
+    h6: createHeading("h6"),
+  };
+
+  const resolvedActiveOutlineId = outline.some((item) => item.id === activeOutlineId)
+    ? activeOutlineId
+    : (outline[0]?.id ?? null);
+
+  useEffect(() => {
+    activeOutlineIdRef.current = resolvedActiveOutlineId;
+  }, [resolvedActiveOutlineId]);
+
+  useEffect(() => {
+    if (!showOutline || outline.length === 0) return;
+    const container = getScrollContainer();
+    if (!container) return;
+
+    syncActiveOutline();
+    const handleScroll = () => syncActiveOutline();
+    container.addEventListener("scroll", handleScroll, { passive: true });
+    window.addEventListener("resize", handleScroll);
+
+    return () => {
+      container.removeEventListener("scroll", handleScroll);
+      window.removeEventListener("resize", handleScroll);
+    };
+  }, [getScrollContainer, outline, showOutline, syncActiveOutline]);
+
+  if (isEmpty) {
+    return <p className="text-ink-ghost leading-[1.9]">暂无内容</p>;
+  }
 
   return (
-    <div className="markdown-body">
-      <Markdown
-        remarkPlugins={[remarkGfm, remarkMath]}
-        rehypePlugins={[rehypeKatex]}
-        urlTransform={transformMarkdownUrl}
-        components={components}
-      >
-        {content}
-      </Markdown>
+    <div ref={rootRef} className={showOutline && outline.length > 0 ? "flex items-start gap-8" : undefined}>
+      <div className="markdown-body min-w-0 flex-1">
+        <Markdown
+          remarkPlugins={[remarkGfm, remarkMath]}
+          rehypePlugins={[rehypeKatex]}
+          urlTransform={transformMarkdownUrl}
+          components={components}
+        >
+          {content}
+        </Markdown>
+      </div>
+      {showOutline && outline.length > 0 && (
+        <aside
+          data-outline="true"
+          className="sticky top-0 w-56 shrink-0 self-start rounded-2xl border border-[var(--border-soft)] bg-[var(--surface-panel)]/72 p-3"
+        >
+          <div className="mb-2 px-2 text-[11px] font-medium tracking-[0.08em] text-ink-ghost">目录</div>
+          <nav className="space-y-1">
+            {outline.map((item) => (
+              <button
+                key={item.id}
+                type="button"
+                data-outline-item={item.id}
+                data-outline-target={`#${item.id}`}
+                data-outline-active={resolvedActiveOutlineId === item.id ? "true" : "false"}
+                onClick={() => {
+                  handleOutlineJump(item.id);
+                }}
+                className={`block w-full rounded-lg px-2 py-1.5 text-left text-[12px] leading-5 transition-colors ${
+                  resolvedActiveOutlineId === item.id
+                    ? "bg-[var(--surface-active)] text-accent"
+                    : "text-ink-ghost hover:bg-[var(--surface-hover)] hover:text-ink"
+                }`}
+                style={{ paddingLeft: `${Math.max(8, 8 + (item.level - 1) * 12)}px` }}
+              >
+                {item.text}
+              </button>
+            ))}
+          </nav>
+        </aside>
+      )}
     </div>
   );
 });

@@ -4,7 +4,7 @@ import { undo, redo } from "@codemirror/commands";
 import type { Note } from "../../lib/db";
 import { db } from "../../lib/db";
 import { uploadImageFileToCloud } from "../../lib/assetArchive";
-import { loadAutoSave, loadAutoSaveDelay, loadViewMode, saveViewMode, loadSplitRatio, saveSplitRatio, loadTabSize } from "../../lib/theme";
+import { loadAutoSave, loadAutoSaveDelay, loadViewMode, saveViewMode, loadSplitRatio, saveSplitRatio, loadTabSize, loadPreviewOutline, savePreviewOutline } from "../../lib/theme";
 import { resolveNoteSaveStatus, type NotePersistState, type NoteSaveStatus } from "../../lib/noteSaveStatus";
 import { MarkdownPreview } from "../shared/MarkdownPreview";
 import { CodeEditor, insertAtCursor, insertTextAtCursor } from "../shared/CodeEditor";
@@ -37,6 +37,7 @@ export function NoteDetail({ note, onToggleSidebar, onDelete, onUpdateTitle, onU
   const [editTitle, setEditTitle] = useState(note?.title ?? "");
   const [editContent, setEditContent] = useState(note?.content ?? "");
   const [splitRatio, setSplitRatio] = useState(loadSplitRatio);
+  const [showOutline, setShowOutline] = useState(loadPreviewOutline);
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
   const [contextMenu, setContextMenu] = useState<{ x: number; y: number; items: ContextMenuItem[] } | null>(null);
   const [attachmentStatus, setAttachmentStatus] = useState<string | null>(null);
@@ -105,6 +106,7 @@ export function NoteDetail({ note, onToggleSidebar, onDelete, onUpdateTitle, onU
   // Persist view mode and split ratio
   useEffect(() => { saveViewMode(mode); }, [mode]);
   useEffect(() => { saveSplitRatio(splitRatio); }, [splitRatio]);
+  useEffect(() => { savePreviewOutline(showOutline); }, [showOutline]);
 
   // Listen for settings changes from SettingsPanel
   useEffect(() => {
@@ -314,6 +316,20 @@ export function NoteDetail({ note, onToggleSidebar, onDelete, onUpdateTitle, onU
           </button>
         </div>
         <div className="flex items-center gap-2">
+          {mode !== "edit" && (
+            <button
+              type="button"
+              onClick={() => setShowOutline((current) => !current)}
+              className={`h-8 rounded-xl px-3 text-xs transition-all cursor-pointer ${
+                showOutline
+                  ? "bg-[var(--surface-active)] text-accent"
+                  : "text-ink-ghost hover:text-ink-faint hover:bg-[var(--surface-hover)]"
+              }`}
+              title="切换目录"
+            >
+              目录
+            </button>
+          )}
           <SlidingButtonGroup options={VIEW_MODES} value={mode} onChange={(value) => setMode(value as ViewMode)} buttonClassName="h-8 px-4" />
         </div>
       </div>
@@ -374,7 +390,7 @@ export function NoteDetail({ note, onToggleSidebar, onDelete, onUpdateTitle, onU
             {mode === "split" && <div className="h-7 px-4 flex items-center border-b border-[var(--border-soft)] shrink-0 bg-[var(--surface-panel)]/55"><span className="text-[10px] text-ink-ghost">预览</span></div>}
             <div ref={previewRef} className="flex-1 overflow-y-auto px-8 py-6 bg-[var(--surface-content)] [&::-webkit-scrollbar]:w-[6px] [&::-webkit-scrollbar-thumb]:bg-[var(--border-strong)] [&::-webkit-scrollbar-thumb]:rounded-full [&::-webkit-scrollbar-thumb:hover]:bg-ink-ghost [&::-webkit-scrollbar-track]:bg-transparent"
               onContextMenu={(e) => { e.preventDefault(); setContextMenu({ x: e.clientX, y: e.clientY, items: getPreviewMenuItems() }); }}>
-              <MarkdownPreview content={mode === "split" ? editContent : note.content} />
+              <MarkdownPreview content={mode === "split" ? editContent : note.content} showOutline={showOutline} scrollContainerRef={previewRef} />
             </div>
           </div>
         )}
