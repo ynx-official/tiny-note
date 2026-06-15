@@ -27,12 +27,13 @@ interface NoteDetailProps {
   onDelete: (id: string) => void;
   onUpdateTitle: (id: string, title: string) => void | Promise<void>;
   onUpdateContent: (id: string, content: string) => void | Promise<void>;
+  onOpenArticleAI?: (note: Note, draft?: { title?: string; content?: string }) => void;
   onDirtyChange?: (dirty: boolean) => void;
   onSaved?: () => void;
   onSaveStatusChange?: (status: NoteSaveStatus) => void;
 }
 
-export function NoteDetail({ note, onToggleSidebar, onDelete, onUpdateTitle, onUpdateContent, onDirtyChange, onSaved, onSaveStatusChange }: NoteDetailProps) {
+export function NoteDetail({ note, onToggleSidebar, onDelete, onUpdateTitle, onUpdateContent, onOpenArticleAI, onDirtyChange, onSaved, onSaveStatusChange }: NoteDetailProps) {
   const [mode, setMode] = useState<ViewMode>(() => loadViewMode() as ViewMode);
   const [editTitle, setEditTitle] = useState(note?.title ?? "");
   const [editContent, setEditContent] = useState(note?.content ?? "");
@@ -358,7 +359,7 @@ export function NoteDetail({ note, onToggleSidebar, onDelete, onUpdateTitle, onU
       </div>
 
       {/* Content Area */}
-      <div ref={containerRef} className="flex-1 flex min-h-0 bg-[var(--surface-content)]">
+      <div ref={containerRef} className="relative flex-1 flex min-h-0 bg-[var(--surface-content)]">
         {(mode === "edit" || mode === "split") && (
           <div className={`${mode === "split" ? "" : "flex-1"} flex flex-col min-h-0`} style={mode === "split" ? { width: `${splitRatio}%` } : undefined}>
             {mode === "split" && <div className="h-7 px-4 flex items-center border-b border-[var(--border-soft)] shrink-0 bg-[var(--surface-panel)]/55"><span className="text-[10px] text-ink-ghost">编辑</span></div>}
@@ -392,6 +393,19 @@ export function NoteDetail({ note, onToggleSidebar, onDelete, onUpdateTitle, onU
               onContextMenu={(e) => { e.preventDefault(); setContextMenu({ x: e.clientX, y: e.clientY, items: getPreviewMenuItems() }); }}>
               <MarkdownPreview content={mode === "split" ? editContent : note.content} showOutline={showOutline} scrollContainerRef={previewRef} />
             </div>
+          </div>
+        )}
+
+        {onOpenArticleAI && (
+          <div className="absolute right-5 bottom-5 z-10">
+            <button
+              type="button"
+              onClick={() => onOpenArticleAI(note, { title: editTitle, content: editContent })}
+              className="h-10 rounded-2xl px-4 text-sm font-medium shadow-[0_8px_24px_rgba(0,0,0,0.12)] bg-accent text-white hover:opacity-95 transition-all cursor-pointer"
+              title="针对当前文章发起 AI 优化"
+            >
+              优化本文
+            </button>
           </div>
         )}
       </div>

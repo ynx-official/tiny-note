@@ -1,3 +1,5 @@
+import type { ArticleAIDraft } from "../../../lib/articleAi";
+
 export interface Conversation {
   id: string;
   title: string;
@@ -45,3 +47,27 @@ export type AIContextAttachment =
       title: string;
       folderId: string | null;
     };
+
+export interface PendingAIContext {
+  id: number;
+  attachments: AIContextAttachment[];
+  mode: "current" | "new";
+}
+
+interface AIChatPanelSharedProps {
+  onClose: () => void;
+  onOpenNote?: (noteId: string) => void;
+  onOpenFolder?: (folderId: string) => void;
+}
+
+export interface GlobalAIChatPanelProps extends AIChatPanelSharedProps {
+  scope: "global";
+  pendingContext: PendingAIContext | null;
+}
+
+export interface ArticleAIChatPanelProps extends AIChatPanelSharedProps {
+  scope: "article";
+  articleDraft: ArticleAIDraft | null;
+}
+
+export type AIChatPanelProps = GlobalAIChatPanelProps | ArticleAIChatPanelProps;

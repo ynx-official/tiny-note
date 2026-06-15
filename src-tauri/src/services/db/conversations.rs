@@ -65,8 +65,65 @@ impl Database {
     pub fn delete_conversation(&self, id: &str) -> Result<(), String> {
         let conn = self.conn.lock().map_err(|e| e.to_string())?;
         conn.execute("DELETE FROM messages WHERE conversation_id = ?1", params![id]).map_err(|e| e.to_string())?;
+        conn.execute("DELETE FROM note_conversations WHERE conversation_id = ?1", params![id]).map_err(|e| e.to_string())?;
         conn.execute("DELETE FROM conversations WHERE id = ?1", params![id]).map_err(|e| e.to_string())?;
         Ok(())
+    }
+
+    pub fn get_note_conversation(&self, note_id: &str) -> Result<Option<Conversation>, String> {
+        let conn = self.conn.lock().map_err(|e| e.to_string())?;
+        let mut stmt = conn.prepare(
+            "SELECT c.id, c.title, c.summary, c.pinned, c.created_at, c.updated_at
+             FROM note_conversations nc
+             JOIN conversations c ON c.id = nc.conversation_id
+             WHERE nc.note_id = ?1"
+        ).map_err(|e| e.to_string())?;
+        let mut rows = stmt.query(params![note_id]).map_err(|e| e.to_string())?;
+        let row = match rows.next().map_err(|e| e.to_string())? {
+            Some(row) => row,
+            None => return Ok(None),
+        };
+
+        Ok(Some(Conversation {
+            id: row.get(0).map_err(|e| e.to_string())?,
+            title: row.get(1).map_err(|e| e.to_string())?,
+            summary: row.get(2).map_err(|e| e.to_string())?,
+            pinned: row.get::<_, i32>(3).map_err(|e| e.to_string())? != 0,
+            created_at: row.get(4).map_err(|e| e.to_string())?,
+            updated_at: row.get(5).map_err(|e| e.to_string())?,
+        }))
+    }
+
+    pub fn get_or_create_note_conversation(&self, note_id: &str) -> Result<Conversation, String> {
+        if let Some(conversation) = self.get_note_conversation(note_id)? {
+            return Ok(conversation);
+        }
+
+        let conversation = self.create_conversation(Some("文章对话"))?;
+        let conn = self.conn.lock().map_err(|e| e.to_string())?;
+        let now = Utc::now().to_rfc3339();
+        conn.execute(
+            "INSERT INTO note_conversations (note_id, conversation_id, created_at, updated_at) VALUES (?1, ?2, ?3, ?4)",
+            params![note_id, conversation.id, now, now],
+        ).map_err(|e| e.to_string())?;
+        Ok(conversation)
+    }
+
+    pub fn clear_conversation_messages(&self, conversation_id: &str) -> Result<(), String> {
+        let conn = self.conn.lock().map_err(|e| e.to_string())?;
+        let now = Utc::now().to_rfc3339();
+        conn.execute("DELETE FROM messages WHERE conversation_id = ?1", params![conversation_id]).map_err(|e| e.to_string())?;
+        conn.execute(
+            "UPDATE conversations SET summary = '', updated_at = ?1 WHERE id = ?2",
+            params![now, conversation_id],
+        ).map_err(|e| e.to_string())?;
+        Ok(())
+    }
+
+    pub fn clear_note_conversation_messages(&self, note_id: &str) -> Result<(), String> {
+        let conversation = self.get_note_conversation(note_id)?
+            .ok_or_else(|| format!("文章对话不存在: {}", note_id))?;
+        self.clear_conversation_messages(&conversation.id)
     }
 
     pub fn add_message(&self, conversation_id: &str, role: &str, content: &str, tool_calls: Option<&str>, tool_call_id: Option<&str>) -> Result<ChatMessage, String> {
@@ -112,5 +169,92 @@ impl Database {
         let mut msgs = Vec::new();
         for row in rows { msgs.push(row.map_err(|e| e.to_string())?); }
         Ok(msgs)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::path::PathBuf;
+    use std::sync::Mutex;
+
+    use rusqlite::Connection;
+
+    use super::*;
+
+    fn test_db() -> Database {
+        let conn = Connection::open_in_memory().expect("open in-memory db");
+        conn.execute_batch(
+            "CREATE TABLE conversations (
+                id TEXT PRIMARY KEY,
+                title TEXT NOT NULL DEFAULT '新对话',
+                summary TEXT NOT NULL DEFAULT '',
+                pinned INTEGER NOT NULL DEFAULT 0,
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL
+            );
+            CREATE TABLE messages (
+                id TEXT PRIMARY KEY,
+                conversation_id TEXT NOT NULL,
+                role TEXT NOT NULL,
+                content TEXT NOT NULL,
+                tool_calls TEXT,
+                tool_call_id TEXT,
+                created_at TEXT NOT NULL
+            );
+            CREATE TABLE note_conversations (
+                note_id TEXT PRIMARY KEY,
+                conversation_id TEXT NOT NULL UNIQUE,
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL
+            );"
+        ).expect("create schema");
+
+        Database {
+            conn: Mutex::new(conn),
+            data_dir: PathBuf::from("test-data"),
+        }
+    }
+
+    #[test]
+    fn get_or_create_note_conversation_reuses_existing_binding() {
+        let db = test_db();
+
+        let first = db.get_or_create_note_conversation("note-1").expect("create note conversation");
+        let second = db.get_or_create_note_conversation("note-1").expect("reuse note conversation");
+
+        assert_eq!(first.id, second.id);
+        assert_eq!(db.get_conversations().expect("list conversations").len(), 1);
+    }
+
+    #[test]
+    fn clear_note_conversation_messages_removes_messages_and_summary_but_keeps_binding() {
+        let db = test_db();
+        let conversation = db.get_or_create_note_conversation("note-1").expect("create note conversation");
+
+        db.add_message(&conversation.id, "user", "hello", None, None).expect("insert message");
+        db.update_conversation_summary(&conversation.id, "summary").expect("set summary");
+
+        db.clear_note_conversation_messages("note-1").expect("clear note conversation messages");
+
+        assert!(db.get_messages(&conversation.id).expect("load messages").is_empty());
+
+        let conn = db.conn.lock().expect("lock conn");
+        let summary: String = conn
+            .query_row(
+                "SELECT summary FROM conversations WHERE id = ?1",
+                params![conversation.id],
+                |row| row.get(0),
+            )
+            .expect("load summary");
+        let binding_count: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM note_conversations WHERE note_id = ?1 AND conversation_id = ?2",
+                params!["note-1", conversation.id],
+                |row| row.get(0),
+            )
+            .expect("load binding count");
+
+        assert_eq!(summary, "");
+        assert_eq!(binding_count, 1);
     }
 }

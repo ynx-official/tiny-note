@@ -20,6 +20,7 @@ import { db } from "./lib/db";
 import { resolveCollectionTitle, resolveContextNotes, shouldShowCollectionView } from "./lib/noteNavigation";
 import { getCloudSession, fetchCurrentUser, listKovaSyncConflicts } from "./lib/cloudApi";
 import { createSkippedSyncDiagnostics, loadLastSyncDiagnostics, syncKovaCloud, type SyncRunDiagnostics } from "./lib/sync";
+import { buildArticleAIDraft, type ArticleAIDraft } from "./lib/articleAi";
 import { useNotes } from "./hooks/useNotes";
 import type { Note } from "./lib/db";
 import type { NoteSaveStatus } from "./lib/noteSaveStatus";
@@ -47,6 +48,8 @@ type PendingDraftActionDialog = {
   confirmLabel?: string;
 };
 
+type AIScope = "global" | "article";
+
 export default function App() {
   const { fetch, create, update, remove } = useNotes();
   const [search, setSearch] = useState("");
@@ -55,6 +58,8 @@ export default function App() {
   const [showLogin, setShowLogin] = useState(false);
   const [showFirstSyncWizard, setShowFirstSyncWizard] = useState(false);
   const [showAI, setShowAI] = useState(false);
+  const [aiScope, setAiScope] = useState<AIScope>("global");
+  const [articleAIDraft, setArticleAIDraft] = useState<ArticleAIDraft | null>(null);
   const [pendingAIContext, setPendingAIContext] = useState<{ id: number; attachments: AIContextAttachment[]; mode: "current" | "new" } | null>(null);
   const [showSidebar, setShowSidebar] = useState(true);
   const [selectedNote, setSelectedNote] = useState<Note | null>(null);
@@ -386,15 +391,27 @@ export default function App() {
   };
 
   const handleAddToAIContext = (attachments: AIContextAttachment[]) => {
+    setAiScope("global");
+    setArticleAIDraft(null);
     setShowSettings(false);
     setShowAI(true);
     setPendingAIContext({ id: Date.now(), attachments, mode: "current" });
   };
 
   const handleAddToNewAIContext = (attachments: AIContextAttachment[]) => {
+    setAiScope("global");
+    setArticleAIDraft(null);
     setShowSettings(false);
     setShowAI(true);
     setPendingAIContext({ id: Date.now(), attachments, mode: "new" });
+  };
+
+  const handleOpenArticleAI = (note: Note, draft?: { title?: string; content?: string }) => {
+    setAiScope("article");
+    setArticleAIDraft(buildArticleAIDraft(note, draft));
+    setPendingAIContext(null);
+    setShowSettings(false);
+    setShowAI(true);
   };
 
   const handleOpenNoteFromAI = async (noteId: string) => {
@@ -429,6 +446,18 @@ export default function App() {
       confirmLabel: "放弃并切换",
     });
   };
+
+  useEffect(() => {
+    if (!showAI || aiScope !== "article") return;
+    if (!selectedNote) {
+      setShowAI(false);
+      setAiScope("global");
+      setArticleAIDraft(null);
+      return;
+    }
+    if (articleAIDraft?.noteId === selectedNote.id) return;
+    setArticleAIDraft(buildArticleAIDraft(selectedNote));
+  }, [aiScope, articleAIDraft?.noteId, selectedNote, showAI]);
 
   const handleDelete = async (id: string, options?: { silentToast?: boolean }) => {
     await remove(id);
@@ -769,9 +798,24 @@ export default function App() {
     [contextNotes, selectedIds],
   );
 
+  const handleToggleGlobalAI = () => {
+    setShowSettings(false);
+    setPendingAIContext(null);
+    if (showAI) {
+      if (aiScope === "article") {
+        setAiScope("global");
+        return;
+      }
+      setShowAI(false);
+      return;
+    }
+    setAiScope("global");
+    setShowAI(true);
+  };
+
   return (
     <div className="h-screen flex flex-col bg-[var(--surface-app)] text-ink">
-      <TitleBar settingsOpen={showSettings} loginOpen={showLogin} aiOpen={showAI} closeToTray={closeToTray} mode={mode} cloudUser={cloudSession?.user} isCloudLoggedIn={Boolean(cloudSession)} isSyncing={isSyncing} conflictCount={cloudConflictCount} onToggleMode={handleToggleMode} onToggleSettings={() => { setShowSettings((v) => !v); setShowAI(false); }} onToggleLogin={() => setShowLogin((v) => !v)} onToggleAI={() => { setShowAI((v) => !v); setShowSettings(false); }} onSync={handleSync} onOpenConflicts={() => setShowConflicts(true)} />
+      <TitleBar settingsOpen={showSettings} loginOpen={showLogin} aiOpen={showAI} closeToTray={closeToTray} mode={mode} cloudUser={cloudSession?.user} isCloudLoggedIn={Boolean(cloudSession)} isSyncing={isSyncing} conflictCount={cloudConflictCount} onToggleMode={handleToggleMode} onToggleSettings={() => { setShowSettings((v) => !v); setShowAI(false); }} onToggleLogin={() => setShowLogin((v) => !v)} onToggleAI={handleToggleGlobalAI} onSync={handleSync} onOpenConflicts={() => setShowConflicts(true)} />
 
       <div className="flex flex-1 min-h-0 bg-[var(--surface-app)]">
         {/* Sidebar */}
@@ -867,7 +911,7 @@ export default function App() {
         {/* Detail */}
         <div className="flex-1 flex flex-col min-w-0 min-h-0 bg-[var(--surface-content)] shadow-[inset_0_1px_0_rgba(255,255,255,0.18)]">
           {selectedNote && !isCollectionView ? (
-            <NoteDetail note={selectedNote} onToggleSidebar={() => setShowSidebar((v) => !v)} onDelete={handleDelete} onUpdateTitle={handleUpdateTitle} onUpdateContent={handleUpdateContent} onDirtyChange={setIsEditorDirty} onSaveStatusChange={setNoteSaveStatus} />
+            <NoteDetail note={selectedNote} onToggleSidebar={() => setShowSidebar((v) => !v)} onDelete={handleDelete} onUpdateTitle={handleUpdateTitle} onUpdateContent={handleUpdateContent} onDirtyChange={setIsEditorDirty} onSaveStatusChange={setNoteSaveStatus} onOpenArticleAI={handleOpenArticleAI} />
           ) : (
             <NoteCollectionView
               title={collectionTitle}
@@ -946,15 +990,33 @@ export default function App() {
         <div className="relative shrink-0 flex overflow-hidden border-l border-[var(--border-soft)]" style={{ width: showAI ? ai.width : 0, transition: isDragging ? "none" : "width 0.5s cubic-bezier(0.22,1,0.36,1)" }}>
           <div className="w-1 shrink-0 bg-[var(--surface-panel-muted)] cursor-col-resize hover:bg-accent/30 transition-colors" onMouseDown={ai.handleMouseDown} />
           <div className="h-full shrink-0 bg-[var(--surface-panel)]" style={{ width: ai.width - 4 }}>
-            <AIChatPanel
-              onClose={() => {
-                setShowAI(false);
-                setPendingAIContext(null);
-              }}
-              pendingContext={pendingAIContext}
-              onOpenNote={handleOpenNoteFromAI}
-              onOpenFolder={handleOpenFolderFromAI}
-            />
+            {aiScope === "article" ? (
+              <AIChatPanel
+                scope="article"
+                onClose={() => {
+                  setShowAI(false);
+                  setAiScope("global");
+                  setArticleAIDraft(null);
+                  setPendingAIContext(null);
+                }}
+                articleDraft={articleAIDraft}
+                onOpenNote={handleOpenNoteFromAI}
+                onOpenFolder={handleOpenFolderFromAI}
+              />
+            ) : (
+              <AIChatPanel
+                scope="global"
+                onClose={() => {
+                  setShowAI(false);
+                  setAiScope("global");
+                  setArticleAIDraft(null);
+                  setPendingAIContext(null);
+                }}
+                pendingContext={pendingAIContext}
+                onOpenNote={handleOpenNoteFromAI}
+                onOpenFolder={handleOpenFolderFromAI}
+              />
+            )}
           </div>
         </div>
       </div>

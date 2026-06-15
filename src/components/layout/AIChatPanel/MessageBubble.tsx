@@ -3,13 +3,18 @@ import { ThinkingBlock } from "./ThinkingBlock";
 import { parseThinkingContent } from "./utils";
 import type { ChatMessage } from "./types";
 
-type ParsedContext = {
+type ParsedGlobalContext = {
   readonly folders: ReadonlyArray<{ readonly name: string; readonly id: string }>;
   readonly notes: ReadonlyArray<{ readonly title: string; readonly id: string; readonly folderId: string | null }>;
   readonly userText: string;
 };
 
-const parseKovaContext = (content: string): ParsedContext | null => {
+type ParsedArticleContext = {
+  readonly note: { readonly title: string; readonly id: string; readonly folderId: string | null };
+  readonly userText: string;
+};
+
+const parseKovaContext = (content: string): ParsedGlobalContext | null => {
   const match = content.match(/<kova_context>\s*([\s\S]*?)\s*<\/kova_context>\s*([\s\S]*)/);
   if (!match) return null;
 
@@ -28,13 +33,41 @@ const parseKovaContext = (content: string): ParsedContext | null => {
   return { folders, notes, userText: tail };
 };
 
+const parseKovaNoteContext = (content: string): ParsedArticleContext | null => {
+  const match = content.match(/<kova_note_context>\s*([\s\S]*?)\s*<\/kova_note_context>\s*([\s\S]*)/);
+  if (!match) return null;
+
+  const context = match[1] ?? "";
+  const tail = (match[2] ?? "").replace(/^\s*用户请求：\s*/u, "").trim();
+  const noteId = context.match(/- note_id:\s*([^\n]+)/)?.[1]?.trim() ?? "";
+  const folderId = context.match(/folder_id:\s*([^\n]*)/)?.[1]?.trim() || null;
+  const title = context.match(/title:\s*([^\n]+)/)?.[1]?.trim() ?? "当前文章";
+
+  if (!noteId) return null;
+
+  return {
+    note: {
+      title,
+      id: noteId,
+      folderId,
+    },
+    userText: tail,
+  };
+};
+
 const sanitizeMessageContent = (content: string) => {
   const parsedContext = parseKovaContext(content);
-  const withoutContext = parsedContext ? parsedContext.userText : content;
+  const parsedArticleContext = parseKovaNoteContext(content);
+  const withoutContext = parsedContext
+    ? parsedContext.userText
+    : parsedArticleContext
+      ? parsedArticleContext.userText
+      : content;
   const { main } = parseThinkingContent(withoutContext);
   return main
     .replace(/<!--\s*KOVA_THINKING:[\s\S]*?-->/g, "")
     .replace(/<kova_context>[\s\S]*?<\/kova_context>/g, "")
+    .replace(/<kova_note_context>[\s\S]*?<\/kova_note_context>/g, "")
     .replace(/^\s*用户请求：\s*/u, "")
     .trim();
 };
@@ -70,8 +103,11 @@ export function MessageBubble({ msg, index, totalMessages, loading, hasLastUserM
 
   const isUser = msg.role === "user";
   const parsedContext = isUser ? parseKovaContext(msg.content) : null;
+  const parsedArticleContext = isUser ? parseKovaNoteContext(msg.content) : null;
   const cleanContent = sanitizeMessageContent(msg.content);
-  const { thinking, main } = isUser ? { thinking: null, main: parsedContext?.userText ?? cleanContent } : parseThinkingContent(msg.content);
+  const { thinking, main } = isUser
+    ? { thinking: null, main: parsedContext?.userText ?? parsedArticleContext?.userText ?? cleanContent }
+    : parseThinkingContent(msg.content);
 
   return (
     <div key={msg.id} className={`group/msg flex flex-col ${isUser ? "items-end" : "items-start"} mb-3`}>
@@ -114,6 +150,21 @@ export function MessageBubble({ msg, index, totalMessages, loading, hasLastUserM
                   <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="opacity-75"><path d="M9 18l6-6-6-6"/></svg>
                 </button>
               ))}
+            </div>
+          )}
+          {parsedArticleContext && (
+            <div className="mb-2 flex flex-wrap gap-1.5">
+              <button
+                type="button"
+                title={parsedArticleContext.note.id}
+                onClick={() => onOpenNote?.(parsedArticleContext.note.id)}
+                className="inline-flex max-w-full items-center gap-1.5 rounded-full bg-white/15 border border-white/20 px-2 py-1 text-[11px] text-white/95 hover:bg-white/25 transition-colors"
+              >
+                <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>
+                <span className="text-white/75">当前文章</span>
+                <span className="max-w-[180px] truncate">{parsedArticleContext.note.title}</span>
+                <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="opacity-75"><path d="M9 18l6-6-6-6"/></svg>
+              </button>
             </div>
           )}
           {isUser ? main : (

@@ -257,6 +257,12 @@ export const db = {
   exportNotePdf: (id: string, destDir: string, watermark: string, watermarkOpacity: number) =>
     invoke<string>("export_note_pdf", { id, destDir, watermark, watermarkOpacity }),
 
+  getOrCreateNoteConversation: (noteId: string) =>
+    invoke<{ id: string; title: string; summary: string; pinned: boolean; created_at: string; updated_at: string }>("get_or_create_note_conversation", { noteId }),
+
+  clearNoteConversationMessages: (noteId: string) =>
+    invoke<void>("clear_note_conversation_messages", { noteId }),
+
   openPath: (path: string) =>
     invoke<void>("open_path", { path }),
 

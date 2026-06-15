@@ -657,6 +657,16 @@ async fn ai_chat_stream(
 }
 
 #[tauri::command]
+fn get_or_create_note_conversation(note_id: String) -> Result<Conversation, String> {
+    db().get_or_create_note_conversation(&note_id)
+}
+
+#[tauri::command]
+fn clear_note_conversation_messages(note_id: String) -> Result<(), String> {
+    db().clear_note_conversation_messages(&note_id)
+}
+
+#[tauri::command]
 fn create_conversation(title: Option<String>) -> Result<Conversation, String> {
     db().create_conversation(title.as_deref())
 }
@@ -909,7 +919,7 @@ pub fn run() {
             get_data_dir, set_data_dir, import_md_file, import_file, export_note, export_note_html, export_note_txt, export_note_pdf,
             inspect_restore_data, backup_data, restore_data, abort_ai, toggle_conversation_pinned, export_conversation, open_path, write_file, read_file, copy_file, download_font, get_window_size, save_quick_window_size,
             toggle_window, get_cursor_position, create_quick_window, update_quick_shortcut,
-            ai_chat, ai_chat_stream, create_conversation, get_conversations, update_conversation_title, delete_conversation,
+            ai_chat, ai_chat_stream, create_conversation, get_or_create_note_conversation, clear_note_conversation_messages, get_conversations, update_conversation_title, delete_conversation,
             get_messages, get_ai_config, save_ai_config,
             get_ai_profiles, get_active_ai_profile, save_ai_profile, delete_ai_profile, set_active_ai_profile,
             fetch_models,
