@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { Folder, Note } from "./db";
-import { buildSidebarFolderTree, resolveCollectionTitle, resolveContextNotes, shouldForceCollectionView, shouldResetSearchSelection, shouldShowCollectionView } from "./noteNavigation";
+import { buildSidebarFolderTree, resolveCollectionTitle, resolveContextNotes, resolveSearchNavigation, resolveSearchScope, shouldForceCollectionView, shouldResetSearchSelection, shouldShowCollectionView } from "./noteNavigation";
 
 const folders: Folder[] = [
   {
@@ -113,6 +113,12 @@ describe("noteNavigation", () => {
     expect(shouldForceCollectionView("search keyword")).toBe(true);
   });
 
+  it("搜索作用域会区分结果列表和正文详情", () => {
+    expect(resolveSearchScope("", null)).toBe("browse");
+    expect(resolveSearchScope("search keyword", null)).toBe("search-results");
+    expect(resolveSearchScope("search keyword", "note-free")).toBe("search-detail");
+  });
+
   it("搜索态下有选中文章时允许直接进入正文", () => {
     expect(shouldShowCollectionView("search keyword", null)).toBe(true);
     expect(shouldShowCollectionView("search keyword", "note-free")).toBe(false);
@@ -124,6 +130,25 @@ describe("noteNavigation", () => {
     expect(shouldResetSearchSelection("search", "search", "note-free")).toBe(false);
     expect(shouldResetSearchSelection("", "search keyword", "note-free")).toBe(false);
     expect(shouldResetSearchSelection("search", "search keyword", null)).toBe(false);
+  });
+
+  it("搜索导航解析会返回统一的切换决策", () => {
+    expect(resolveSearchNavigation("search", "search keyword", "note-free")).toEqual({
+      currentSearchMode: true,
+      nextSearchMode: true,
+      currentScope: "search-detail",
+      nextScope: "search-results",
+      shouldResetSelection: true,
+      shouldShowCollectionView: true,
+    });
+    expect(resolveSearchNavigation("", "search", "note-free")).toEqual({
+      currentSearchMode: false,
+      nextSearchMode: true,
+      currentScope: "browse",
+      nextScope: "search-detail",
+      shouldResetSelection: false,
+      shouldShowCollectionView: false,
+    });
   });
 
   it("左侧搜索过滤会保留命中路径，并隐藏完全无关的文件夹分支", () => {

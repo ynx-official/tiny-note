@@ -17,7 +17,7 @@ import { NoteDetail } from "./components/detail/NoteDetail";
 import { NoteCollectionView } from "./components/detail/NoteCollectionView";
 import { StatusBar } from "./components/StatusBar";
 import { db } from "./lib/db";
-import { resolveCollectionTitle, resolveContextNotes, shouldForceCollectionView, shouldResetSearchSelection, shouldShowCollectionView } from "./lib/noteNavigation";
+import { resolveCollectionTitle, resolveContextNotes, resolveSearchNavigation, shouldShowCollectionView } from "./lib/noteNavigation";
 import { getCloudSession, fetchCurrentUser, listKovaSyncConflicts } from "./lib/cloudApi";
 import { createSkippedSyncDiagnostics, loadLastSyncDiagnostics, syncKovaCloud, type SyncRunDiagnostics } from "./lib/sync";
 import { useNotes } from "./hooks/useNotes";
@@ -137,29 +137,34 @@ export default function App() {
 
   const applySearch = useCallback((value: string) => {
     const previousSearch = searchRef.current;
-    const nextSearchMode = shouldForceCollectionView(value);
-    const currentSearchMode = shouldForceCollectionView(previousSearch);
-    const shouldReturnToResults = shouldResetSearchSelection(previousSearch, value, selectedNote?.id ?? null);
+    const searchNavigation = resolveSearchNavigation(previousSearch, value, selectedNote?.id ?? null);
+    const shouldInterruptEditing = selectedNote !== null && searchNavigation.currentScope !== searchNavigation.nextScope;
 
-    if ((nextSearchMode && !currentSearchMode && selectedNote && isEditorDirtyRef.current) || (shouldReturnToResults && isEditorDirtyRef.current)) {
+    if (shouldInterruptEditing && isEditorDirtyRef.current) {
+      const dialog = searchNavigation.nextScope === "search-results"
+        ? {
+            title: "放弃当前草稿并更新搜索结果？",
+            message: "继续后会放弃这次本地编辑，并回到最新的搜索结果列表。",
+            confirmLabel: "放弃并更新",
+          }
+        : {
+            title: "放弃当前草稿并进入搜索态？",
+            message: "继续后会放弃这次本地编辑，并保留当前文章，同时按新关键词刷新左侧与结果区。",
+            confirmLabel: "放弃并搜索",
+          };
+
       runWithDraftGuard(() => {
         setSearch(value);
-        if (shouldReturnToResults) {
+        if (searchNavigation.shouldResetSelection) {
           setSelectedNote(null);
           setSelectedIds(new Set());
         }
-      }, {
-        title: shouldReturnToResults ? "放弃当前草稿并更新搜索结果？" : "放弃当前草稿并进入搜索结果？",
-        message: shouldReturnToResults
-          ? "继续后会放弃这次本地编辑，并回到最新的搜索结果列表。"
-          : "继续后会放弃这次本地编辑，并切换到搜索结果页。",
-        confirmLabel: shouldReturnToResults ? "放弃并更新" : "放弃并搜索",
-      });
+      }, dialog);
       return;
     }
 
     setSearch(value);
-    if (shouldReturnToResults) {
+    if (searchNavigation.shouldResetSelection) {
       setSelectedNote(null);
       setSelectedIds(new Set());
     }

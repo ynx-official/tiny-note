@@ -5,6 +5,8 @@ export type NavTarget =
   | { type: "folder"; folderId: string }
   | { type: "note"; noteId: string; folderId: string | null };
 
+export type SearchScope = "browse" | "search-results" | "search-detail";
+
 export interface SidebarFolderNode extends Folder {
   children: SidebarFolderNode[];
   notes: Note[];
@@ -25,14 +27,39 @@ export const matchesNoteSearch = (note: Note, keyword: string) => {
 
 export const shouldForceCollectionView = (search: string) => normalizeSearchKeyword(search).length > 0;
 
+export const resolveSearchScope = (search: string, selectedNoteId: string | null): SearchScope => {
+  if (!shouldForceCollectionView(search)) {
+    return "browse";
+  }
+
+  return selectedNoteId ? "search-detail" : "search-results";
+};
+
 export const shouldResetSearchSelection = (previousSearch: string, nextSearch: string, selectedNoteId: string | null) => {
   if (!selectedNoteId) return false;
   if (!shouldForceCollectionView(previousSearch) || !shouldForceCollectionView(nextSearch)) return false;
   return normalizeSearchKeyword(previousSearch) !== normalizeSearchKeyword(nextSearch);
 };
 
-export const shouldShowCollectionView = (search: string, selectedNoteId: string | null) => {
-  if (!shouldForceCollectionView(search)) return selectedNoteId === null;
+export const resolveSearchNavigation = (previousSearch: string, nextSearch: string, selectedNoteId: string | null) => {
+  const currentSearchMode = shouldForceCollectionView(previousSearch);
+  const nextSearchMode = shouldForceCollectionView(nextSearch);
+  const shouldResetSelection = shouldResetSearchSelection(previousSearch, nextSearch, selectedNoteId);
+  const currentScope = resolveSearchScope(previousSearch, selectedNoteId);
+  const nextSelectedNoteId = shouldResetSelection ? null : selectedNoteId;
+  const nextScope = resolveSearchScope(nextSearch, nextSelectedNoteId);
+
+  return {
+    currentSearchMode,
+    nextSearchMode,
+    currentScope,
+    nextScope,
+    shouldResetSelection,
+    shouldShowCollectionView: nextSelectedNoteId === null,
+  };
+};
+
+export const shouldShowCollectionView = (_search: string, selectedNoteId: string | null) => {
   return selectedNoteId === null;
 };
 
