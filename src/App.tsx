@@ -846,10 +846,11 @@ export default function App() {
                   while (names.has(`${baseName}${i}`)) i++;
                   name = `${baseName}${i}`;
                 }
-                await db.createFolder(name, parentId);
+                const folder = await db.createFolder(name, parentId);
                 db.listFolders().then(setFolders);
                 await refreshSyncStatus();
                 showToast("文件夹已新建");
+                return folder;
               }}
               onFolderRename={async (id, name) => { await db.updateFolder(id, name); db.listFolders().then(setFolders); await refreshSyncStatus(); showToast("文件夹已重命名"); }}
               onFolderDelete={handleFolderDelete}

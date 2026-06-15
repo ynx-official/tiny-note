@@ -114,8 +114,11 @@ export function FolderItem({
             onChange={(e) => setEditName(e.target.value)}
             onClick={(e) => e.stopPropagation()}
             onKeyDown={(e) => {
-              if (e.key === "Enter" && editName.trim()) {
-                onRename(node.id, editName.trim());
+              if (e.key === "Enter") {
+                const nextName = editName.trim() || node.name;
+                if (nextName !== node.name) {
+                  onRename(node.id, nextName);
+                }
                 setEditing(false);
                 onRenameEnd();
               }

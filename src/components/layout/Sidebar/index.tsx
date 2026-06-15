@@ -34,7 +34,7 @@ interface SidebarProps {
   onSelectAll: () => void;
   onCreateNote: (folderId?: string) => void;
   onFolderSelect: (folderId: string) => void;
-  onFolderCreate: (name: string, parentId?: string) => void;
+  onFolderCreate: (name: string, parentId?: string) => Promise<Folder>;
   onFolderRename: (id: string, name: string) => void;
   onFolderDelete: (id: string) => Promise<void>;
   onFolderDeleteMany: (ids: string[]) => Promise<void>;
@@ -344,6 +344,14 @@ export function Sidebar({
     });
   };
 
+  const handleSidebarFolderCreate = async (baseName: string, parentId?: string) => {
+    if (parentId) {
+      setExpandedFolderIds((prev) => new Set([...prev, parentId]));
+    }
+    const folder = await onFolderCreate(baseName, parentId);
+    setRenamingFolderId(folder.id);
+  };
+
   const handleDeleteSelected = () => {
     if (!folderMenuNode) return;
     handleFolderDeleteRequest(folderMenuNode.id, folderMenuNode.name);
@@ -550,7 +558,7 @@ export function Sidebar({
       {
         label: "新建子文件夹",
         icon: <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round" strokeLinejoin="round"><path d="M14 13a1.5 1.5 0 0 1-1.5 1.5h-9A1.5 1.5 0 0 1 2 13V5.5A1.5 1.5 0 0 1 3.5 4H6l1.5 2h5A1.5 1.5 0 0 1 14 7.5z"/><path d="M8 7v5M5.5 9.5h5" strokeWidth="1.1"/></svg>,
-        onClick: () => onFolderCreate("新建子文件夹", folderMenuNode.id),
+        onClick: () => handleSidebarFolderCreate("新建子文件夹", folderMenuNode.id),
       },
       {
         label: "导出文件夹",
@@ -600,7 +608,7 @@ export function Sidebar({
                     onMouseDown={(event) => event.preventDefault()}
                     onClick={(event) => {
                       event.stopPropagation();
-                      onFolderCreate("新建文件夹");
+                      void handleSidebarFolderCreate("新建文件夹");
                     }}
                     className="flex h-7 w-7 items-center justify-center rounded-lg transition-colors hover:bg-black/5"
                     title="新建文件夹"
@@ -643,7 +651,9 @@ export function Sidebar({
                 const targetFolder = folders.find((folder) => folder.id === folderId);
                 handleFolderDeleteRequest(folderId, targetFolder?.name ?? "未命名文件夹");
               }}
-                  onCreateSub={(parentId) => onFolderCreate("新建子文件夹", parentId)}
+                  onCreateSub={(parentId) => {
+                    void handleSidebarFolderCreate("新建子文件夹", parentId);
+                  }}
                   onDrop={onMoveToFolder}
                   onContextMenu={handleFolderContextMenu}
                   onNoteContextMenu={handleNoteContextMenu}
