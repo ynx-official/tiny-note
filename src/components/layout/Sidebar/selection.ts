@@ -15,6 +15,12 @@ interface ApplySidebarSelectionInput {
   range: boolean;
 }
 
+interface ResolveSidebarDeletionIdsInput {
+  selection: SidebarSelectionState;
+  clickedId: string;
+  clickedKind: SidebarSelectableKind;
+}
+
 const createSingleSelection = (clickedId: string, clickedKind: SidebarSelectableKind): SidebarSelectionState => ({
   kind: clickedKind,
   ids: new Set([clickedId]),
@@ -64,4 +70,14 @@ export function applySidebarSelection(input: ApplySidebarSelectionInput): Sideba
   }
 
   return createSingleSelection(clickedId, clickedKind);
+}
+
+export function resolveSidebarDeletionIds(input: ResolveSidebarDeletionIdsInput): string[] {
+  const { selection, clickedId, clickedKind } = input;
+
+  if (selection.kind === clickedKind && selection.ids.has(clickedId) && selection.ids.size > 1) {
+    return [...selection.ids];
+  }
+
+  return [clickedId];
 }

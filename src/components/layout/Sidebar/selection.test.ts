@@ -62,3 +62,33 @@ describe("applySidebarSelection", () => {
     expect(next.anchorId).toBe("n3");
   });
 });
+
+describe("resolveSidebarDeletionIds", () => {
+  it("当点击项属于当前多选集合时，应该返回整组选中项", async () => {
+    const sidebarSelection = await import("./selection");
+
+    expect(typeof (sidebarSelection as Record<string, unknown>).resolveSidebarDeletionIds).toBe("function");
+
+    const result = (sidebarSelection as { resolveSidebarDeletionIds: (input: { selection: { kind: "folder" | "note" | null; ids: Set<string>; anchorId: string | null }; clickedId: string; clickedKind: "folder" | "note"; }) => string[] }).resolveSidebarDeletionIds({
+      selection: { kind: "note", ids: new Set(["n1", "n2", "n3"]), anchorId: "n1" },
+      clickedId: "n2",
+      clickedKind: "note",
+    });
+
+    expect(result).toEqual(["n1", "n2", "n3"]);
+  });
+
+  it("当点击项不在当前多选集合里时，应该只删除当前项", async () => {
+    const sidebarSelection = await import("./selection");
+
+    expect(typeof (sidebarSelection as Record<string, unknown>).resolveSidebarDeletionIds).toBe("function");
+
+    const result = (sidebarSelection as { resolveSidebarDeletionIds: (input: { selection: { kind: "folder" | "note" | null; ids: Set<string>; anchorId: string | null }; clickedId: string; clickedKind: "folder" | "note"; }) => string[] }).resolveSidebarDeletionIds({
+      selection: { kind: "folder", ids: new Set(["f1", "f2"]), anchorId: "f1" },
+      clickedId: "f3",
+      clickedKind: "folder",
+    });
+
+    expect(result).toEqual(["f3"]);
+  });
+});

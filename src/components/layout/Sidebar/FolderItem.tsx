@@ -46,7 +46,6 @@ export function FolderItem({
   const [editing, setEditing] = useState(false);
   const [editName, setEditName] = useState(node.name);
   const [dragOver, setDragOver] = useState(false);
-  const [confirmDelete, setConfirmDelete] = useState(false);
 
   useEffect(() => {
     if (renamingFolderId === node.id) {
@@ -147,7 +146,7 @@ export function FolderItem({
             className="w-4 h-4 flex items-center justify-center text-ink-faint hover:text-accent transition-colors">
             <svg width="8" height="8" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>
           </button>
-          <button type="button" onClick={(e) => { e.stopPropagation(); setConfirmDelete(true); }} title="删除"
+          <button type="button" onClick={(e) => { e.stopPropagation(); onDelete(node.id); }} title="删除"
             className="w-4 h-4 flex items-center justify-center text-ink-faint hover:text-danger transition-colors">
             <svg width="8" height="8" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><path d="M3 6h18M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg>
           </button>
@@ -198,20 +197,6 @@ export function FolderItem({
           onToggleExpand={onToggleExpand}
         />
       ))}
-
-      {confirmDelete && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/20" onClick={() => setConfirmDelete(false)}>
-          <div className="bg-cloud rounded-xl border border-paper-deep shadow-xl p-4 w-[280px] animate-view-fade" onClick={(e) => e.stopPropagation()}>
-            <p className="text-sm text-ink-soft mb-3">确定删除文件夹「{node.name}」吗？其中的笔记将移至全部笔记列表中。</p>
-            <div className="flex justify-end gap-2">
-              <button type="button" onClick={() => setConfirmDelete(false)}
-                className="px-3 py-1 text-xs text-ink-soft bg-paper-warm/60 border border-paper-deep/30 rounded-lg hover:bg-paper-warm transition-colors">取消</button>
-              <button type="button" onClick={() => { onDelete(node.id); setConfirmDelete(false); }}
-                className="px-3 py-1 text-xs text-white bg-danger rounded-lg hover:opacity-90 transition-colors">删除</button>
-            </div>
-          </div>
-        </div>
-      )}
     </div>
   );
 }

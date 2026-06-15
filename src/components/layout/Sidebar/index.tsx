@@ -10,7 +10,7 @@ import { FolderPicker } from "../../dialog/FolderPicker";
 import { NoteProperties } from "../../dialog/NoteProperties";
 import { FolderItem } from "./FolderItem";
 import { FolderInfoDialog } from "./FolderInfoDialog";
-import { applySidebarSelection, type SidebarSelectionState } from "./selection";
+import { applySidebarSelection, resolveSidebarDeletionIds, type SidebarSelectionState } from "./selection";
 import type { FolderNode } from "./types";
 import type { AIContextAttachment } from "../AIChatPanel/types";
 
@@ -37,8 +37,10 @@ interface SidebarProps {
   onFolderCreate: (name: string, parentId?: string) => void;
   onFolderRename: (id: string, name: string) => void;
   onFolderDelete: (id: string) => Promise<void>;
+  onFolderDeleteMany: (ids: string[]) => Promise<void>;
   onMoveToFolder: (noteId: string, folderId: string | null) => void;
-  onDeleteNote: (noteId: string) => void;
+  onDeleteNote: (noteId: string) => Promise<void>;
+  onDeleteNotes: (noteIds: string[]) => Promise<void>;
   onAddToAIContext: (attachments: AIContextAttachment[]) => void;
   onAddToNewAIContext: (attachments: AIContextAttachment[]) => void;
 }
@@ -58,8 +60,10 @@ export function Sidebar({
   onFolderCreate,
   onFolderRename,
   onFolderDelete,
+  onFolderDeleteMany,
   onMoveToFolder,
   onDeleteNote,
+  onDeleteNotes,
   onAddToAIContext,
   onAddToNewAIContext,
 }: SidebarProps) {
@@ -287,18 +291,62 @@ export function Sidebar({
     onSelectNote(note);
   };
 
-  const handleDeleteSelected = () => {
-    if (!folderMenuNode) return;
+  const getSidebarDeleteIds = (clickedId: string, clickedKind: "folder" | "note") => resolveSidebarDeletionIds({
+    selection: sidebarSelection,
+    clickedId,
+    clickedKind,
+  });
+
+  const handleFolderDeleteRequest = (folderId: string, folderName: string) => {
+    const deleteIds = getSidebarDeleteIds(folderId, "folder");
+    const folderCount = deleteIds.length;
+
     setFolderConfirm({
       title: "删除文件夹",
-      message: `确定删除「${folderMenuNode.name}」吗？其中的笔记将回到全部笔记列表中。`,
+      message: folderCount > 1
+        ? `确定删除选中的 ${folderCount} 个文件夹吗？其中的笔记将回到全部笔记列表中。`
+        : `确定删除「${folderName}」吗？其中的笔记将回到全部笔记列表中。`,
       danger: true,
       confirmLabel: "删除",
       onConfirm: async () => {
-        await onFolderDelete(folderMenuNode.id);
+        if (folderCount > 1) {
+          await onFolderDeleteMany(deleteIds);
+        } else {
+          await onFolderDelete(folderId);
+        }
+        setSidebarSelection(EMPTY_SIDEBAR_SELECTION);
         setFolderConfirm(null);
       },
     });
+  };
+
+  const handleNoteDeleteRequest = (note: Note) => {
+    const deleteIds = getSidebarDeleteIds(note.id, "note");
+    const noteCount = deleteIds.length;
+    const noteTitle = note.title || note.content.split("\n")[0] || "无标题笔记";
+
+    setFolderConfirm({
+      title: "确认删除",
+      message: noteCount > 1
+        ? `确定删除选中的 ${noteCount} 条笔记吗？`
+        : `确定删除「${noteTitle}」吗？`,
+      danger: true,
+      confirmLabel: "删除",
+      onConfirm: async () => {
+        if (noteCount > 1) {
+          await onDeleteNotes(deleteIds);
+        } else {
+          await onDeleteNote(note.id);
+        }
+        setSidebarSelection(EMPTY_SIDEBAR_SELECTION);
+        setFolderConfirm(null);
+      },
+    });
+  };
+
+  const handleDeleteSelected = () => {
+    if (!folderMenuNode) return;
+    handleFolderDeleteRequest(folderMenuNode.id, folderMenuNode.name);
   };
 
   const handleExportFolder = async () => {
@@ -465,16 +513,7 @@ export function Sidebar({
         label: "删除",
         danger: true,
         icon: <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><polyline points="3 6 5 6 21 6" /><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2" /></svg>,
-        onClick: () => setFolderConfirm({
-          title: "确认删除",
-          message: `确定删除「${noteMenuNote.title || "无标题笔记"}」吗？`,
-          danger: true,
-          confirmLabel: "删除",
-          onConfirm: () => {
-            onDeleteNote(noteMenuNote.id);
-            setFolderConfirm(null);
-          },
-        }),
+        onClick: () => handleNoteDeleteRequest(noteMenuNote),
       },
     ];
   };
@@ -600,7 +639,10 @@ export function Sidebar({
                   onSelectNote={handleSidebarNoteSelect}
                   onRename={onFolderRename}
                   onRenameEnd={() => setRenamingFolderId(null)}
-                  onDelete={onFolderDelete}
+                  onDelete={(folderId) => {
+                const targetFolder = folders.find((folder) => folder.id === folderId);
+                handleFolderDeleteRequest(folderId, targetFolder?.name ?? "未命名文件夹");
+              }}
                   onCreateSub={(parentId) => onFolderCreate("新建子文件夹", parentId)}
                   onDrop={onMoveToFolder}
                   onContextMenu={handleFolderContextMenu}

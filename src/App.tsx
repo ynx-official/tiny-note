@@ -443,18 +443,69 @@ export default function App() {
     });
   };
 
-  const handleDelete = (id: string) => {
-    remove(id).then(() => {
-      refreshSyncStatus();
-      const nextIds = new Set(selectedIds);
+  const handleDelete = async (id: string, options?: { silentToast?: boolean }) => {
+    await remove(id);
+    await refreshSyncStatus();
+    setSelectedIds((prev) => {
+      const nextIds = new Set(prev);
       nextIds.delete(id);
-      setSelectedIds(nextIds);
-      db.list().then(setAllNotes);
-      if (selectedNote?.id === id) {
-        setSelectedNote(null);
-      }
-      showToast("笔记已删除");
+      return nextIds;
     });
+    const all = await db.list();
+    setAllNotes(all);
+    if (selectedNote?.id === id) {
+      setSelectedNote(null);
+    }
+    if (!options?.silentToast) {
+      showToast("笔记已删除");
+    }
+  };
+
+  const handleDeleteMany = async (ids: string[]) => {
+    for (const id of ids) {
+      await remove(id);
+    }
+    await refreshSyncStatus();
+    const deletedIds = new Set(ids);
+    setSelectedIds((prev) => new Set([...prev].filter((id) => !deletedIds.has(id))));
+    const all = await db.list();
+    setAllNotes(all);
+    if (selectedNote && deletedIds.has(selectedNote.id)) {
+      setSelectedNote(null);
+    }
+    showToast(ids.length > 1 ? `${ids.length} 条笔记已删除` : "笔记已删除");
+  };
+
+  const handleFolderDelete = async (id: string, options?: { silentToast?: boolean }) => {
+    await db.deleteFolder(id);
+    const updatedFolders = await db.listFolders();
+    setFolders(updatedFolders);
+    if (selectedFolderId === id) {
+      setSelectedFolderId(null);
+      setSelectedNote(null);
+    }
+    const all = await db.list();
+    setAllNotes(all);
+    await refreshSyncStatus();
+    if (!options?.silentToast) {
+      showToast("文件夹已删除");
+    }
+  };
+
+  const handleFolderDeleteMany = async (ids: string[]) => {
+    for (const id of ids) {
+      await db.deleteFolder(id);
+    }
+    const updatedFolders = await db.listFolders();
+    setFolders(updatedFolders);
+    if (selectedFolderId && ids.includes(selectedFolderId)) {
+      setSelectedFolderId(null);
+      setSelectedNote(null);
+    }
+    const all = await db.list();
+    setAllNotes(all);
+    await refreshSyncStatus();
+    showToast(ids.length > 1 ? `${ids.length} 个文件夹已删除` : "文件夹已删除");
   };
 
   const handleDeselectNote = (noteId: string) => {
@@ -801,19 +852,8 @@ export default function App() {
                 showToast("文件夹已新建");
               }}
               onFolderRename={async (id, name) => { await db.updateFolder(id, name); db.listFolders().then(setFolders); await refreshSyncStatus(); showToast("文件夹已重命名"); }}
-              onFolderDelete={async (id) => {
-                await db.deleteFolder(id);
-                db.listFolders().then((updated) => {
-                  setFolders(updated);
-                  if (selectedFolderId === id) {
-                    setSelectedFolderId(null);
-                    setSelectedNote(null);
-                  }
-                });
-                db.list().then((all: Note[]) => setAllNotes(all));
-                await refreshSyncStatus();
-                showToast("文件夹已删除");
-              }}
+              onFolderDelete={handleFolderDelete}
+              onFolderDeleteMany={handleFolderDeleteMany}
               onMoveToFolder={async (noteId, folderId) => {
                 await db.moveToFolder(noteId, folderId ?? undefined);
                 await fetch(undefined, selectedFolderId ?? undefined);
@@ -827,6 +867,7 @@ export default function App() {
                 showToast("笔记已移动");
               }}
               onDeleteNote={handleDelete}
+              onDeleteNotes={handleDeleteMany}
               onAddToAIContext={handleAddToAIContext}
               onAddToNewAIContext={handleAddToNewAIContext}
             />
