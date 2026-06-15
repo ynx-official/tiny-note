@@ -187,6 +187,8 @@ export const MarkdownPreview = memo(function MarkdownPreview({ content, showOutl
   const rootRef = useRef<HTMLDivElement | null>(null);
   const contentRef = useRef<HTMLDivElement | null>(null);
   const activeOutlineIdRef = useRef<string | null>(null);
+  const pendingJumpIdRef = useRef<string | null>(null);
+  const jumpSettleTimerRef = useRef<ReturnType<typeof window.setTimeout> | null>(null);
   const isEmpty = !content.trim();
   const outline = useMemo(() => extractMarkdownOutline(content), [content]);
   const [activeOutlineId, setActiveOutlineId] = useState<string | null>(outline[0]?.id ?? null);
@@ -195,17 +197,22 @@ export const MarkdownPreview = memo(function MarkdownPreview({ content, showOutl
     return scrollContainerRef?.current ?? rootRef.current?.parentElement ?? null;
   }, [scrollContainerRef]);
 
-  const getHeadingOffset = useCallback((heading: HTMLElement) => {
+  const getHeadingOffset = useCallback((heading: HTMLElement, container: HTMLElement) => {
     const content = contentRef.current;
-    if (!content) return heading.offsetTop;
-
     let offset = 0;
     let node: HTMLElement | null = heading;
-    while (node && node !== content) {
+
+    while (node && node !== container) {
       offset += node.offsetTop;
+      if (node === content) return offset;
       node = node.offsetParent as HTMLElement | null;
     }
-    return offset;
+
+    if (node === container) return offset;
+
+    const containerRect = container.getBoundingClientRect();
+    const headingRect = heading.getBoundingClientRect();
+    return container.scrollTop + headingRect.top - containerRect.top;
   }, []);
 
   const syncActiveOutline = useCallback(() => {
@@ -223,7 +230,7 @@ export const MarkdownPreview = memo(function MarkdownPreview({ content, showOutl
     const threshold = container.scrollTop + 56;
     const ordered = Array.from(headings);
     const current = ordered.reduce<HTMLElement | null>((matched, heading) => {
-      return getHeadingOffset(heading) <= threshold ? heading : matched;
+      return getHeadingOffset(heading, container) <= threshold ? heading : matched;
     }, null) ?? ordered[0];
 
     const nextId = current.dataset.headingId ?? outline[0]?.id ?? null;
@@ -243,8 +250,20 @@ export const MarkdownPreview = memo(function MarkdownPreview({ content, showOutl
     }
     if (!container || !target) return;
 
-    const nextTop = Math.max(0, getHeadingOffset(target) - 16);
+    const nextTop = Math.max(0, getHeadingOffset(target, container) - 16);
+    pendingJumpIdRef.current = id;
     container.scrollTo({ top: nextTop, behavior: "smooth" });
+
+    if (jumpSettleTimerRef.current) window.clearTimeout(jumpSettleTimerRef.current);
+    jumpSettleTimerRef.current = window.setTimeout(() => {
+      if (pendingJumpIdRef.current !== id) return;
+      const latestTarget = Array.from(rootRef.current?.querySelectorAll<HTMLElement>("[data-heading-id]") ?? [])
+        .find((node) => node.dataset.headingId === id);
+      const latestContainer = getScrollContainer();
+      if (!latestTarget || !latestContainer) return;
+      latestContainer.scrollTo({ top: Math.max(0, getHeadingOffset(latestTarget, latestContainer) - 16), behavior: "auto" });
+      pendingJumpIdRef.current = null;
+    }, 260);
   }, [getHeadingOffset, getScrollContainer]);
 
   let headingIndex = 0;
@@ -299,6 +318,12 @@ export const MarkdownPreview = memo(function MarkdownPreview({ content, showOutl
   }, [resolvedActiveOutlineId]);
 
   useEffect(() => {
+    return () => {
+      if (jumpSettleTimerRef.current) window.clearTimeout(jumpSettleTimerRef.current);
+    };
+  }, []);
+
+  useEffect(() => {
     if (!showOutline || outline.length === 0) return;
     const container = getScrollContainer();
     if (!container) return;
@@ -320,7 +345,7 @@ export const MarkdownPreview = memo(function MarkdownPreview({ content, showOutl
 
   return (
     <div ref={rootRef} className={showOutline && outline.length > 0 ? "flex items-start gap-8" : undefined}>
-      <div ref={contentRef} className="markdown-body min-w-0 flex-1">
+      <div ref={contentRef} className="markdown-body relative min-w-0 flex-1">
         <Markdown
           remarkPlugins={[remarkGfm, remarkMath]}
           rehypePlugins={[rehypeKatex]}
