@@ -37,7 +37,7 @@ const renderHighlightedText = (text: string, keyword: string) => {
 
   return segments.map((segment, index) => (
     normalizeSearchKeyword(segment) === normalizedKeyword
-      ? <mark key={`${segment}-${index}`} className="rounded-sm bg-amber-200/80 px-0.5 text-inherit">{segment}</mark>
+      ? <mark key={`${segment}-${index}`} className="rounded-sm bg-accent/12 px-0.5 font-medium text-accent">{segment}</mark>
       : <span key={`${segment}-${index}`}>{segment}</span>
   ));
 };
@@ -711,12 +711,15 @@ export function Sidebar({
 
       <div ref={navScrollRef} className="flex-1 overflow-y-auto min-h-0 [scrollbar-gutter:stable]">
         {isSearchPanelVisible ? (
-          <div className="px-3 py-3 space-y-4">
+          <div className="px-3 py-4 space-y-5">
             {!isSearchFiltering ? (
               <>
-                <section className="space-y-2">
+                <section className="space-y-2.5">
                   <div className="flex items-center justify-between px-1">
-                    <div className="text-xs font-medium tracking-[0.02em] text-ink-faint">最近搜索</div>
+                    <div>
+                      <div className="text-[11px] font-medium tracking-[0.08em] text-ink-faint">最近搜索</div>
+                      <div className="mt-0.5 text-[10px] text-ink-ghost">快速回到最近查过的内容</div>
+                    </div>
                     {searchHistory.length > 0 ? (
                       <button
                         type="button"
@@ -732,31 +735,36 @@ export function Sidebar({
                     ) : null}
                   </div>
                   {visibleSearchHistory.length > 0 ? (
-                    <div className="space-y-1 rounded-2xl border border-[var(--border-soft)]/70 bg-[var(--surface-content)]/60 p-2">
-                      {visibleSearchHistory.map((keyword) => (
-                        <button
-                          key={keyword}
-                          type="button"
-                          onClick={() => handleSearchHistorySelect(keyword)}
-                          className="flex w-full items-center gap-2 rounded-xl px-3 py-2 text-left text-sm text-ink-soft transition hover:bg-[var(--surface-hover)] hover:text-accent"
-                        >
-                          <svg width="13" height="13" viewBox="0 0 16 16" fill="none" className="shrink-0 text-ink-ghost">
-                            <circle cx="7" cy="7" r="5" stroke="currentColor" strokeWidth="1.5" />
-                            <path d="M11 11l3 3" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
-                          </svg>
-                          <span className="truncate">{keyword}</span>
-                        </button>
-                      ))}
+                    <div className="rounded-2xl border border-[var(--border-soft)]/65 bg-[var(--surface-content)]/52 p-1.5">
+                      <div className="space-y-0.5">
+                        {visibleSearchHistory.map((keyword) => (
+                          <button
+                            key={keyword}
+                            type="button"
+                            onClick={() => handleSearchHistorySelect(keyword)}
+                            className="flex w-full items-center gap-2 rounded-xl px-2.5 py-2 text-left text-[13px] text-ink-soft transition hover:bg-[var(--surface-hover)]/80 hover:text-accent"
+                          >
+                            <svg width="13" height="13" viewBox="0 0 16 16" fill="none" className="shrink-0 text-ink-ghost">
+                              <circle cx="7" cy="7" r="5" stroke="currentColor" strokeWidth="1.5" />
+                              <path d="M11 11l3 3" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
+                            </svg>
+                            <span className="truncate">{keyword}</span>
+                          </button>
+                        ))}
+                      </div>
                     </div>
                   ) : (
-                    <div className="rounded-2xl border border-dashed border-[var(--border-soft)]/80 bg-[var(--surface-content)]/45 px-4 py-5 text-xs leading-6 text-ink-ghost">
+                    <div className="rounded-2xl border border-dashed border-[var(--border-soft)]/75 bg-[var(--surface-content)]/40 px-4 py-4 text-xs leading-6 text-ink-ghost">
                       还没有搜索记录。
                     </div>
                   )}
                 </section>
 
-                <section className="space-y-2">
-                  <div className="px-1 text-xs font-medium tracking-[0.02em] text-ink-faint">最新笔记</div>
+                <section className="space-y-2.5">
+                  <div className="px-1">
+                    <div className="text-[11px] font-medium tracking-[0.08em] text-ink-faint">最新笔记</div>
+                    <div className="mt-0.5 text-[10px] text-ink-ghost">先从最近更新的内容开始看</div>
+                  </div>
                   <div className="space-y-2">
                     {latestNotes.map((note) => {
                       const folderName = note.folder_id ? (folderNameById.get(note.folder_id) ?? "未命名文件夹") : "未分类";
@@ -769,10 +777,10 @@ export function Sidebar({
                           key={note.id}
                           type="button"
                           onClick={() => handleOpenSearchNote(note)}
-                          className={`w-full rounded-2xl border px-3 py-3 text-left transition ${isActiveNote ? "border-accent/30 bg-[var(--surface-active)]/70 shadow-[0_10px_24px_rgba(86,138,106,0.12)]" : "border-[var(--border-soft)]/70 bg-[var(--surface-content)]/70 hover:border-accent/20 hover:bg-[var(--surface-hover)]/80"}`}
+                          className={`w-full rounded-2xl border px-3 py-3 text-left transition ${isActiveNote ? "border-accent/30 bg-[var(--surface-active)]/78 shadow-[0_10px_24px_rgba(86,138,106,0.10)]" : "border-[var(--border-soft)]/65 bg-[var(--surface-content)]/60 hover:border-accent/20 hover:bg-[var(--surface-hover)]/72"}`}
                         >
                           <div className="text-sm font-medium text-ink line-clamp-1">{noteTitle}</div>
-                          <div className="mt-1 line-clamp-2 text-xs leading-5 text-ink-ghost">{noteExcerpt || "暂无正文预览"}</div>
+                          <div className="mt-1 line-clamp-2 text-[12px] leading-5 text-ink-ghost">{noteExcerpt || "暂无正文预览"}</div>
                           <div className="mt-2 flex items-center gap-2 text-[11px] text-ink-ghost">
                             <span className="truncate">{folderName}</span>
                             <span>·</span>
@@ -785,10 +793,15 @@ export function Sidebar({
                 </section>
               </>
             ) : (
-              <section className="space-y-2">
-                <div className="flex items-center justify-between px-1">
-                  <div className="text-xs font-medium tracking-[0.02em] text-ink-faint">搜索结果</div>
-                  <div className="text-[11px] text-ink-ghost">{searchResults.length} 条命中</div>
+              <section className="space-y-2.5">
+                <div className="flex items-end justify-between px-1">
+                  <div>
+                    <div className="text-[11px] font-medium tracking-[0.08em] text-ink-faint">搜索结果</div>
+                    <div className="mt-0.5 text-[10px] text-ink-ghost">标题优先，正文只展示命中附近片段</div>
+                  </div>
+                  <div className="rounded-full bg-[var(--surface-content)]/75 px-2 py-0.5 text-[10px] text-ink-ghost">
+                    {searchResults.length} 条命中
+                  </div>
                 </div>
                 {searchResults.length > 0 ? (
                   <div className="space-y-2">
@@ -803,10 +816,10 @@ export function Sidebar({
                           key={note.id}
                           type="button"
                           onClick={() => handleOpenSearchNote(note)}
-                          className={`w-full rounded-2xl border px-3 py-3 text-left transition ${isActiveNote ? "border-accent/30 bg-[var(--surface-active)]/70 shadow-[0_10px_24px_rgba(86,138,106,0.12)]" : "border-[var(--border-soft)]/70 bg-[var(--surface-content)]/70 hover:border-accent/20 hover:bg-[var(--surface-hover)]/80"}`}
+                          className={`w-full rounded-2xl border px-3 py-3 text-left transition ${isActiveNote ? "border-accent/30 bg-[var(--surface-active)]/78 shadow-[0_10px_24px_rgba(86,138,106,0.10)]" : "border-[var(--border-soft)]/65 bg-[var(--surface-content)]/60 hover:border-accent/20 hover:bg-[var(--surface-hover)]/72"}`}
                         >
                           <div className="text-sm font-medium text-ink line-clamp-1">{renderHighlightedText(noteTitle, searchKeyword)}</div>
-                          <div className="mt-1 line-clamp-2 text-xs leading-5 text-ink-ghost">{renderHighlightedText(noteExcerpt || "标题命中，正文暂无可预览片段", searchKeyword)}</div>
+                          <div className="mt-1 line-clamp-2 text-[12px] leading-5 text-ink-ghost">{renderHighlightedText(noteExcerpt || "标题命中，正文暂无可预览片段", searchKeyword)}</div>
                           <div className="mt-2 flex items-center gap-2 text-[11px] text-ink-ghost">
                             <span className="truncate">{folderName}</span>
                             <span>·</span>
@@ -817,7 +830,7 @@ export function Sidebar({
                     })}
                   </div>
                 ) : (
-                  <div className="rounded-2xl border border-dashed border-[var(--border-soft)]/80 bg-[var(--surface-content)]/45 px-4 py-8 text-center text-xs leading-6 text-ink-ghost">
+                  <div className="rounded-2xl border border-dashed border-[var(--border-soft)]/75 bg-[var(--surface-content)]/40 px-4 py-7 text-center text-xs leading-6 text-ink-ghost">
                     没有找到和“{search.trim()}”相关的笔记。
                   </div>
                 )}

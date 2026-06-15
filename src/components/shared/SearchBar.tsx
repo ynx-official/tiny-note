@@ -21,7 +21,7 @@ export function SearchBar({
   const isFiltering = keyword.length > 0;
   const showCloseButton = Boolean(isActive && onClose);
   const showActions = isFiltering || showCloseButton;
-  const inputRightPadding = isFiltering && showCloseButton ? "pr-20" : showActions ? "pr-10" : "pr-10";
+  const inputRightPadding = isFiltering && showCloseButton ? "pr-[4.6rem]" : isFiltering ? "pr-10" : showCloseButton ? "pr-10" : "pr-10";
 
   return (
     <div className="shrink-0 px-3 pt-3 pb-3 border-b border-[var(--border-soft)] bg-[var(--surface-panel)]/96">
@@ -47,13 +47,13 @@ export function SearchBar({
             className={`h-10 w-full rounded-xl border bg-[var(--surface-content)] pl-9 ${inputRightPadding} text-xs text-ink-soft shadow-[inset_0_1px_0_rgba(255,255,255,0.2)] transition-colors placeholder:text-ink-ghost focus:outline-none ${isActive ? "border-accent/40 ring-2 ring-accent/10" : "border-[var(--border-soft)] focus:border-accent/30"}`}
           />
           {showActions ? (
-            <div className="absolute right-2 top-1/2 inline-flex -translate-y-1/2 items-center gap-1">
+            <div className="absolute right-2 top-1/2 inline-flex -translate-y-1/2 items-center gap-0.5">
               {isFiltering ? (
                 <button
                   type="button"
                   onMouseDown={(event) => event.preventDefault()}
                   onClick={onClear}
-                  className="inline-flex h-5 items-center rounded-sm px-0.5 text-[10px] leading-none text-ink-ghost transition-colors hover:text-ink-soft"
+                  className="inline-flex h-5 items-center rounded-sm px-0.5 text-[9px] leading-none tracking-tight text-ink-ghost transition-colors hover:text-ink-soft"
                   title="清空搜索"
                 >
                   清空
