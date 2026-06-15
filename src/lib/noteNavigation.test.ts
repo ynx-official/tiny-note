@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { Folder, Note } from "./db";
-import { buildSidebarFolderTree, resolveCollectionTitle, resolveContextNotes, shouldForceCollectionView } from "./noteNavigation";
+import { buildSidebarFolderTree, resolveCollectionTitle, resolveContextNotes, shouldForceCollectionView, shouldResetSearchSelection, shouldShowCollectionView } from "./noteNavigation";
 
 const folders: Folder[] = [
   {
@@ -111,6 +111,19 @@ describe("noteNavigation", () => {
     ]);
     expect(resolveCollectionTitle(folders, { type: "folder", folderId: "backend" }, "search keyword")).toBe("搜索结果");
     expect(shouldForceCollectionView("search keyword")).toBe(true);
+  });
+
+  it("搜索态下有选中文章时允许直接进入正文", () => {
+    expect(shouldShowCollectionView("search keyword", null)).toBe(true);
+    expect(shouldShowCollectionView("search keyword", "note-free")).toBe(false);
+    expect(shouldShowCollectionView("", "note-free")).toBe(false);
+  });
+
+  it("搜索态里继续修改关键词时，应退出当前正文并回到结果列表", () => {
+    expect(shouldResetSearchSelection("search", "search keyword", "note-free")).toBe(true);
+    expect(shouldResetSearchSelection("search", "search", "note-free")).toBe(false);
+    expect(shouldResetSearchSelection("", "search keyword", "note-free")).toBe(false);
+    expect(shouldResetSearchSelection("search", "search keyword", null)).toBe(false);
   });
 
   it("左侧搜索过滤会保留命中路径，并隐藏完全无关的文件夹分支", () => {

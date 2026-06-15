@@ -17,7 +17,7 @@ import { NoteDetail } from "./components/detail/NoteDetail";
 import { NoteCollectionView } from "./components/detail/NoteCollectionView";
 import { StatusBar } from "./components/StatusBar";
 import { db } from "./lib/db";
-import { resolveCollectionTitle, resolveContextNotes, shouldForceCollectionView } from "./lib/noteNavigation";
+import { resolveCollectionTitle, resolveContextNotes, shouldForceCollectionView, shouldResetSearchSelection, shouldShowCollectionView } from "./lib/noteNavigation";
 import { getCloudSession, fetchCurrentUser, listKovaSyncConflicts } from "./lib/cloudApi";
 import { createSkippedSyncDiagnostics, loadLastSyncDiagnostics, syncKovaCloud, type SyncRunDiagnostics } from "./lib/sync";
 import { useNotes } from "./hooks/useNotes";
@@ -136,21 +136,33 @@ export default function App() {
   }, []);
 
   const applySearch = useCallback((value: string) => {
+    const previousSearch = searchRef.current;
     const nextSearchMode = shouldForceCollectionView(value);
-    const currentSearchMode = shouldForceCollectionView(searchRef.current);
+    const currentSearchMode = shouldForceCollectionView(previousSearch);
+    const shouldReturnToResults = shouldResetSearchSelection(previousSearch, value, selectedNote?.id ?? null);
 
-    if (nextSearchMode && !currentSearchMode && selectedNote && isEditorDirtyRef.current) {
+    if ((nextSearchMode && !currentSearchMode && selectedNote && isEditorDirtyRef.current) || (shouldReturnToResults && isEditorDirtyRef.current)) {
       runWithDraftGuard(() => {
         setSearch(value);
+        if (shouldReturnToResults) {
+          setSelectedNote(null);
+          setSelectedIds(new Set());
+        }
       }, {
-        title: "放弃当前草稿并进入搜索结果？",
-        message: "继续后会放弃这次本地编辑，并切换到搜索结果页。",
-        confirmLabel: "放弃并搜索",
+        title: shouldReturnToResults ? "放弃当前草稿并更新搜索结果？" : "放弃当前草稿并进入搜索结果？",
+        message: shouldReturnToResults
+          ? "继续后会放弃这次本地编辑，并回到最新的搜索结果列表。"
+          : "继续后会放弃这次本地编辑，并切换到搜索结果页。",
+        confirmLabel: shouldReturnToResults ? "放弃并更新" : "放弃并搜索",
       });
       return;
     }
 
     setSearch(value);
+    if (shouldReturnToResults) {
+      setSelectedNote(null);
+      setSelectedIds(new Set());
+    }
   }, [runWithDraftGuard, selectedNote]);
 
   const openFirstSyncWizard = useCallback(() => {
@@ -177,7 +189,10 @@ export default function App() {
   }, []);
 
   useEffect(() => {
-    refreshSyncStatus();
+    const timerId = window.setTimeout(() => {
+      void refreshSyncStatus();
+    }, 0);
+    return () => window.clearTimeout(timerId);
   }, [refreshSyncStatus]);
 
   useEffect(() => {
@@ -299,7 +314,7 @@ export default function App() {
     };
   }, [cloudSession]);
 
-  const refreshCloudConflictCount = async () => {
+  const refreshCloudConflictCount = useCallback(async () => {
     if (!getCloudSession()) {
       setCloudConflictCount(0);
       return;
@@ -310,11 +325,14 @@ export default function App() {
     } catch {
       setCloudConflictCount(0);
     }
-  };
+  }, []);
 
   useEffect(() => {
-    refreshCloudConflictCount();
-  }, [cloudSession]);
+    const timerId = window.setTimeout(() => {
+      void refreshCloudConflictCount();
+    }, 0);
+    return () => window.clearTimeout(timerId);
+  }, [refreshCloudConflictCount]);
 
   // Listen for AI tool data changes
   useEffect(() => {
@@ -328,7 +346,7 @@ export default function App() {
       }
     });
     return () => { unlisten.then((fn) => fn()); };
-  }, [selectedFolderId, fetch]);
+  }, [selectedFolderId, fetch, refreshSyncStatus]);
 
   // Listen for external file drops
   useEffect(() => {
@@ -595,13 +613,48 @@ export default function App() {
       isSyncingRef.current = false;
       setIsSyncing(false);
     }
-  }, [fetch, isEditorDirty, refreshSyncStatus, selectedFolderId, selectedNote]);
+  }, [fetch, isEditorDirty, refreshCloudConflictCount, refreshSyncStatus, selectedFolderId, selectedNote]);
+
+  const scheduleAutoSyncAttempt = useCallback((delayMs: number, trigger: SyncRunDiagnostics["trigger"]) => {
+    const queueAttempt = (nextDelayMs: number, nextTrigger: SyncRunDiagnostics["trigger"]) => {
+      if (autoSyncTimerRef.current) {
+        window.clearTimeout(autoSyncTimerRef.current);
+        autoSyncTimerRef.current = null;
+      }
+      if (!cloudSession || !isOnline) return;
+
+      autoSyncTimerRef.current = window.setTimeout(() => {
+        autoSyncTimerRef.current = null;
+
+        if (document.visibilityState !== "visible" || isEditorDirty) return;
+
+        const now = Date.now();
+        if (now < nextAutoSyncAtRef.current) {
+          queueAttempt(nextAutoSyncAtRef.current - now, nextTrigger);
+          return;
+        }
+
+        void (async () => {
+          const ok = await handleSync({ silent: true, trigger: nextTrigger });
+          if (ok) return;
+          autoSyncFailureRef.current += 1;
+          const delay = Math.min(30 * 60 * 1000, 60 * 1000 * 2 ** Math.min(autoSyncFailureRef.current, 5));
+          nextAutoSyncAtRef.current = Date.now() + delay;
+          queueAttempt(delay, "interval");
+        })();
+      }, Math.max(0, nextDelayMs));
+    };
+
+    queueAttempt(delayMs, trigger);
+  }, [cloudSession, handleSync, isEditorDirty, isOnline]);
 
   useEffect(() => {
     if (!keepaliveSyncEnabled || !cloudSession || !isOnline) {
       clearKeepaliveSyncTimer();
-      setNextKeepaliveSyncAt(null);
-      return;
+      const timerId = window.setTimeout(() => {
+        setNextKeepaliveSyncAt(null);
+      }, 0);
+      return () => window.clearTimeout(timerId);
     }
 
     let cancelled = false;
@@ -636,35 +689,6 @@ export default function App() {
       clearKeepaliveSyncTimer();
     };
   }, [clearKeepaliveSyncTimer, cloudSession, handleSync, isOnline, keepaliveSyncEnabled, keepaliveSyncIntervalMinutes, lastSuccessfulSyncAt]);
-
-  const scheduleAutoSyncAttempt = useCallback((delayMs: number, trigger: SyncRunDiagnostics["trigger"]) => {
-    if (autoSyncTimerRef.current) {
-      window.clearTimeout(autoSyncTimerRef.current);
-      autoSyncTimerRef.current = null;
-    }
-    if (!cloudSession || !isOnline) return;
-
-    autoSyncTimerRef.current = window.setTimeout(() => {
-      autoSyncTimerRef.current = null;
-
-      if (document.visibilityState !== "visible" || isEditorDirty) return;
-
-      const now = Date.now();
-      if (now < nextAutoSyncAtRef.current) {
-        scheduleAutoSyncAttempt(nextAutoSyncAtRef.current - now, trigger);
-        return;
-      }
-
-      void (async () => {
-        const ok = await handleSync({ silent: true, trigger });
-        if (ok) return;
-        autoSyncFailureRef.current += 1;
-        const delay = Math.min(30 * 60 * 1000, 60 * 1000 * 2 ** Math.min(autoSyncFailureRef.current, 5));
-        nextAutoSyncAtRef.current = Date.now() + delay;
-        scheduleAutoSyncAttempt(delay, "interval");
-      })();
-    }, Math.max(0, delayMs));
-  }, [cloudSession, handleSync, isEditorDirty, isOnline]);
 
   useEffect(() => {
     const handleOnline = () => {
@@ -756,7 +780,7 @@ export default function App() {
     );
   }, [allNotes, search, selectedFolderId]);
 
-  const isSearchResultsView = shouldForceCollectionView(search);
+  const isCollectionView = shouldShowCollectionView(search, selectedNote?.id ?? null);
 
   const collectionTitle = useMemo(
     () => resolveCollectionTitle(
@@ -767,7 +791,7 @@ export default function App() {
     [folders, search, selectedFolderId],
   );
 
-  const collectionDescription = isSearchResultsView
+  const collectionDescription = search.trim()
     ? `已按“${search.trim()}”筛选`
     : selectedFolderId
       ? "当前文件夹直属笔记"
@@ -878,7 +902,7 @@ export default function App() {
 
         {/* Detail */}
         <div className="flex-1 flex flex-col min-w-0 min-h-0 bg-[var(--surface-content)] shadow-[inset_0_1px_0_rgba(255,255,255,0.18)]">
-          {selectedNote && !isSearchResultsView ? (
+          {selectedNote && !isCollectionView ? (
             <>
               {!selectedNoteVisibleInList && search.trim() && (
                 <div className="flex items-center justify-between gap-3 border-b border-amber-200/60 bg-amber-50/65 px-5 py-2 text-xs text-amber-700">

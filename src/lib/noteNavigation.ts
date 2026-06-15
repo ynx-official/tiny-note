@@ -25,6 +25,17 @@ export const matchesNoteSearch = (note: Note, keyword: string) => {
 
 export const shouldForceCollectionView = (search: string) => normalizeSearchKeyword(search).length > 0;
 
+export const shouldResetSearchSelection = (previousSearch: string, nextSearch: string, selectedNoteId: string | null) => {
+  if (!selectedNoteId) return false;
+  if (!shouldForceCollectionView(previousSearch) || !shouldForceCollectionView(nextSearch)) return false;
+  return normalizeSearchKeyword(previousSearch) !== normalizeSearchKeyword(nextSearch);
+};
+
+export const shouldShowCollectionView = (search: string, selectedNoteId: string | null) => {
+  if (!shouldForceCollectionView(search)) return selectedNoteId === null;
+  return selectedNoteId === null;
+};
+
 export function resolveContextNotes(notes: Note[], navTarget: NavTarget, search = ""): Note[] {
   const keyword = normalizeSearchKeyword(search);
   if (keyword) {
