@@ -1,0 +1,110 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    name: ${{ matrix.name }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: windows-latest
+            name: windows-x86_64
+          - os: ubuntu-22.04
+            name: linux-x86_64
+          - os: macos-14
+            name: macos-aarch64
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install frontend dependencies
+        run: npm ci
+
+      - name: Install Linux build dependencies
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            build-essential \
+            curl \
+            file \
+            libayatana-appindicator3-dev \
+            librsvg2-dev \
+            libssl-dev \
+            libwebkit2gtk-4.1-dev \
+            libxdo-dev \
+            patchelf \
+            wget
+
+      - name: Setup Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache Rust build
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: |
+            src-tauri -> target
+
+      - name: Build Tauri app
+        run: npx tauri build
+
+      - name: Collect release assets
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p release-assets
+          shopt -s nullglob globstar
+
+          patterns=(
+            "src-tauri/target/release/bundle/**/*.msi"
+            "src-tauri/target/release/bundle/**/*.exe"
+            "src-tauri/target/release/bundle/**/*.dmg"
+            "src-tauri/target/release/bundle/**/*.app.tar.gz"
+            "src-tauri/target/release/bundle/**/*.deb"
+            "src-tauri/target/release/bundle/**/*.rpm"
+            "src-tauri/target/release/bundle/**/*.AppImage"
+          )
+
+          for pattern in "${patterns[@]}"; do
+            for file in $pattern; do
+              cp "$file" release-assets/
+            done
+          done
+
+          if [ -z "$(find release-assets -maxdepth 1 -type f -print -quit)" ]; then
+            echo "No bundled release assets were produced."
+            exit 1
+          fi
+
+          ls -la release-assets
+
+      - name: Upload workflow artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.name }}
+          path: release-assets/*
+          if-no-files-found: error
+
+      - name: Attach assets to GitHub Release
+        if: startsWith(github.ref, 'refs/tags/')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: release-assets/*
+          fail_on_unmatched_files: true
