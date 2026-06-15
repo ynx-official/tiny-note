@@ -742,13 +742,16 @@ export function Sidebar({
                             key={keyword}
                             type="button"
                             onClick={() => handleSearchHistorySelect(keyword)}
-                            className="flex w-full items-center gap-2 rounded-xl px-2.5 py-2 text-left text-[13px] text-ink-soft transition hover:bg-[var(--surface-hover)]/80 hover:text-accent"
+                            className="group flex w-full items-center gap-2 rounded-xl px-2.5 py-2 text-left text-[13px] text-ink-soft transition hover:bg-[var(--surface-hover)]/80 hover:text-accent"
                           >
-                            <svg width="13" height="13" viewBox="0 0 16 16" fill="none" className="shrink-0 text-ink-ghost">
-                              <circle cx="7" cy="7" r="5" stroke="currentColor" strokeWidth="1.5" />
-                              <path d="M11 11l3 3" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
-                            </svg>
-                            <span className="truncate">{keyword}</span>
+                            <span className="inline-flex h-5 w-5 shrink-0 items-center justify-center rounded-md bg-[var(--surface-panel)]/88 text-ink-ghost transition group-hover:text-accent">
+                              <svg width="12" height="12" viewBox="0 0 16 16" fill="none">
+                                <circle cx="7" cy="7" r="5" stroke="currentColor" strokeWidth="1.5" />
+                                <path d="M11 11l3 3" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
+                              </svg>
+                            </span>
+                            <span className="min-w-0 flex-1 truncate">{keyword}</span>
+                            <span className="text-[10px] text-ink-ghost transition group-hover:text-accent">回填</span>
                           </button>
                         ))}
                       </div>
@@ -777,9 +780,9 @@ export function Sidebar({
                           key={note.id}
                           type="button"
                           onClick={() => handleOpenSearchNote(note)}
-                          className={`w-full rounded-2xl border px-3 py-3 text-left transition ${isActiveNote ? "border-accent/30 bg-[var(--surface-active)]/78 shadow-[0_10px_24px_rgba(86,138,106,0.10)]" : "border-[var(--border-soft)]/65 bg-[var(--surface-content)]/60 hover:border-accent/20 hover:bg-[var(--surface-hover)]/72"}`}
+                          className={`relative w-full overflow-hidden rounded-2xl border px-3 py-3 text-left transition ${isActiveNote ? "border-accent/22 bg-[var(--surface-active)]/70 shadow-[0_6px_16px_rgba(86,138,106,0.06)]" : "border-[var(--border-soft)]/65 bg-[var(--surface-content)]/60 hover:border-accent/20 hover:bg-[var(--surface-hover)]/72"}`}
                         >
-                          <div className="text-sm font-medium text-ink line-clamp-1">{noteTitle}</div>
+                          <div className={`text-sm line-clamp-1 ${isActiveNote ? "font-medium text-ink" : "font-medium text-ink"}`}>{noteTitle}</div>
                           <div className="mt-1 line-clamp-2 text-[12px] leading-5 text-ink-ghost">{noteExcerpt || "暂无正文预览"}</div>
                           <div className="mt-2 flex items-center gap-2 text-[11px] text-ink-ghost">
                             <span className="truncate">{folderName}</span>
@@ -816,9 +819,9 @@ export function Sidebar({
                           key={note.id}
                           type="button"
                           onClick={() => handleOpenSearchNote(note)}
-                          className={`w-full rounded-2xl border px-3 py-3 text-left transition ${isActiveNote ? "border-accent/30 bg-[var(--surface-active)]/78 shadow-[0_10px_24px_rgba(86,138,106,0.10)]" : "border-[var(--border-soft)]/65 bg-[var(--surface-content)]/60 hover:border-accent/20 hover:bg-[var(--surface-hover)]/72"}`}
+                          className={`relative w-full overflow-hidden rounded-2xl border px-3 py-3 text-left transition ${isActiveNote ? "border-accent/22 bg-[var(--surface-active)]/70 shadow-[0_6px_16px_rgba(86,138,106,0.06)]" : "border-[var(--border-soft)]/65 bg-[var(--surface-content)]/60 hover:border-accent/20 hover:bg-[var(--surface-hover)]/72"}`}
                         >
-                          <div className="text-sm font-medium text-ink line-clamp-1">{renderHighlightedText(noteTitle, searchKeyword)}</div>
+                          <div className={`text-sm line-clamp-1 ${isActiveNote ? "font-medium text-ink" : "font-medium text-ink"}`}>{renderHighlightedText(noteTitle, searchKeyword)}</div>
                           <div className="mt-1 line-clamp-2 text-[12px] leading-5 text-ink-ghost">{renderHighlightedText(noteExcerpt || "标题命中，正文暂无可预览片段", searchKeyword)}</div>
                           <div className="mt-2 flex items-center gap-2 text-[11px] text-ink-ghost">
                             <span className="truncate">{folderName}</span>
