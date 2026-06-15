@@ -45,6 +45,10 @@ type OutlineItem = {
   level: number;
 };
 
+const OUTLINE_JUMP_OFFSET = 16;
+const OUTLINE_ACTIVE_OFFSET = 56;
+const OUTLINE_SETTLE_DELAYS = [120, 260, 520];
+
 function transformMarkdownUrl(url: string) {
   if (url.startsWith("kova-asset://")) return url;
   return url;
@@ -188,7 +192,7 @@ export const MarkdownPreview = memo(function MarkdownPreview({ content, showOutl
   const contentRef = useRef<HTMLDivElement | null>(null);
   const activeOutlineIdRef = useRef<string | null>(null);
   const pendingJumpIdRef = useRef<string | null>(null);
-  const jumpSettleTimerRef = useRef<ReturnType<typeof window.setTimeout> | null>(null);
+  const jumpSettleTimerRefs = useRef<Array<ReturnType<typeof window.setTimeout>>>([]);
   const isEmpty = !content.trim();
   const outline = useMemo(() => extractMarkdownOutline(content), [content]);
   const [activeOutlineId, setActiveOutlineId] = useState<string | null>(outline[0]?.id ?? null);
@@ -215,6 +219,19 @@ export const MarkdownPreview = memo(function MarkdownPreview({ content, showOutl
     return container.scrollTop + headingRect.top - containerRect.top;
   }, []);
 
+  const alignHeadingIntoView = useCallback((heading: HTMLElement, container: HTMLElement, behavior: ScrollBehavior) => {
+    const nextTop = Math.max(0, getHeadingOffset(heading, container) - OUTLINE_JUMP_OFFSET);
+    container.scrollTo({ top: nextTop, behavior });
+  }, [getHeadingOffset]);
+
+  const correctHeadingVisualPosition = useCallback((heading: HTMLElement, container: HTMLElement) => {
+    const containerTop = container.getBoundingClientRect().top;
+    const headingTop = heading.getBoundingClientRect().top;
+    const delta = headingTop - containerTop - OUTLINE_JUMP_OFFSET;
+    if (Math.abs(delta) < 1) return;
+    container.scrollTo({ top: Math.max(0, container.scrollTop + delta), behavior: "auto" });
+  }, []);
+
   const syncActiveOutline = useCallback(() => {
     const container = getScrollContainer();
     const headings = rootRef.current?.querySelectorAll<HTMLElement>("[data-heading-id]");
@@ -227,7 +244,7 @@ export const MarkdownPreview = memo(function MarkdownPreview({ content, showOutl
       return;
     }
 
-    const threshold = container.scrollTop + 56;
+    const threshold = container.scrollTop + OUTLINE_ACTIVE_OFFSET;
     const ordered = Array.from(headings);
     const current = ordered.reduce<HTMLElement | null>((matched, heading) => {
       return getHeadingOffset(heading, container) <= threshold ? heading : matched;
@@ -250,21 +267,26 @@ export const MarkdownPreview = memo(function MarkdownPreview({ content, showOutl
     }
     if (!container || !target) return;
 
-    const nextTop = Math.max(0, getHeadingOffset(target, container) - 16);
-    pendingJumpIdRef.current = id;
-    container.scrollTo({ top: nextTop, behavior: "smooth" });
+    alignHeadingIntoView(target, container, "smooth");
 
-    if (jumpSettleTimerRef.current) window.clearTimeout(jumpSettleTimerRef.current);
-    jumpSettleTimerRef.current = window.setTimeout(() => {
-      if (pendingJumpIdRef.current !== id) return;
-      const latestTarget = Array.from(rootRef.current?.querySelectorAll<HTMLElement>("[data-heading-id]") ?? [])
-        .find((node) => node.dataset.headingId === id);
-      const latestContainer = getScrollContainer();
-      if (!latestTarget || !latestContainer) return;
-      latestContainer.scrollTo({ top: Math.max(0, getHeadingOffset(latestTarget, latestContainer) - 16), behavior: "auto" });
-      pendingJumpIdRef.current = null;
-    }, 260);
-  }, [getHeadingOffset, getScrollContainer]);
+    for (const timer of jumpSettleTimerRefs.current) window.clearTimeout(timer);
+    jumpSettleTimerRefs.current = [];
+    for (const delay of OUTLINE_SETTLE_DELAYS) {
+      const timer = window.setTimeout(() => {
+        if (pendingJumpIdRef.current !== id) return;
+        const latestTarget = Array.from(rootRef.current?.querySelectorAll<HTMLElement>("[data-heading-id]") ?? [])
+          .find((node) => node.dataset.headingId === id);
+        const latestContainer = getScrollContainer();
+        if (!latestTarget || !latestContainer) return;
+        correctHeadingVisualPosition(latestTarget, latestContainer);
+        if (delay === OUTLINE_SETTLE_DELAYS[OUTLINE_SETTLE_DELAYS.length - 1]) {
+          pendingJumpIdRef.current = null;
+          jumpSettleTimerRefs.current = [];
+        }
+      }, delay);
+      jumpSettleTimerRefs.current.push(timer);
+    }
+  }, [alignHeadingIntoView, correctHeadingVisualPosition, getScrollContainer]);
 
   let headingIndex = 0;
   const createHeading = (tag: "h1" | "h2" | "h3" | "h4" | "h5" | "h6") => {
@@ -319,7 +341,8 @@ export const MarkdownPreview = memo(function MarkdownPreview({ content, showOutl
 
   useEffect(() => {
     return () => {
-      if (jumpSettleTimerRef.current) window.clearTimeout(jumpSettleTimerRef.current);
+      for (const timer of jumpSettleTimerRefs.current) window.clearTimeout(timer);
+      jumpSettleTimerRefs.current = [];
     };
   }, []);
 
