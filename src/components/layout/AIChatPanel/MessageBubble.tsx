@@ -152,21 +152,6 @@ export function MessageBubble({ msg, index, totalMessages, loading, hasLastUserM
               ))}
             </div>
           )}
-          {parsedArticleContext && (
-            <div className="mb-2 flex flex-wrap gap-1.5">
-              <button
-                type="button"
-                title={parsedArticleContext.note.id}
-                onClick={() => onOpenNote?.(parsedArticleContext.note.id)}
-                className="inline-flex max-w-full items-center gap-1.5 rounded-full bg-white/15 border border-white/20 px-2 py-1 text-[11px] text-white/95 hover:bg-white/25 transition-colors"
-              >
-                <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>
-                <span className="text-white/75">当前文章</span>
-                <span className="max-w-[180px] truncate">{parsedArticleContext.note.title}</span>
-                <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="opacity-75"><path d="M9 18l6-6-6-6"/></svg>
-              </button>
-            </div>
-          )}
           {isUser ? main : (
             main ? (
               <div className="markdown-body text-[12px] select-text [&>*:first-child]:mt-0 [&>*:last-child]:mb-0">

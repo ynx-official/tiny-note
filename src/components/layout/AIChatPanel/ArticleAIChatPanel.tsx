@@ -86,7 +86,7 @@ export function ArticleAIChatPanel({ onClose, articleDraft, onOpenNote, onOpenFo
             <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="10" /><path d="M12 8v4" /><path d="M12 16h.01" /></svg>
             <span>默认会携带当前编辑中的标题和正文</span>
           </div>
-          <p className="line-clamp-2 break-all">{articleDraft?.content?.trim() ? articleDraft.content : "当前文章暂无正文"}</p>
+          <p className="truncate text-ink-ghost">当前作用域：{articleTitle}</p>
         </div>
       </div>
 
