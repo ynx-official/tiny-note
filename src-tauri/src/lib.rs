@@ -10,8 +10,11 @@ use std::path::{Path, PathBuf};
 use tauri::Manager;
 use tauri::menu::{Menu, MenuItem};
 use tauri::tray::TrayIconEvent;
+#[cfg(target_os = "windows")]
 use windows::Win32::UI::WindowsAndMessaging::GetCursorPos;
+#[cfg(target_os = "windows")]
 use windows::Win32::UI::HiDpi::GetDpiForSystem;
+#[cfg(target_os = "windows")]
 use windows::Win32::Foundation::POINT;
 use uuid::Uuid;
 
@@ -19,12 +22,18 @@ static DB: OnceLock<Database> = OnceLock::new();
 static AI: OnceLock<AiService> = OnceLock::new();
 static QUICK_ID: AtomicU32 = AtomicU32::new(0);
 
+#[cfg(target_os = "windows")]
 fn get_cursor_logical() -> Result<(f64, f64), String> {
     let mut point = POINT { x: 0, y: 0 };
     unsafe { GetCursorPos(&mut point).map_err(|e| e.to_string())? };
     let dpi = unsafe { GetDpiForSystem() } as f64;
     let scale = dpi / 96.0;
     Ok((point.x as f64 / scale, point.y as f64 / scale))
+}
+
+#[cfg(not(target_os = "windows"))]
+fn get_cursor_logical() -> Result<(f64, f64), String> {
+    Err("当前平台暂不支持读取鼠标位置".into())
 }
 
 fn db() -> &'static Database {
@@ -541,7 +550,7 @@ fn create_quick_window(app: tauri::AppHandle) -> Result<(), String> {
     };
     let id = QUICK_ID.fetch_add(1, Ordering::Relaxed);
     let label = format!("quick-{}", id);
-    let _win = tauri::WebviewWindowBuilder::new(
+    let builder = tauri::WebviewWindowBuilder::new(
         &app,
         &label,
         tauri::WebviewUrl::App("quick.html".into()),
@@ -550,9 +559,10 @@ fn create_quick_window(app: tauri::AppHandle) -> Result<(), String> {
     .position(x, y)
     .inner_size(w, h)
     .min_inner_size(260.0, 250.0)
-    .decorations(false)
-    .transparent(true)
-    .transparent(true)
+    .decorations(false);
+    #[cfg(not(target_os = "macos"))]
+    let builder = builder.transparent(true);
+    let _win = builder
     .shadow(false)
     .always_on_top(true)
     .visible(false)
@@ -883,7 +893,7 @@ pub fn run() {
                     };
                     let id = QUICK_ID.fetch_add(1, Ordering::Relaxed);
                     let label = format!("quick-{}", id);
-                    let _ = tauri::WebviewWindowBuilder::new(
+                    let builder = tauri::WebviewWindowBuilder::new(
                         app,
                         &label,
                         tauri::WebviewUrl::App("quick.html".into()),
@@ -892,8 +902,10 @@ pub fn run() {
                     .position(x, y)
                     .inner_size(320.0, 360.0)
                     .min_inner_size(260.0, 250.0)
-                    .decorations(false)
-                    .transparent(true)
+                    .decorations(false);
+                    #[cfg(not(target_os = "macos"))]
+                    let builder = builder.transparent(true);
+                    let _ = builder
                     .shadow(false)
                     .always_on_top(true)
                     .visible(false)
