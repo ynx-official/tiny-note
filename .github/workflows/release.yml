@@ -69,15 +69,19 @@ jobs:
           set -euo pipefail
           mkdir -p release-assets
 
-          find src-tauri/target/release/bundle -type f \(
-            -name "*.msi" -o
-            -name "*.exe" -o
-            -name "*.dmg" -o
-            -name "*.app.tar.gz" -o
-            -name "*.deb" -o
-            -name "*.rpm" -o
-            -name "*.AppImage"
-          \) -exec cp {} release-assets/ \;
+          patterns=(
+            "*.msi"
+            "*.exe"
+            "*.dmg"
+            "*.app.tar.gz"
+            "*.deb"
+            "*.rpm"
+            "*.AppImage"
+          )
+
+          for pattern in "${patterns[@]}"; do
+            find src-tauri/target/release/bundle -type f -name "$pattern" -exec cp {} release-assets/ \;
+          done
 
           if [ -z "$(find release-assets -maxdepth 1 -type f -print -quit)" ]; then
             echo "No bundled release assets were produced."

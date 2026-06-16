@@ -8,8 +8,8 @@ type TenantOption = {
 };
 
 const TENANTS: TenantOption[] = [
+  { label: "tiny-admin-云", baseUrl: "https://tiny.mrsunshine.cn/prod-api/" },
   { label: "tiny-admin-本地", baseUrl: "http://localhost:9091/" },
-  { label: "tiny-admin-开发", baseUrl: "https://tiny.mrsunshine.cn/" },
 ];
 
 interface LoginPanelProps {
