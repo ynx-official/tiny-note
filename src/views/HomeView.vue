@@ -2,29 +2,41 @@
 import { computed, onMounted, ref } from 'vue'
 import { useRouter } from 'vue-router'
 import { useI18n } from 'vue-i18n'
-import { Channel } from '@tauri-apps/api/core'
-import { BookOpen, ChevronDown, ChevronLeft, ChevronRight, File, FileSearch2, FileText, Folder, Globe2, LibraryBig, MessageSquare, NotebookPen, Paperclip, PenLine, Send, Settings2, Sparkles, Square, X } from 'lucide-vue-next'
+import { BookOpen, ChevronDown, ChevronLeft, ChevronRight, File, FileSearch2, FileText, Folder, Globe2, LibraryBig, MessageSquare, NotebookPen, Paperclip, PenLine, Send, Settings2, Sparkles, X } from 'lucide-vue-next'
 import { useNotesStore } from '../stores/notes'
 import { useLibraryStore } from '../stores/library'
 import { invoke } from '../services/tauri'
+import doubaoIcon from '../assets/providers/doubao.png'
+import qwenIcon from '../assets/providers/qwen.png'
+import zhipuIcon from '../assets/providers/zhipu.png'
+import deepseekIcon from '../assets/providers/deepseek.png'
+import kimiIcon from '../assets/providers/kimi.png'
+import minimaxIcon from '../assets/providers/minimax.png'
+import otherIcon from '../assets/providers/other.png'
 
 const router = useRouter()
 const { locale, t } = useI18n()
 const notes = useNotesStore()
 const library = useLibraryStore()
 const draft = ref('')
-const messages = ref([])
-const streamingText = ref('')
-const busy = ref(false)
-const requestId = ref('')
-const chatError = ref('')
 const referenceMenuOpen = ref(false)
 const referencePicker = ref(null)
 const referenceFileBaseId = ref(null)
 const references = ref([])
+const models = ref([])
+const selectedModelId = ref('')
+const thinkingMode = ref('fast')
+const modelMenuOpen = ref(false)
 const personalBases = computed(() => library.bases.filter(item => item.category === 'personal'))
 const localBases = computed(() => library.bases.filter(item => item.category === 'local'))
 const noteCandidates = computed(() => notes.notes.filter(note => !note.deletedAt))
+const selectedModel = computed(() => models.value.find(model => model.id === selectedModelId.value) || models.value.find(model => model.isDefault) || models.value[0] || null)
+const providerIcons = { doubao: doubaoIcon, qwen: qwenIcon, zhipu: zhipuIcon, deepseek: deepseekIcon, kimi: kimiIcon, minimax: minimaxIcon, custom: otherIcon }
+const providerAliases = { doubao: ['doubao', '豆包'], qwen: ['qwen', '千问', '通义'], zhipu: ['zhipu', '智谱'], deepseek: ['deepseek'], kimi: ['kimi', 'moonshot'], minimax: ['minimax'], custom: ['custom', '其他'] }
+const modelButtonLabel = computed(() => {
+  const mode = thinkingMode.value === 'deep' ? (locale.value === 'en' ? 'Deep' : '深度') : (locale.value === 'en' ? 'Quick' : '快速')
+  return selectedModel.value ? `${selectedModel.value.name} · ${mode}` : (locale.value === 'en' ? `Local AI · ${mode}` : `本地 AI · ${mode}`)
+})
 
 const copy = computed(() => locale.value === 'en' ? {
   subtitle: 'What would you like Tiny Note to help with?',
@@ -38,7 +50,7 @@ const copy = computed(() => locale.value === 'en' ? {
     ['Knowledge base', 'Browse your local library', LibraryBig, '/library'],
     ['Model settings', 'Connect a private AI provider', Settings2, '/settings']
   ],
-  start: 'Start a note'
+  start: 'Start a chat'
 } : {
   subtitle: '需要 Tiny Note 帮您做些什么？',
   placeholder: '写下一个想法，开始一篇笔记…',
@@ -51,51 +63,33 @@ const copy = computed(() => locale.value === 'en' ? {
     ['知识库', '浏览你的本地资料库', LibraryBig, '/library'],
     ['模型设置', '连接私有 AI 提供商', Settings2, '/settings']
   ],
-  start: '开始写笔记'
+  start: '开始对话'
 })
 
 function open(path) { router.push(path) }
 function startNote() { router.push('/notes?new=1') }
-function assistantContext() {
-  const referenceText = references.value.map(item => `${item.type === 'note' ? '笔记' : '文件'}：${item.name}`).join('\n')
-  const history = messages.value.slice(-8).map(item => `${item.role === 'user' ? '用户' : '助手'}：${item.content}`).join('\n')
-  return [referenceText ? `用户选择的引用：\n${referenceText}` : '', history ? `此前对话：\n${history}` : ''].filter(Boolean).join('\n\n') || '无额外上下文'
-}
-function pushResponse(content) { if (content?.trim()) messages.value.push({ role: 'assistant', content: content.trim() }) }
-async function submitDraft() {
-  const message = draft.value.trim()
-  if (!message || busy.value) return
-  messages.value.push({ role: 'user', content: message, references: references.value.map(item => ({ ...item })) })
-  draft.value = ''
-  chatError.value = ''
-  busy.value = true
-  streamingText.value = '正在思考…'
-  requestId.value = crypto.randomUUID()
-  if (!window.__TAURI_INTERNALS__) {
-    window.setTimeout(() => { pushResponse(`这是浏览器预览回复：${message}`); streamingText.value = ''; busy.value = false }, 500)
-    return
-  }
-  const channel = new Channel()
-  channel.onmessage = event => {
-    if (event.type === 'delta') { if (streamingText.value === '正在思考…') streamingText.value = ''; streamingText.value += event.text }
-    if (event.type === 'error') { chatError.value = event.message || '模型请求失败'; streamingText.value = ''; busy.value = false }
-    if (event.type === 'cancelled') { streamingText.value = ''; busy.value = false }
-    if (event.type === 'completed') { pushResponse(streamingText.value === '正在思考…' ? '模型没有返回内容，请换个问法再试。' : streamingText.value); streamingText.value = ''; busy.value = false }
-  }
-  try {
-    await invoke('note_ai_stream', { request: { requestId: requestId.value, action: 'custom', text: assistantContext(), instruction: message, modelProfileId: null, source: 'chat' }, onEvent: channel })
-  } catch (error) { chatError.value = error?.message || '模型请求失败'; streamingText.value = ''; busy.value = false }
-}
-async function stopChat() {
-  if (!busy.value || !requestId.value || !window.__TAURI_INTERNALS__) return
-  try { await invoke('note_ai_cancel', { requestId: requestId.value }) } catch {}
-  busy.value = false
-  streamingText.value = ''
+function openChat(value = draft.value) {
+  const message = (typeof value === 'string' ? value : draft.value).trim()
+  sessionStorage.setItem('tiny-note-chat-pending', JSON.stringify({ message, references: references.value, modelProfileId: selectedModel.value?.id || null, thinkingMode: thinkingMode.value }))
+  router.push({ path: '/chat', query: { from: 'home' } })
 }
 function closeReferenceMenu() {
   referenceMenuOpen.value = false
   referencePicker.value = null
   referenceFileBaseId.value = null
+}
+function closeMenus() {
+  closeReferenceMenu()
+  modelMenuOpen.value = false
+}
+function selectModel(model) {
+  selectedModelId.value = model.id
+  modelMenuOpen.value = false
+}
+function providerIcon(model) {
+  const provider = String(model?.provider || '').toLowerCase()
+  const key = Object.keys(providerAliases).find(item => providerAliases[item].some(alias => provider.includes(alias))) || 'custom'
+  return providerIcons[key]
 }
 async function openReferenceMenu() {
   referenceMenuOpen.value = !referenceMenuOpen.value
@@ -142,16 +136,17 @@ function restoreAssistantDraft() {
     draft.value = text
   } catch {}
 }
-
 onMounted(async () => {
   restoreAssistantDraft()
   if (!notes.notes.length) await notes.load()
   if (!library.bases.length) await library.load()
+  models.value = await invoke('model_list')
+  selectedModelId.value = models.value.find(model => model.isDefault)?.id || models.value[0]?.id || ''
 })
 </script>
 
 <template>
-  <div class="home-page" @click="closeReferenceMenu">
+  <div class="home-page" @click="closeMenus">
     <div class="home-content">
       <section class="home-hero" aria-labelledby="home-title">
         <div class="home-wordmark" aria-label="Tiny Note">
@@ -162,11 +157,6 @@ onMounted(async () => {
       </section>
 
       <section class="home-composer" aria-label="快速开始">
-        <div v-if="messages.length || busy || chatError" class="home-chat-history" aria-live="polite">
-          <div v-for="(message, index) in messages" :key="`${index}-${message.role}`" class="home-chat-message" :class="`is-${message.role}`"><span>{{ message.content }}</span></div>
-          <div v-if="busy" class="home-chat-message is-assistant"><span>{{ streamingText || '正在思考…' }}</span></div>
-          <div v-if="chatError" class="home-chat-error">{{ chatError }} <button type="button" @click="open('/settings')">打开模型设置</button></div>
-        </div>
         <div v-if="references.length" class="home-reference-tags" aria-label="引用内容">
           <div v-for="reference in references" :key="reference.key" class="home-reference-tag" :class="`home-reference-tag-${reference.type}`">
             <FileText v-if="reference.type === 'note'" :size="14" />
@@ -176,11 +166,19 @@ onMounted(async () => {
             <button type="button" :title="t('removeReference')" @click.stop="removeReference(reference.key)"><X :size="13" /></button>
           </div>
         </div>
-        <textarea v-model="draft" rows="1" :placeholder="copy.placeholder" @keydown.enter.exact.prevent="submitDraft" />
+        <textarea v-model="draft" rows="1" :placeholder="copy.placeholder" @keydown.enter.exact.prevent="openChat" />
         <div class="home-composer-actions">
           <div class="home-composer-left">
-            <button class="home-select-button" type="button" @click="startNote"><MessageSquare :size="16" /><span>{{ copy.noteMode }}</span><ChevronDown :size="13" /></button>
-            <button class="home-select-button" type="button" @click="open('/settings')"><Globe2 :size="16" /><span>{{ copy.localAi }}</span><ChevronDown :size="13" /></button>
+            <button class="home-select-button" type="button" @click="openChat"><MessageSquare :size="16" /><span>{{ copy.noteMode }}</span><ChevronDown :size="13" /></button>
+            <div class="home-model-anchor" @click.stop>
+              <button class="home-select-button" type="button" :class="{ active: modelMenuOpen }" @click="modelMenuOpen = !modelMenuOpen; referenceMenuOpen = false"><Globe2 :size="16" /><span>{{ modelButtonLabel }}</span><ChevronDown :size="13" :class="{ expanded: modelMenuOpen }" /></button>
+              <div v-if="modelMenuOpen" class="home-model-menu">
+                <div class="home-thinking-row"><span><Sparkles :size="15" />思考模式</span><div class="home-thinking-tabs"><button type="button" :class="{ active: thinkingMode === 'fast' }" @click="thinkingMode = 'fast'"><span>快速</span></button><button type="button" :class="{ active: thinkingMode === 'deep' }" @click="thinkingMode = 'deep'"><span>深度</span></button></div></div>
+                <div class="home-model-divider"></div>
+                <button v-for="model in models" :key="model.id" type="button" class="home-model-option" :class="{ active: model.id === selectedModel?.id }" @click="selectModel(model)"><img :src="providerIcon(model)" :alt="model.provider" class="home-model-provider-icon" /><span><b>{{ model.name }}</b><small>{{ model.provider }} · {{ model.model }}</small></span><span v-if="model.id === selectedModel?.id" class="home-model-check">✓</span></button>
+                <button v-if="!models.length" type="button" class="home-model-empty" @click="open('/settings'); modelMenuOpen = false">请先在设置中添加模型</button>
+              </div>
+            </div>
           </div>
           <div class="home-composer-right">
             <div class="home-reference-anchor" @click.stop>
@@ -223,8 +221,7 @@ onMounted(async () => {
                 </template>
               </div>
             </div>
-            <button v-if="busy" class="home-send-button active" type="button" title="停止生成" @click="stopChat"><Square :size="16" /></button>
-            <button v-else class="home-send-button" type="button" :class="{ active: draft.trim() }" :title="copy.start" @click="submitDraft"><Send :size="18" /></button>
+            <button class="home-send-button" type="button" :class="{ active: draft.trim() }" :title="copy.start" @click="openChat"><Send :size="18" /></button>
           </div>
         </div>
       </section>
