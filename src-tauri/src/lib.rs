@@ -569,7 +569,17 @@ pub mod commands {
 
     pub(crate) fn safe_path(root: &Path, relative: &str) -> Result<PathBuf, AppError> {
         let p = Path::new(relative);
+        // `Path` only understands the host platform's syntax. A Linux build
+        // would otherwise treat `C:\\escape` as a normal filename, while the
+        // same value is an absolute Windows path. Reject Windows separators
+        // and drive prefixes explicitly so the boundary is platform-neutral.
+        let bytes = relative.as_bytes();
+        let has_windows_drive_prefix =
+            bytes.len() >= 2 && bytes[0].is_ascii_alphabetic() && bytes[1] == b':';
+        let has_windows_separator = relative.contains('\\');
         if p.is_absolute()
+            || has_windows_drive_prefix
+            || has_windows_separator
             || p.components().any(|c| {
                 matches!(
                     c,
@@ -1304,7 +1314,10 @@ mod tests {
     #[test]
     fn rejects_absolute_paths() {
         let root = std::env::temp_dir();
+        assert!(commands::safe_path(&root, "/escape").is_err());
         assert!(commands::safe_path(&root, "C:\\escape").is_err());
+        assert!(commands::safe_path(&root, "C:escape").is_err());
+        assert!(commands::safe_path(&root, "\\\\server\\share").is_err());
     }
     #[test]
     fn migration_seeds_uncategorized_notebook() {
