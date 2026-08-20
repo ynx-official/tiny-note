@@ -3,11 +3,14 @@ import { computed, nextTick, onMounted, onUnmounted, ref, watch } from 'vue'
 import { storeToRefs } from 'pinia'
 import { useRoute, useRouter } from 'vue-router'
 import { Channel } from '@tauri-apps/api/core'
-import { ArrowLeft, BookOpen, Copy, File, FileText, Paperclip, Plus, Send, Sparkles, Square, X } from 'lucide-vue-next'
+import DOMPurify from 'dompurify'
+import { marked } from 'marked'
+import { ArrowLeft, BookOpen, CheckCircle2, ChevronDown, Copy, File, FileText, LoaderCircle, MessageCircle, NotebookPen, Paperclip, Plus, Save, Send, Sparkles, Square, Wrench, X } from 'lucide-vue-next'
 import { invoke } from '../services/tauri'
 import { useNotesStore } from '../stores/notes'
 import { useLibraryStore } from '../stores/library'
 import { useAppStore } from '../stores/app'
+import { isConversationSummaryIntent, isNoteEditIntent, parseNoteCommand } from '../utils/noteChatCommands'
 
 const route = useRoute()
 const router = useRouter()
@@ -30,6 +33,13 @@ const conversationTitle = ref('新对话')
 const referenceMenuOpen = ref(false)
 const responseSources = ref([])
 const responseProposal = ref(null)
+const pendingSummary = ref(false)
+const savedNote = ref(null)
+const currentMode = ref('chat')
+const agentSegments = ref([])
+const currentAgentRunId = ref('')
+const pendingApproval = ref(null)
+let activeAgentChannel = null
 const titlesGenerating = new Set()
 const fromHome = computed(() => route.query.from === 'home')
 const selectedModel = computed(() => models.value.find(model => model.id === selectedModelId.value) || models.value.find(model => model.isDefault) || models.value[0] || null)
@@ -46,16 +56,16 @@ function assistantContext() {
 }
 async function ensureConversation() {
   if (conversationId.value) return conversationId.value
-  const conversation = await invoke('chat_create', { modelProfileId: selectedModel.value?.id || null })
+  const conversation = await invoke('chat_create', { modelProfileId: selectedModel.value?.id || null, mode: currentMode.value })
   conversationId.value = conversation.id
   conversationTitle.value = conversation.title
   await router.replace({ path: '/chat', query: { id: conversation.id, ...(fromHome.value ? { from: 'home' } : {}) } })
   window.dispatchEvent(new CustomEvent('tiny-note-chat-updated'))
   return conversation.id
 }
-async function saveMessage(role, content, messageReferences = [], sources = [], proposalId = null) {
+async function saveMessage(role, content, messageReferences = [], sources = [], proposalId = null, agentRunId = null) {
   const id = await ensureConversation()
-  const saved = await invoke('chat_add_message', { conversationId: id, role, content, references: messageReferences, sources, proposalId })
+  const saved = await invoke('chat_add_message', { conversationId: id, role, content, references: messageReferences, sources, proposalId, agentRunId })
   window.dispatchEvent(new CustomEvent('tiny-note-chat-updated'))
   return saved
 }
@@ -74,7 +84,8 @@ async function generateTitle() {
 async function pushResponse(content) {
   const text = content?.trim()
   if (!text) return
-  const saved = await saveMessage('assistant', text, [], responseSources.value, responseProposal.value?.id || null)
+  const saved = await saveMessage('assistant', text, [], responseSources.value, responseProposal.value?.id || null, currentAgentRunId.value || null)
+  if (currentAgentRunId.value) saved.agentSegments = agentSegments.value.map(segment => ({ ...segment }))
   messages.value.push(saved)
 }
 async function completeResponse() {
@@ -82,8 +93,9 @@ async function completeResponse() {
   streamingText.value = ''
   try {
     await pushResponse(content)
+    if (pendingSummary.value && content.trim()) await createNoteFromText(content, `${conversationTitle.value === '新对话' ? '对话总结' : conversationTitle.value} · 总结`)
     if (messages.value.filter(message => message.role === 'assistant').length === 1) generateTitle()
-  } catch (cause) { error.value = cause?.message || '回复保存失败' } finally { busy.value = false; responseSources.value = []; responseProposal.value = null }
+  } catch (cause) { error.value = cause?.message || '回复保存失败' } finally { busy.value = false; responseSources.value = []; responseProposal.value = null; pendingSummary.value = false; agentSegments.value = []; currentAgentRunId.value = ''; pendingApproval.value = null; activeAgentChannel = null }
 }
 function ensureContextConsent() {
   const modelId = selectedModel.value?.id
@@ -94,7 +106,103 @@ function ensureContextConsent() {
   if (allowed) localStorage.setItem(consentKey, 'granted')
   return allowed
 }
-function isEditIntent(message) { return /(扩写|改写|修改|润色|精炼|替换|翻译|续写|修正|重写|rewrite|translate|polish|edit)/i.test(message) }
+function noteHtml(text) { return DOMPurify.sanitize(marked.parse(String(text || ''))) }
+function noteTitle(text, fallback = '对话笔记') {
+  const heading = String(text || '').match(/^#{1,3}\s+(.+)$/m)?.[1]?.trim()
+  return (heading || fallback).slice(0, 80)
+}
+async function createNoteFromText(content, fallbackTitle = '对话笔记') {
+  const note = await notesStore.createFromContent({ title: noteTitle(content, fallbackTitle), contentHtml: noteHtml(content), contentText: content })
+  savedNote.value = note
+  return note
+}
+async function saveAssistantAsNote(message) {
+  try { error.value = ''; await createNoteFromText(message.content, conversationTitle.value === '新对话' ? '对话笔记' : conversationTitle.value) }
+  catch (cause) { error.value = cause?.message || '保存笔记失败' }
+}
+function openSavedNote() { if (savedNote.value) router.push({ path: '/notes', query: { note: savedNote.value.id } }) }
+async function addAssistantNotice(content) {
+  const saved = await saveMessage('assistant', content)
+  messages.value.push(saved)
+}
+async function performNoteCommand(command, messageReferences) {
+  if (!command) return false
+  if (command.action === 'create') {
+    const note = await createNoteFromText(command.content, command.title)
+    if (command.title && command.title !== '未命名笔记' && note.title !== command.title) await notesStore.rename(note.id, command.title)
+    await addAssistantNotice(`已创建笔记「${command.title || note.title}」。`)
+    return true
+  }
+  const targets = messageReferences.filter(item => item.type === 'note')
+  if (targets.length !== 1) {
+    await addAssistantNotice('请先用输入框左下角的回形针引用一篇笔记，我才能准确执行这个操作。')
+    return true
+  }
+  const target = notesStore.notes.find(note => note.id === targets[0].noteId)
+  if (!target) { await addAssistantNotice('这篇笔记不存在或已被删除。'); return true }
+  if (command.action === 'rename') {
+    await notesStore.rename(target.id, command.value)
+    await addAssistantNotice(`已将笔记重命名为「${command.value}」。`)
+  } else if (command.action === 'duplicate') {
+    const copy = await notesStore.duplicate(target.id)
+    savedNote.value = copy
+    await addAssistantNotice(`已创建「${copy.title}」。`)
+  } else if (command.action === 'move') {
+    const notebook = notesStore.notebooks.find(item => item.name.trim().toLowerCase() === command.value.toLowerCase())
+    if (!notebook) await addAssistantNotice(`没有找到名为「${command.value}」的笔记本，请先创建该笔记本。`)
+    else { await notesStore.move(target.id, notebook.id); await addAssistantNotice(`已将「${target.title}」移动到「${notebook.name}」。`) }
+  } else if (command.action === 'delete') {
+    if (!window.confirm(`确定把「${target.title}」移到最近删除吗？`)) await addAssistantNotice('已取消删除。')
+    else { await notesStore.remove(target.id); references.value = references.value.filter(item => item.noteId !== target.id); await addAssistantNotice(`已将「${target.title}」移到最近删除，可在 30 天内恢复。`) }
+  }
+  return true
+}
+
+function createResponseChannel() {
+  const channel = new Channel()
+  channel.onmessage = async event => {
+    if (event.type === 'delta' || event.type === 'textDelta') { if (streamingText.value === '正在思考…') streamingText.value = ''; streamingText.value += event.text }
+    if (event.type === 'started' && event.runId) currentAgentRunId.value = event.runId
+    if (event.type === 'toolCall') {
+      const existing = agentSegments.value.find(item => item.id === event.toolCallId)
+      if (!existing) agentSegments.value.push({ id: event.toolCallId, type: 'tool', toolName: event.toolName, arguments: event.arguments || {}, status: 'running', output: '' })
+    }
+    if (event.type === 'approvalRequired') {
+      const segment = agentSegments.value.find(item => item.id === event.toolCallId)
+      if (segment) segment.status = 'awaiting_approval'
+      pendingApproval.value = { runId: event.runId, toolCallId: event.toolCallId, toolName: event.toolName, arguments: event.arguments || {}, approvalHash: event.approvalHash, description: event.description || 'Agent 请求执行写操作' }
+    }
+    if (event.type === 'toolResult') {
+      const segment = agentSegments.value.find(item => item.id === event.toolCallId)
+      if (segment) Object.assign(segment, { status: event.status || 'completed', output: event.output || '' })
+    }
+    if (event.type === 'sources') responseSources.value = event.sources || []
+    if (event.type === 'editProposal') responseProposal.value = event.proposal
+    if (event.type === 'error') { error.value = event.message || '模型请求失败'; streamingText.value = ''; busy.value = false; pendingApproval.value = null; activeAgentChannel = null }
+    if (event.type === 'cancelled') { streamingText.value = ''; busy.value = false; pendingApproval.value = null; activeAgentChannel = null }
+    if (event.type === 'completed') { if (!streamingText.value && event.content) streamingText.value = event.content; await completeResponse() }
+  }
+  return channel
+}
+
+async function decideApproval(decision) {
+  const approval = pendingApproval.value
+  if (!approval) return
+  error.value = ''
+  const channel = activeAgentChannel || createResponseChannel()
+  activeAgentChannel = channel
+  pendingApproval.value = null
+  const segment = agentSegments.value.find(item => item.id === approval.toolCallId)
+  if (segment) segment.status = decision === 'approve' ? 'running' : 'rejected'
+  try {
+    await invoke('agent_resume', { request: { runId: approval.runId, toolCallId: approval.toolCallId, approvalHash: approval.approvalHash, decision, reason: decision === 'reject' ? '用户拒绝执行此操作' : null }, onEvent: channel })
+  } catch (cause) {
+    error.value = cause?.message || cause?.code || '审批回传失败'
+    pendingApproval.value = approval
+    if (segment) segment.status = 'awaiting_approval'
+  }
+}
+
 async function sendMessage(value, messageReferences = references.value) {
   const message = String(value || '').trim()
   if (!message || busy.value) return
@@ -110,37 +218,49 @@ async function sendMessage(value, messageReferences = references.value) {
   messages.value.push(savedUserMessage)
   draft.value = ''
   error.value = ''
+  try {
+    if (currentMode.value !== 'agent' && await performNoteCommand(parseNoteCommand(message), messageReferenceCopies)) return
+  } catch (cause) {
+    error.value = cause?.message || '笔记操作失败'
+    return
+  }
   busy.value = true
   streamingText.value = '正在思考…'
   requestId.value = crypto.randomUUID()
   responseSources.value = []
   responseProposal.value = null
+  agentSegments.value = []
+  currentAgentRunId.value = ''
+  pendingSummary.value = isConversationSummaryIntent(message)
   const contextAllowed = ensureContextConsent()
   if (!window.__TAURI_INTERNALS__) {
     window.setTimeout(async () => { streamingText.value = `这是浏览器预览回复：${message}`; await completeResponse() }, 500)
     return
   }
-  const channel = new Channel()
-  channel.onmessage = async event => {
-    if (event.type === 'delta') { if (streamingText.value === '正在思考…') streamingText.value = ''; streamingText.value += event.text }
-    if (event.type === 'sources') responseSources.value = event.sources || []
-    if (event.type === 'editProposal') responseProposal.value = event.proposal
-    if (event.type === 'error') { error.value = event.message || '模型请求失败'; streamingText.value = ''; busy.value = false }
-    if (event.type === 'cancelled') { streamingText.value = ''; busy.value = false }
-    if (event.type === 'completed') await completeResponse()
-  }
+  const channel = createResponseChannel()
+  if (currentMode.value === 'agent') activeAgentChannel = channel
   try {
-    const targetNotes = messageReferenceCopies.filter(item => item.type === 'note')
-    const editMode = targetNotes.length === 1 && isEditIntent(message)
-    await invoke('note_ai_stream', { request: { requestId: requestId.value, action: 'custom', mode: editMode ? 'edit' : 'chat', text: assistantContext(), instruction: message, references: contextAllowed ? messageReferenceCopies : [], autoRetrieve: contextAllowed, targetNoteId: targetNotes.length === 1 ? targetNotes[0].noteId : null, modelProfileId: selectedModel.value?.id || null, thinkingMode: thinkingMode.value, source: 'chat', conversationId: conversationId.value }, onEvent: channel })
+    if (currentMode.value === 'agent') {
+      await invoke('agent_invoke', { request: { requestId: requestId.value, conversationId: conversationId.value, message, references: contextAllowed ? messageReferenceCopies : [], modelProfileId: selectedModel.value?.id || null, thinkingMode: thinkingMode.value }, onEvent: channel })
+    } else {
+      const targetNotes = messageReferenceCopies.filter(item => item.type === 'note')
+      const editMode = targetNotes.length === 1 && isNoteEditIntent(message)
+      await invoke('note_ai_stream', { request: { requestId: requestId.value, action: 'custom', mode: editMode ? 'edit' : 'chat', text: assistantContext(), instruction: message, references: contextAllowed ? messageReferenceCopies : [], autoRetrieve: contextAllowed, targetNoteId: targetNotes.length === 1 ? targetNotes[0].noteId : null, modelProfileId: selectedModel.value?.id || null, thinkingMode: thinkingMode.value, source: 'chat', conversationId: conversationId.value }, onEvent: channel })
+    }
   } catch (cause) { error.value = cause?.message || cause?.code || '模型请求失败'; streamingText.value = ''; busy.value = false }
 }
 function submit() { if (!busy.value) sendMessage(draft.value) }
+function summarizeConversation() {
+  if (busy.value || messages.value.length < 2) return
+  sendMessage('请把以上对话整理为一篇结构清晰的笔记：提炼主题、关键结论、重要细节和待办事项；不要添加对话中没有的信息。')
+}
 async function stop() {
   if (!busy.value || !requestId.value) return
-  if (window.__TAURI_INTERNALS__) { try { await invoke('note_ai_cancel', { requestId: requestId.value }) } catch {} }
+  if (window.__TAURI_INTERNALS__) { try { await invoke(currentMode.value === 'agent' ? 'agent_cancel' : 'note_ai_cancel', { requestId: requestId.value }) } catch {} }
   busy.value = false
   streamingText.value = ''
+  pendingApproval.value = null
+  activeAgentChannel = null
 }
 function goBack() { router.push('/') }
 function newChat() {
@@ -151,6 +271,11 @@ function newChat() {
   error.value = ''
   conversationId.value = ''
   conversationTitle.value = '新对话'
+  currentMode.value = 'chat'
+  agentSegments.value = []
+  currentAgentRunId.value = ''
+  pendingApproval.value = null
+  activeAgentChannel = null
   router.replace({ path: '/chat', query: fromHome.value ? { from: 'home' } : {} })
 }
 async function toggleReferenceMenu() {
@@ -184,8 +309,30 @@ async function loadConversation(id) {
     if (!thread) throw new Error('对话不存在')
     conversationId.value = thread.conversation.id
     conversationTitle.value = thread.conversation.title
+    currentMode.value = thread.conversation.mode || 'chat'
     selectedModelId.value = thread.conversation.modelProfileId || selectedModelId.value
     messages.value = thread.messages || []
+    await Promise.all(messages.value.filter(message => message.agentRunId).map(async message => {
+      try {
+        const run = await invoke('agent_get_run', { runId: message.agentRunId })
+        message.agentSegments = (run.steps || []).filter(step => step.kind === 'tool').map(step => ({ id: step.toolCallId || step.id, type: 'tool', toolName: step.toolName, arguments: step.arguments || {}, output: step.output || '', status: step.status }))
+      } catch {}
+    }))
+    if (currentMode.value === 'agent') {
+      try {
+        const pendingRun = await invoke('agent_get_pending_run', { conversationId: conversationId.value })
+        if (pendingRun) {
+          const pendingStep = [...(pendingRun.steps || [])].reverse().find(step => step.status === 'awaiting_approval')
+          currentAgentRunId.value = pendingRun.id
+          requestId.value = pendingRun.requestId
+          agentSegments.value = (pendingRun.steps || []).filter(step => step.kind === 'tool').map(step => ({ id: step.toolCallId || step.id, type: 'tool', toolName: step.toolName, arguments: step.arguments || {}, output: step.output || '', status: step.status }))
+          streamingText.value = (pendingRun.steps || []).filter(step => step.kind === 'text').map(step => step.output || '').join('')
+          if (pendingStep) pendingApproval.value = { runId: pendingRun.id, toolCallId: pendingStep.toolCallId, toolName: pendingStep.toolName, arguments: pendingStep.arguments || {}, approvalHash: pendingStep.approvalHash, description: `${toolLabel(pendingStep.toolName)}需要你的确认` }
+          busy.value = Boolean(pendingStep)
+          activeAgentChannel = createResponseChannel()
+        }
+      } catch {}
+    }
     references.value = messages.value.filter(item => item.role === 'user').at(-1)?.references || []
     draft.value = ''
     error.value = ''
@@ -219,35 +366,66 @@ onMounted(async () => {
   } catch {}
   selectedModelId.value = pending?.modelProfileId || models.value.find(model => model.isDefault)?.id || models.value[0]?.id || ''
   thinkingMode.value = pending?.thinkingMode || 'fast'
+  currentMode.value = pending?.mode || 'chat'
   references.value = pending?.references || []
   if (pending?.message) await sendMessage(pending.message, references.value)
 })
 onUnmounted(() => window.removeEventListener('tiny-note-chat-deleted', handleDeleted))
+
+function selectMode(mode) {
+  if (busy.value || messages.value.length) return
+  currentMode.value = mode
+}
+
+function toolLabel(name) {
+  return ({ retrieve_knowledge: '检索知识库', search_notes: '搜索笔记', get_note: '读取笔记', get_current_time: '获取当前时间', create_note: '创建笔记', update_note: '生成修改提案', update_memory: '更新记忆', list_agent_files: '浏览工作区', read_agent_file: '读取工作区文件', write_agent_file: '写入工作区文件', read_skill: '读取技能', write_skill: '更新技能', list_mcp_tools: '查找 MCP 工具', call_mcp_tool: '调用 MCP 工具', delegate_task: '委派子 Agent', run_sandbox_script: '运行隔离脚本' })[name] || name || '调用工具'
+}
+
+function formatToolDetail(value) {
+  if (!value) return ''
+  const text = typeof value === 'string' ? value : JSON.stringify(value, null, 2)
+  return text.length > 500 ? `${text.slice(0, 500)}…` : text
+}
 </script>
 
 <template>
   <div class="chat-page">
     <header class="chat-page-header">
       <div class="chat-page-header-side"><button v-if="fromHome" type="button" class="chat-page-back" title="返回首页" @click="goBack"><ArrowLeft :size="17" /><span>返回</span></button></div>
-      <div class="chat-page-title"><span class="chat-page-avatar"><Sparkles :size="15" /></span><div><strong>{{ conversationTitle === '新对话' ? '周五' : conversationTitle }}</strong><small>{{ selectedModel ? `${selectedModel.provider} · ${selectedModel.model}` : 'Tiny Note 助手' }}</small></div></div>
-      <div class="chat-page-header-side is-right"><button type="button" class="chat-page-icon" title="新对话" @click="newChat"><Plus :size="18" /></button></div>
+      <div class="chat-page-title"><span class="chat-page-avatar"><Sparkles :size="15" /></span><div><strong>{{ conversationTitle === '新对话' ? '周五' : conversationTitle }}</strong><small>{{ currentMode === 'agent' ? 'Agent · ' : '' }}{{ selectedModel ? `${selectedModel.provider} · ${selectedModel.model}` : 'Tiny Note 助手' }}</small></div></div>
+      <div class="chat-page-header-side is-right"><button type="button" class="chat-page-summary" :disabled="busy || messages.length < 2" title="将当前对话总结并保存为笔记" @click="summarizeConversation"><NotebookPen :size="15" /><span>总结为笔记</span></button><button type="button" class="chat-page-icon" title="新对话" @click="newChat"><Plus :size="18" /></button></div>
     </header>
     <main ref="messagesRef" class="chat-page-messages" aria-live="polite">
-      <div v-if="!messages.length && !busy" class="chat-page-empty"><span class="chat-page-empty-avatar"><Sparkles :size="23" /></span><strong>你好，我是周五</strong><p>我可以帮你整理知识、查询笔记和处理文档。</p></div>
+      <div v-if="!messages.length && !busy" class="chat-page-empty"><span class="chat-page-empty-avatar"><Sparkles :size="23" /></span><strong>你好，我是周五</strong><p>我可以总结对话，也能创建、查询和修改你的笔记。</p><div class="chat-page-suggestions"><button type="button" @click="draft = '创建笔记《项目想法》，内容：'">创建一篇笔记</button><button type="button" @click="draft = '查找关于 ' ">查询已有笔记</button></div></div>
       <article v-for="(message, index) in messages" :key="`${index}-${message.role}`" class="chat-page-message" :class="`is-${message.role}`">
         <div v-if="message.role === 'assistant'" class="chat-page-assistant-head"><span class="chat-page-avatar"><Sparkles :size="13" /></span><strong>周五</strong></div>
+        <div v-if="message.agentSegments?.length" class="agent-timeline">
+          <details v-for="segment in message.agentSegments" :key="segment.id" class="agent-tool-step">
+            <summary><span class="agent-tool-icon"><CheckCircle2 v-if="segment.status === 'completed'" :size="14" /><X v-else-if="segment.status === 'error' || segment.status === 'rejected' || segment.status === 'cancelled'" :size="14" /><Wrench v-else-if="segment.status === 'awaiting_approval'" :size="14" /><LoaderCircle v-else class="is-spinning" :size="14" /></span><span>{{ toolLabel(segment.toolName) }}</span><small v-if="segment.status === 'awaiting_approval'">待确认</small><ChevronDown :size="13" /></summary>
+            <div><strong>参数</strong><pre>{{ formatToolDetail(segment.arguments) }}</pre><strong>结果</strong><pre>{{ formatToolDetail(segment.output) }}</pre></div>
+          </details>
+        </div>
         <div class="chat-page-bubble">{{ message.content }}</div>
         <div v-if="message.sources?.length" class="chat-source-list"><span v-for="(source, sourceIndex) in message.sources" :key="source.id" class="chat-source-chip" :title="source.snippet">[{{ sourceIndex + 1 }}] {{ source.title }}<small v-if="source.truncated">已截取</small></span></div>
         <button v-if="message.proposalId" type="button" class="chat-review-proposal" @click="reviewProposal(message.proposalId)">在文章中审阅修改</button>
-        <div v-if="message.role === 'assistant'" class="chat-page-message-actions"><button type="button" title="复制" @click="copyMessage(message.content)"><Copy :size="14" /></button></div>
+        <div v-if="message.role === 'assistant'" class="chat-page-message-actions"><button type="button" title="复制" @click="copyMessage(message.content)"><Copy :size="14" /></button><button type="button" title="保存这条回复为笔记" @click="saveAssistantAsNote(message)"><Save :size="14" /></button></div>
       </article>
-      <article v-if="busy" class="chat-page-message is-assistant"><div class="chat-page-assistant-head"><span class="chat-page-avatar"><Sparkles :size="13" /></span><strong>周五</strong></div><div class="chat-page-bubble">{{ streamingText || '正在思考…' }}</div></article>
+      <article v-if="busy" class="chat-page-message is-assistant"><div class="chat-page-assistant-head"><span class="chat-page-avatar"><Sparkles :size="13" /></span><strong>周五</strong><small v-if="currentMode === 'agent'" class="agent-mode-badge">Agent</small></div><div v-if="agentSegments.length" class="agent-timeline"><details v-for="segment in agentSegments" :key="segment.id" class="agent-tool-step"><summary><span class="agent-tool-icon"><CheckCircle2 v-if="segment.status === 'completed'" :size="14" /><X v-else-if="segment.status === 'error' || segment.status === 'rejected' || segment.status === 'cancelled'" :size="14" /><Wrench v-else-if="segment.status === 'awaiting_approval'" :size="14" /><LoaderCircle v-else class="is-spinning" :size="14" /></span><span>{{ toolLabel(segment.toolName) }}</span><small v-if="segment.status === 'awaiting_approval'">待确认</small><ChevronDown :size="13" /></summary><div><strong>参数</strong><pre>{{ formatToolDetail(segment.arguments) }}</pre><strong v-if="segment.output">结果</strong><pre v-if="segment.output">{{ formatToolDetail(segment.output) }}</pre></div></details></div><div class="chat-page-bubble">{{ streamingText || (pendingApproval ? '等待你确认操作…' : agentSegments.length ? '正在分析工具结果…' : '正在思考…') }}</div></article>
       <div v-if="error" class="chat-page-error">{{ error }} <button type="button" @click="router.push('/settings')">打开模型设置</button></div>
+      <div v-if="savedNote" class="chat-page-saved"><FileText :size="15" /><span>已保存为「{{ savedNote.title }}」</span><button type="button" @click="openSavedNote">打开笔记</button><button type="button" class="is-close" title="关闭" @click="savedNote = null"><X :size="13" /></button></div>
     </main>
+    <div v-if="pendingApproval" class="agent-approval-overlay" role="presentation">
+      <section class="agent-approval-dialog" role="dialog" aria-modal="true" aria-labelledby="agent-approval-title">
+        <div class="agent-approval-heading"><span><Wrench :size="18" /></span><div><strong id="agent-approval-title">确认 Agent 操作</strong><small>{{ pendingApproval.description }}</small></div></div>
+        <div class="agent-approval-tool"><b>{{ toolLabel(pendingApproval.toolName) }}</b><pre>{{ formatToolDetail(pendingApproval.arguments) }}</pre></div>
+        <p>批准仅对以上参数生效；如果参数发生变化，Agent 会重新请求确认。</p>
+        <div class="agent-approval-actions"><button type="button" class="is-reject" @click="decideApproval('reject')">拒绝</button><button type="button" class="is-approve" @click="decideApproval('approve')">批准并继续</button></div>
+      </section>
+    </div>
     <form class="chat-page-composer" @submit.prevent="submit">
       <div v-if="references.length" class="chat-reference-tags"><span v-for="reference in references" :key="reference.key"><FileText v-if="reference.type === 'note'" :size="13" /><File v-else :size="13" />{{ reference.name }}<button type="button" @click="removeReference(reference.key)"><X :size="12" /></button></span></div>
       <textarea v-model="draft" rows="2" placeholder="输入消息..." @keydown.enter.exact.prevent="submit"></textarea>
-      <div class="chat-page-composer-footer"><div class="chat-reference-anchor"><button type="button" class="chat-attach-button" title="引用笔记或文件" @click="toggleReferenceMenu"><Paperclip :size="15" /></button><div v-if="referenceMenuOpen" class="chat-reference-menu"><strong>引用内容</strong><small>笔记</small><button v-for="note in notesStore.notes" :key="note.id" type="button" @click="addNoteReference(note)"><FileText :size="13" />{{ note.title || '未命名笔记' }}</button><small v-if="library.entries.some(item => item.kind === 'file')">{{ library.active?.name || '知识库文件' }}</small><button v-for="entry in library.entries.filter(item => item.kind === 'file')" :key="entry.relativePath" type="button" @click="addFileReference(entry)"><BookOpen :size="13" />{{ entry.name }}</button></div><small>内容保存在你的设备上</small></div><button v-if="busy" type="button" class="chat-page-send is-stop" title="停止生成" @click="stop"><Square :size="15" /></button><button v-else type="submit" class="chat-page-send" :class="{ active: draft.trim() }" title="发送"><Send :size="16" /></button></div>
+      <div class="chat-page-composer-footer"><div class="chat-composer-left"><div class="chat-mode-switch" :class="{ 'is-locked': messages.length || busy }"><button type="button" :class="{ active: currentMode === 'chat' }" :disabled="Boolean(messages.length || busy)" title="普通对话" @click="selectMode('chat')"><MessageCircle :size="14" />对话</button><button type="button" :class="{ active: currentMode === 'agent' }" :disabled="Boolean(messages.length || busy)" title="自主调用工具完成任务" @click="selectMode('agent')"><Wrench :size="14" />Agent</button></div><div class="chat-reference-anchor"><button type="button" class="chat-attach-button" title="引用笔记或文件" @click="toggleReferenceMenu"><Paperclip :size="15" /></button><div v-if="referenceMenuOpen" class="chat-reference-menu"><strong>引用内容</strong><small>笔记</small><button v-for="note in notesStore.notes" :key="note.id" type="button" @click="addNoteReference(note)"><FileText :size="13" />{{ note.title || '未命名笔记' }}</button><small v-if="library.entries.some(item => item.kind === 'file')">{{ library.active?.name || '知识库文件' }}</small><button v-for="entry in library.entries.filter(item => item.kind === 'file')" :key="entry.relativePath" type="button" @click="addFileReference(entry)"><BookOpen :size="13" />{{ entry.name }}</button></div></div><small>{{ currentMode === 'agent' ? 'Agent 可自主检索本地内容' : '内容保存在你的设备上' }}</small></div><button v-if="busy" type="button" class="chat-page-send is-stop" title="停止生成" @click="stop"><Square :size="15" /></button><button v-else type="submit" class="chat-page-send" :class="{ active: draft.trim() }" title="发送"><Send :size="16" /></button></div>
     </form>
   </div>
 </template>

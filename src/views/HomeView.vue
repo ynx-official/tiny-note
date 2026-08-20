@@ -3,7 +3,7 @@ import { computed, onMounted, ref } from 'vue'
 import { storeToRefs } from 'pinia'
 import { useRouter } from 'vue-router'
 import { useI18n } from 'vue-i18n'
-import { BookOpen, ChevronDown, ChevronLeft, ChevronRight, File, FileSearch2, FileText, Folder, Globe2, LibraryBig, MessageSquare, NotebookPen, Paperclip, PenLine, Send, Settings2, Sparkles, X } from 'lucide-vue-next'
+import { BookOpen, ChevronDown, ChevronLeft, ChevronRight, File, FileSearch2, FileText, Folder, Globe2, LibraryBig, MessageSquare, NotebookPen, Paperclip, PenLine, Send, Settings2, Sparkles, Wrench, X } from 'lucide-vue-next'
 import { useNotesStore } from '../stores/notes'
 import { useLibraryStore } from '../stores/library'
 import { useAppStore } from '../stores/app'
@@ -28,6 +28,7 @@ const referenceFileBaseId = ref(null)
 const references = ref([])
 const selectedModelId = ref('')
 const thinkingMode = ref('fast')
+const chatMode = ref('chat')
 const modelMenuOpen = ref(false)
 const personalBases = computed(() => library.bases.filter(item => item.category === 'personal'))
 const localBases = computed(() => library.bases.filter(item => item.category === 'local'))
@@ -72,7 +73,7 @@ function open(path) { router.push(path) }
 function startNote() { router.push('/notes?new=1') }
 function openChat(value = draft.value) {
   const message = (typeof value === 'string' ? value : draft.value).trim()
-  sessionStorage.setItem('tiny-note-chat-pending', JSON.stringify({ message, references: references.value, modelProfileId: selectedModel.value?.id || null, thinkingMode: thinkingMode.value }))
+  sessionStorage.setItem('tiny-note-chat-pending', JSON.stringify({ message, references: references.value, modelProfileId: selectedModel.value?.id || null, thinkingMode: thinkingMode.value, mode: chatMode.value }))
   router.push({ path: '/chat', query: { from: 'home' } })
 }
 function closeReferenceMenu() {
@@ -173,7 +174,7 @@ onMounted(async () => {
         <textarea v-model="draft" rows="1" :placeholder="copy.placeholder" @keydown.enter.exact.prevent="openChat" />
         <div class="home-composer-actions">
           <div class="home-composer-left">
-            <button class="home-select-button" type="button" @click="openChat"><MessageSquare :size="16" /><span>{{ copy.noteMode }}</span><ChevronDown :size="13" /></button>
+            <button class="home-select-button" type="button" :title="chatMode === 'agent' ? '切换为对话模式' : '切换为 Agent 模式'" @click="chatMode = chatMode === 'agent' ? 'chat' : 'agent'"><Wrench v-if="chatMode === 'agent'" :size="16" /><MessageSquare v-else :size="16" /><span>{{ chatMode === 'agent' ? 'Agent 模式' : copy.noteMode }}</span><ChevronDown :size="13" /></button>
             <div class="home-model-anchor" @click.stop>
               <button class="home-select-button" type="button" :class="{ active: modelMenuOpen }" @click="modelMenuOpen = !modelMenuOpen; referenceMenuOpen = false"><Globe2 :size="16" /><span>{{ modelButtonLabel }}</span><ChevronDown :size="13" :class="{ expanded: modelMenuOpen }" /></button>
               <div v-if="modelMenuOpen" class="home-model-menu">

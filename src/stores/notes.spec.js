@@ -23,6 +23,14 @@ describe('notes store', () => {
     expect(store.notes.some(item => item.id === note.id)).toBe(true)
   })
 
+  it('creates a populated note from a conversation', async () => {
+    const store = useNotesStore()
+    await store.load()
+    const note = await store.createFromContent({ title: '对话总结', contentHtml: '<h1>结论</h1>', contentText: '# 结论' })
+    expect(note).toMatchObject({ title: '对话总结', contentHtml: '<h1>结论</h1>', contentText: '# 结论' })
+    expect(store.activeId).toBe(note.id)
+  })
+
   it('debounces updates at 800ms', async () => {
     const store = useNotesStore()
     await store.load()

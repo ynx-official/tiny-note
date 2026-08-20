@@ -12,6 +12,10 @@ const browserMemorySeed = [
   { fileName: 'MEMORY.md', nameKey: 'MEMORY', description: '长期记忆', content: '# 长期记忆\n\n> 记录跨会话需要记住的重要事实、事件和承诺。\n\n## 重要事实\n- （待补充）\n' },
   { fileName: 'Agent.md', nameKey: 'Agent', description: '经验与技巧', content: '# 经验与技巧\n\n> 记录 Tiny Note 助手在工作中积累的可复用经验。\n\n## 工具使用经验\n- （待补充）\n' }
 ]
+const browserSkillSeed = [
+  { name: 'knowledge-research', description: '检索并汇总 Tiny Note 本地知识，保留来源和不确定性。', fileName: 'knowledge-research/SKILL.md', builtin: true, content: '---\nname: knowledge-research\ndescription: 检索并汇总 Tiny Note 本地知识，保留来源和不确定性。\n---\n\n# 知识调研\n\n先检索，再汇总并保留来源。\n' },
+  { name: 'note-organizer', description: '将零散材料整理为结构清晰、便于后续维护的笔记。', fileName: 'note-organizer/SKILL.md', builtin: true, content: '---\nname: note-organizer\ndescription: 将零散材料整理为结构清晰、便于后续维护的笔记。\n---\n\n# 笔记整理\n\n保持结构清晰，不添加未知事实。\n' }
+]
 function ensureLibraryParents(state, knowledgeBaseId, relativePath, now) {
   const parts = normalizeRelativePath(relativePath).split('/').filter(Boolean)
   parts.pop()
@@ -35,6 +39,8 @@ export async function invoke(command, args = {}) {
   if (!state.kbs) state.kbs = [{ id: 'personal-demo', category: 'personal', name: '我的笔记', description: '', rootPath: '', createdAt: new Date().toISOString(), updatedAt: new Date().toISOString() }, { id: 'local-demo', category: 'local', name: '我的书籍', description: '', rootPath: '', createdAt: new Date().toISOString(), updatedAt: new Date().toISOString() }]
   if (!state.libraryFiles) state.libraryFiles = []
   if (!state.memories) state.memories = browserMemorySeed.map(file => ({ ...file, updatedAt: new Date().toISOString() }))
+  if (!state.agentSkills) state.agentSkills = browserSkillSeed.map(skill => ({ ...skill, updatedAt: new Date().toISOString() }))
+  if (!state.mcpServers) state.mcpServers = []
   if (!state.usageRecords) state.usageRecords = []
   if (!state.chatConversations) state.chatConversations = []
   if (!state.chatMessages) state.chatMessages = []
@@ -43,9 +49,9 @@ export async function invoke(command, args = {}) {
   const now = new Date().toISOString()
   let result
   if (command === 'chat_list') result = state.chatConversations.map(conversation => { const messages = state.chatMessages.filter(message => message.conversationId === conversation.id); return { ...conversation, messageCount: messages.length, preview: messages.at(-1)?.content || '' } }).sort((a, b) => b.updatedAt.localeCompare(a.updatedAt))
-  else if (command === 'chat_create') { result = { id: crypto.randomUUID(), title: '新对话', modelProfileId: args.modelProfileId || null, messageCount: 0, preview: '', createdAt: now, updatedAt: now }; state.chatConversations.unshift(result) }
+  else if (command === 'chat_create') { result = { id: crypto.randomUUID(), title: '新对话', modelProfileId: args.modelProfileId || null, mode: args.mode || 'chat', messageCount: 0, preview: '', createdAt: now, updatedAt: now }; state.chatConversations.unshift(result) }
   else if (command === 'chat_get') { const conversation = state.chatConversations.find(item => item.id === args.id); result = conversation ? { conversation: { ...conversation, messageCount: state.chatMessages.filter(message => message.conversationId === conversation.id).length, preview: state.chatMessages.filter(message => message.conversationId === conversation.id).at(-1)?.content || '' }, messages: state.chatMessages.filter(message => message.conversationId === conversation.id) } : null }
-  else if (command === 'chat_add_message') { const conversation = state.chatConversations.find(item => item.id === args.conversationId); result = { id: crypto.randomUUID(), conversationId: args.conversationId, role: args.role, content: args.content, references: args.references || [], sources: args.sources || [], proposalId: args.proposalId || null, createdAt: now }; state.chatMessages.push(result); if (conversation) conversation.updatedAt = now }
+  else if (command === 'chat_add_message') { const conversation = state.chatConversations.find(item => item.id === args.conversationId); result = { id: crypto.randomUUID(), conversationId: args.conversationId, role: args.role, content: args.content, references: args.references || [], sources: args.sources || [], proposalId: args.proposalId || null, agentRunId: args.agentRunId || null, createdAt: now }; state.chatMessages.push(result); if (conversation) conversation.updatedAt = now }
   else if (command === 'chat_delete') { state.chatConversations = state.chatConversations.filter(item => item.id !== args.id); state.chatMessages = state.chatMessages.filter(item => item.conversationId !== args.id); result = null }
   else if (command === 'chat_generate_title') { const conversation = state.chatConversations.find(item => item.id === args.conversationId); const firstRound = state.chatMessages.filter(item => item.conversationId === args.conversationId).slice(0, 2); const first = firstRound.find(item => item.role === 'user'); const compact = String(first?.content || '').replace(/\s+/g, ' ').trim(); result = firstRound.length < 2 ? '新对话' : (compact.length > 24 ? compact.slice(0, 24) + '…' : (compact || '新对话')); if (conversation?.title === '新对话' && result !== '新对话') { conversation.title = result; conversation.updatedAt = now } }
   else if (command === 'note_list') result = state.notes.filter(n => Boolean(n.deletedAt) === Boolean(args.deleted) && (!args.search || `${n.title} ${n.contentText}`.toLowerCase().includes(args.search.toLowerCase())))
@@ -160,6 +166,32 @@ export async function invoke(command, args = {}) {
     memory.updatedAt = now
     result = null
   }
+  else if (command === 'agent_skill_list') result = state.agentSkills.map(skill => ({ name: skill.name, description: skill.description, fileName: skill.fileName, builtin: skill.builtin, updatedAt: skill.updatedAt }))
+  else if (command === 'agent_skill_read') result = state.agentSkills.find(skill => skill.fileName === `${args.name}/SKILL.md`) || null
+  else if (command === 'agent_skill_upsert') {
+    const request = args.request || {}
+    const match = String(request.content || '').match(/description:\s*(.+)/)
+    const skill = { name: request.name, description: match?.[1]?.trim() || '自定义 Agent 技能', fileName: `${request.name}/SKILL.md`, builtin: browserSkillSeed.some(item => item.name === request.name), content: request.content || '', updatedAt: now }
+    state.agentSkills = [...state.agentSkills.filter(item => item.fileName !== skill.fileName), skill]
+    result = skill
+  }
+  else if (command === 'agent_skill_delete') { state.agentSkills = state.agentSkills.filter(skill => skill.builtin || skill.fileName !== `${args.name}/SKILL.md`); result = null }
+  else if (command === 'agent_mcp_list') result = state.mcpServers
+  else if (command === 'agent_mcp_upsert') {
+    const request = args.request || {}
+    const previous = state.mcpServers.find(item => item.id === request.id)
+    result = { id: request.id, name: request.name, command: request.command, args: request.args || [], enabled: request.enabled !== false, cachedTools: previous?.cachedTools || [], lastError: null, updatedAt: now }
+    state.mcpServers = [...state.mcpServers.filter(item => item.id !== result.id), result]
+  }
+  else if (command === 'agent_mcp_refresh') {
+    const server = state.mcpServers.find(item => item.id === args.id)
+    if (!server) throw new Error('MCP 服务不存在')
+    server.cachedTools = server.cachedTools || []
+    server.lastError = '浏览器预览不能启动本机 MCP 服务，请在桌面应用中刷新。'
+    server.updatedAt = now
+    result = server
+  }
+  else if (command === 'agent_mcp_delete') { state.mcpServers = state.mcpServers.filter(item => item.id !== args.id); result = null }
   else if (command === 'usage_get_stats') {
     const range = args.range || 'all'
     const start = range === 'today' ? new Date(new Date().setHours(0, 0, 0, 0)).getTime() : range === '7d' ? Date.now() - 7 * 86400000 : range === '30d' ? Date.now() - 30 * 86400000 : 0
@@ -168,6 +200,26 @@ export async function invoke(command, args = {}) {
     result = { range, summary, byModel: [], byDay: [], bySource: [] }
   }
   else if (command === 'usage_clear') { state.usageRecords = []; result = null }
+  else if (command === 'agent_get_pending_run' || command === 'agent_get_run') result = null
+  else if (command === 'agent_cancel' || command === 'agent_resume') result = null
+  else if (command === 'agent_list_tools') result = [
+    { name: 'get_current_time', description: '获取本机当前时间', requireApproval: false },
+    { name: 'list_mcp_tools', description: '列出已发现的 MCP 工具', requireApproval: false },
+    { name: 'call_mcp_tool', description: '调用外部 MCP 工具', requireApproval: true },
+    { name: 'delegate_task', description: '委派独立子任务', requireApproval: true },
+    { name: 'run_sandbox_script', description: '执行隔离计算脚本', requireApproval: true },
+    { name: 'search_notes', description: '搜索未删除笔记', requireApproval: false },
+    { name: 'get_note', description: '读取指定笔记', requireApproval: false },
+    { name: 'retrieve_knowledge', description: '检索笔记和文本知识库', requireApproval: false },
+    { name: 'list_agent_files', description: '浏览 Agent 工作区', requireApproval: false },
+    { name: 'read_agent_file', description: '读取 Agent 工作区文本文件', requireApproval: false },
+    { name: 'write_agent_file', description: '写入 Agent 工作区文本文件', requireApproval: true },
+    { name: 'read_skill', description: '读取 Agent 技能', requireApproval: false },
+    { name: 'write_skill', description: '创建或更新 Agent 技能', requireApproval: true },
+    { name: 'create_note', description: '创建笔记', requireApproval: true },
+    { name: 'update_note', description: '生成笔记修改提案', requireApproval: true },
+    { name: 'update_memory', description: '更新 Agent 记忆', requireApproval: true }
+  ]
   else if (command === 'model_list') result = state.models || []
   else if (command === 'model_fetch_models') {
     // Keep the browser fallback aligned with the Tauri DTO shape while

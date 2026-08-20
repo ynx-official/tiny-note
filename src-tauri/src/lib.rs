@@ -17,6 +17,10 @@ use thiserror::Error;
 use uuid::Uuid;
 use walkdir::WalkDir;
 
+mod agent;
+mod agent_mcp;
+mod agent_script;
+mod agent_skills;
 mod search;
 
 #[derive(Debug, Error, Clone)]
@@ -238,6 +242,7 @@ pub struct ChatConversationDto {
     pub id: String,
     pub title: String,
     pub model_profile_id: Option<String>,
+    pub mode: String,
     pub message_count: i64,
     pub preview: String,
     pub created_at: String,
@@ -254,6 +259,7 @@ pub struct ChatMessageDto {
     pub references: serde_json::Value,
     pub sources: serde_json::Value,
     pub proposal_id: Option<String>,
+    pub agent_run_id: Option<String>,
     pub created_at: String,
 }
 
@@ -393,12 +399,31 @@ fn init_database(conn: &Connection) -> Result<(), AppError> {
       CREATE TABLE IF NOT EXISTS model_profiles (id TEXT PRIMARY KEY, name TEXT NOT NULL, provider TEXT NOT NULL, base_url TEXT NOT NULL, model TEXT NOT NULL, api_key TEXT NOT NULL DEFAULT '', is_default INTEGER NOT NULL DEFAULT 0);
       CREATE TABLE IF NOT EXISTS usage_records (id TEXT PRIMARY KEY, ts INTEGER NOT NULL, model_id TEXT NOT NULL DEFAULT '', model_name TEXT NOT NULL DEFAULT '', provider TEXT NOT NULL DEFAULT '', source TEXT NOT NULL DEFAULT 'chat', conversation_id TEXT NOT NULL DEFAULT '', prompt_tokens INTEGER NOT NULL DEFAULT 0, completion_tokens INTEGER NOT NULL DEFAULT 0, total_tokens INTEGER NOT NULL DEFAULT 0, reasoning_tokens INTEGER NOT NULL DEFAULT 0);
       CREATE INDEX IF NOT EXISTS idx_usage_records_ts ON usage_records(ts);
-      CREATE TABLE IF NOT EXISTS chat_conversations (id TEXT PRIMARY KEY, title TEXT NOT NULL DEFAULT '新对话', model_profile_id TEXT, created_at TEXT NOT NULL, updated_at TEXT NOT NULL);
+      CREATE TABLE IF NOT EXISTS chat_conversations (id TEXT PRIMARY KEY, title TEXT NOT NULL DEFAULT '新对话', model_profile_id TEXT, mode TEXT NOT NULL DEFAULT 'chat' CHECK(mode IN ('chat','memoryless','agent')), created_at TEXT NOT NULL, updated_at TEXT NOT NULL);
       CREATE INDEX IF NOT EXISTS idx_chat_conversations_updated ON chat_conversations(updated_at DESC);
       CREATE TABLE IF NOT EXISTS chat_messages (id TEXT PRIMARY KEY, conversation_id TEXT NOT NULL REFERENCES chat_conversations(id) ON DELETE CASCADE, role TEXT NOT NULL CHECK(role IN ('user','assistant')), content TEXT NOT NULL, references_json TEXT NOT NULL DEFAULT '[]', created_at TEXT NOT NULL);
       CREATE INDEX IF NOT EXISTS idx_chat_messages_conversation ON chat_messages(conversation_id, created_at);
       CREATE TABLE IF NOT EXISTS settings (key TEXT PRIMARY KEY, value TEXT NOT NULL);")
         .map_err(AppError::db)?;
+    let conversation_columns = {
+        let mut statement = conn
+            .prepare("PRAGMA table_info(chat_conversations)")
+            .map_err(AppError::db)?;
+        let columns = statement
+            .query_map([], |row| row.get::<_, String>(1))
+            .map_err(AppError::db)?
+            .collect::<Result<Vec<_>, _>>()
+            .map_err(AppError::db)?;
+        columns
+    };
+    if !conversation_columns.iter().any(|column| column == "mode") {
+        conn.execute(
+            "ALTER TABLE chat_conversations ADD COLUMN mode TEXT NOT NULL DEFAULT 'chat'",
+            [],
+        )
+        .map_err(AppError::db)?;
+    }
+    agent::init_schema(conn)?;
     let model_columns = {
         let mut statement = conn
             .prepare("PRAGMA table_info(model_profiles)")
@@ -454,6 +479,10 @@ fn init_database(conn: &Connection) -> Result<(), AppError> {
     }
     if !chat_columns.iter().any(|column| column == "proposal_id") {
         conn.execute("ALTER TABLE chat_messages ADD COLUMN proposal_id TEXT", [])
+            .map_err(AppError::db)?;
+    }
+    if !chat_columns.iter().any(|column| column == "agent_run_id") {
+        conn.execute("ALTER TABLE chat_messages ADD COLUMN agent_run_id TEXT", [])
             .map_err(AppError::db)?;
     }
     search::init_schema(conn)?;
@@ -579,14 +608,15 @@ pub mod commands {
             id: row.get(0)?,
             title: row.get(1)?,
             model_profile_id: row.get(2)?,
-            message_count: row.get(3)?,
-            preview: row.get(4)?,
-            created_at: row.get(5)?,
-            updated_at: row.get(6)?,
+            mode: row.get(3)?,
+            message_count: row.get(4)?,
+            preview: row.get(5)?,
+            created_at: row.get(6)?,
+            updated_at: row.get(7)?,
         })
     }
 
-    const CHAT_CONVERSATION_SELECT: &str = "SELECT c.id,c.title,c.model_profile_id,(SELECT COUNT(*) FROM chat_messages m WHERE m.conversation_id=c.id),COALESCE((SELECT content FROM chat_messages m WHERE m.conversation_id=c.id ORDER BY m.created_at DESC,m.rowid DESC LIMIT 1),''),c.created_at,c.updated_at FROM chat_conversations c";
+    const CHAT_CONVERSATION_SELECT: &str = "SELECT c.id,c.title,c.model_profile_id,c.mode,(SELECT COUNT(*) FROM chat_messages m WHERE m.conversation_id=c.id),COALESCE((SELECT content FROM chat_messages m WHERE m.conversation_id=c.id ORDER BY m.created_at DESC,m.rowid DESC LIMIT 1),''),c.created_at,c.updated_at FROM chat_conversations c";
 
     #[tauri::command]
     pub fn chat_list(state: State<'_, AppState>) -> Result<Vec<ChatConversationDto>, AppError> {
@@ -609,7 +639,12 @@ pub mod commands {
     pub fn chat_create(
         state: State<'_, AppState>,
         model_profile_id: Option<String>,
+        mode: Option<String>,
     ) -> Result<ChatConversationDto, AppError> {
+        let mode = mode.unwrap_or_else(|| "chat".into());
+        if !matches!(mode.as_str(), "chat" | "memoryless" | "agent") {
+            return Err(AppError::invalid("invalid_chat_mode", "Invalid chat mode"));
+        }
         let id = Uuid::new_v4().to_string();
         let timestamp = now();
         let conn = state
@@ -617,8 +652,8 @@ pub mod commands {
             .lock()
             .map_err(|_| AppError::db("database lock poisoned"))?;
         conn.execute(
-            "INSERT INTO chat_conversations(id,title,model_profile_id,created_at,updated_at) VALUES (?1,'新对话',?2,?3,?3)",
-            params![id, model_profile_id, timestamp],
+            "INSERT INTO chat_conversations(id,title,model_profile_id,mode,created_at,updated_at) VALUES (?1,'新对话',?2,?3,?4,?4)",
+            params![id, model_profile_id, mode, timestamp],
         )
         .map_err(AppError::db)?;
         let sql = format!("{CHAT_CONVERSATION_SELECT} WHERE c.id=?1");
@@ -639,7 +674,7 @@ pub mod commands {
             .map_err(AppError::db)?
             .ok_or_else(|| AppError::not_found("chat_not_found", "Conversation not found"))?;
         let messages = conn
-            .prepare("SELECT id,conversation_id,role,content,references_json,sources_json,proposal_id,created_at FROM chat_messages WHERE conversation_id=?1 ORDER BY created_at ASC,rowid ASC")
+            .prepare("SELECT id,conversation_id,role,content,references_json,sources_json,proposal_id,agent_run_id,created_at FROM chat_messages WHERE conversation_id=?1 ORDER BY created_at ASC,rowid ASC")
             .map_err(AppError::db)?
             .query_map(params![conversation.id], |row| {
                 let references_json: String = row.get(4)?;
@@ -653,7 +688,8 @@ pub mod commands {
                         .unwrap_or_else(|_| serde_json::json!([])),
                     sources: serde_json::from_str(&sources_json).unwrap_or_else(|_| serde_json::json!([])),
                     proposal_id: row.get(6)?,
-                    created_at: row.get(7)?,
+                    agent_run_id: row.get(7)?,
+                    created_at: row.get(8)?,
                 })
             })
             .map_err(AppError::db)?
@@ -666,6 +702,7 @@ pub mod commands {
     }
 
     #[tauri::command]
+    #[allow(clippy::too_many_arguments)]
     pub fn chat_add_message(
         state: State<'_, AppState>,
         conversation_id: String,
@@ -674,6 +711,7 @@ pub mod commands {
         references: Option<serde_json::Value>,
         sources: Option<serde_json::Value>,
         proposal_id: Option<String>,
+        agent_run_id: Option<String>,
     ) -> Result<ChatMessageDto, AppError> {
         if !matches!(role.as_str(), "user" | "assistant") {
             return Err(AppError::invalid("invalid_chat_role", "Invalid chat role"));
@@ -699,8 +737,8 @@ pub mod commands {
         let transaction = conn.transaction().map_err(AppError::db)?;
         transaction
             .execute(
-                "INSERT INTO chat_messages(id,conversation_id,role,content,references_json,sources_json,proposal_id,created_at) VALUES (?1,?2,?3,?4,?5,?6,?7,?8)",
-                params![id, conversation_id, role, content, references_json, sources_json, proposal_id, timestamp],
+                "INSERT INTO chat_messages(id,conversation_id,role,content,references_json,sources_json,proposal_id,agent_run_id,created_at) VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9)",
+                params![id, conversation_id, role, content, references_json, sources_json, proposal_id, agent_run_id, timestamp],
             )
             .map_err(AppError::db)?;
         transaction
@@ -718,6 +756,7 @@ pub mod commands {
             references,
             sources,
             proposal_id,
+            agent_run_id,
             created_at: timestamp,
         })
     }
@@ -2806,7 +2845,21 @@ pub fn run() {
             commands::note_ai_stream,
             commands::note_ai_cancel,
             commands::note_fim_stream,
-            commands::note_fim_cancel
+            commands::note_fim_cancel,
+            agent::agent_invoke,
+            agent::agent_resume,
+            agent::agent_cancel,
+            agent::agent_get_run,
+            agent::agent_get_pending_run,
+            agent::agent_list_tools,
+            agent_skills::agent_skill_list,
+            agent_skills::agent_skill_read,
+            agent_skills::agent_skill_upsert,
+            agent_skills::agent_skill_delete,
+            agent_mcp::agent_mcp_list,
+            agent_mcp::agent_mcp_upsert,
+            agent_mcp::agent_mcp_delete,
+            agent_mcp::agent_mcp_refresh
         ])
         .run(tauri::generate_context!())
         .expect("error while running Tiny Note");
@@ -2866,6 +2919,35 @@ mod tests {
             .unwrap();
         assert_eq!(chat_tables, 2);
         assert_eq!(usage_link, 1);
+    }
+    #[test]
+    fn migration_creates_agent_state_and_chat_links() {
+        let c = Connection::open_in_memory().unwrap();
+        init_database(&c).unwrap();
+        let agent_tables: i64 = c
+            .query_row(
+                "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name IN ('agent_runs','agent_steps')",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        let conversation_mode: i64 = c
+            .query_row(
+                "SELECT COUNT(*) FROM pragma_table_info('chat_conversations') WHERE name='mode'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        let message_run_link: i64 = c
+            .query_row(
+                "SELECT COUNT(*) FROM pragma_table_info('chat_messages') WHERE name='agent_run_id'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(agent_tables, 2);
+        assert_eq!(conversation_mode, 1);
+        assert_eq!(message_run_link, 1);
     }
     #[test]
     fn title_request_disables_deepseek_thinking() {

@@ -1,8 +1,10 @@
 <script setup>
 import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
-import { BarChart3, Brain } from 'lucide-vue-next'
+import { BarChart3, Brain, Cable, Sparkles } from 'lucide-vue-next'
+import McpManagement from './McpManagement.vue'
 import MemoryManagement from './MemoryManagement.vue'
+import SkillsManagement from './SkillsManagement.vue'
 import UsageStatistics from './UsageStatistics.vue'
 
 const props = defineProps({ modelValue: { type: Boolean, default: false } })
@@ -15,9 +17,11 @@ const visible = computed({
 })
 const navItems = computed(() => [
   { key: 'memory', label: t('memoryManagement'), icon: Brain },
+  { key: 'skills', label: 'Agent 技能', icon: Sparkles },
+  { key: 'mcp', label: 'MCP 服务', icon: Cable },
   { key: 'usage', label: t('usageStatistics'), icon: BarChart3 }
 ])
-const currentComponent = computed(() => activeSection.value === 'usage' ? UsageStatistics : MemoryManagement)
+const currentComponent = computed(() => ({ memory: MemoryManagement, skills: SkillsManagement, mcp: McpManagement, usage: UsageStatistics })[activeSection.value] || MemoryManagement)
 
 function close() {
   visible.value = false

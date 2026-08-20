@@ -36,12 +36,13 @@ Windows x64 NSIS 安装包由 `npm run tauri:build` 生成在：
 - 个人/本地知识库、文件夹、相对路径安全校验、文本导入、递归名称搜索、预览和系统回收站。
 - 主题/语言、SQLite 模型配置（包含 API Key）、OpenAI-compatible SSE、停止/插入/替换/复制/放弃和默认关闭的 FIM。
 - 首页对话模式与笔记 AI 共用 OpenAI-compatible SSE；首页请求按 `chat` 来源写入用量统计，笔记 AI 按 `note_ai` 来源统计。模型返回的 prompt、completion、reasoning 和 total token 会记录到本地 SQLite。
+- Agent 模式已经接入：Rust 负责 OpenAI-compatible Tool Calling 循环、运行状态、审批恢复和工具审计；当前提供知识检索、笔记搜索/读取、笔记创建/修改提案、记忆更新、SANDBOX 文件工具、按需加载的本地 Skills、stdio MCP 工具桥接、隔离式子 Agent 和纯计算脚本沙箱，前端展示可恢复的工具调用时间线和参数级审批。
 
 AI 未配置模型时使用离线演示流；配置模型后请求只从 Rust 发出，API Key 不返回前端。
 
 ## 范围
 
-当前版本聚焦笔记、笔记本、个人/本地知识库文件管理、预览、FTS5 本地知识检索和可审阅的笔记 AI 写作；不包含向量 RAG、通用 Agent、日程、自动化、云同步或 Friday 数据迁移。
+当前版本聚焦笔记、笔记本、个人/本地知识库文件管理、预览、FTS5 本地知识检索、可审阅的笔记 AI 写作和本地 Agent。不包含任意系统 Shell/Python 执行、向量 RAG、日程、自动化、云同步或 Friday 数据迁移。
 
 笔记与知识库页面采用 Friday 前端的页面骨架、间距、状态和样式变量迁移，数据与桌面能力仍由 Tiny Note 自己的 Tauri/Rust 层提供。
 
