@@ -2487,6 +2487,49 @@ pub mod commands {
         }
     }
 
+    pub(super) fn chat_title_request_body(
+        model: &str,
+        provider: &str,
+        base_url: &str,
+        transcript: &str,
+    ) -> serde_json::Value {
+        let mut body = serde_json::json!({
+            "model": model,
+            "stream": false,
+            "temperature": 0.2,
+            "max_tokens": 96,
+            "messages": [
+                {"role":"system","content":"Summarize the conversation into a specific, concise title in the user's language. Capture the actual topic instead of copying the opening sentence. Return only the title, with no quotes, prefix, or ending punctuation. Maximum 18 Chinese characters or 8 words."},
+                {"role":"user","content": transcript}
+            ]
+        });
+        let provider = provider.to_ascii_lowercase();
+        let endpoint = base_url.to_ascii_lowercase();
+        if provider.contains("deepseek") || endpoint.contains("api.deepseek.com") {
+            // DeepSeek v4 enables thinking by default. A short title request can otherwise
+            // spend its whole output budget on reasoning and return an empty `content`.
+            body["thinking"] = serde_json::json!({ "type": "disabled" });
+        }
+        body
+    }
+
+    pub(super) fn chat_title_candidate(payload: &serde_json::Value) -> Option<String> {
+        let candidate = payload["choices"][0]["message"]["content"]
+            .as_str()?
+            .trim()
+            .trim_matches(|character| matches!(character, '"' | '\'' | '“' | '”' | '《' | '》'))
+            .lines()
+            .next()
+            .unwrap_or_default()
+            .trim()
+            .trim_start_matches("标题：")
+            .trim_start_matches("标题:")
+            .trim()
+            .trim_end_matches(['。', '.', '！', '!', '？', '?'])
+            .trim();
+        (!candidate.is_empty()).then(|| candidate.chars().take(36).collect())
+    }
+
     #[tauri::command]
     pub async fn chat_generate_title(
         state: State<'_, AppState>,
@@ -2573,21 +2616,12 @@ pub mod commands {
         let mut title = fallback;
         if let Some((profile_id, base_url, model, provider, api_key)) = profile {
             if !api_key.trim().is_empty() {
+                let body = chat_title_request_body(&model, &provider, &base_url, &transcript);
                 let endpoint = if base_url.ends_with("/chat/completions") {
                     base_url
                 } else {
                     format!("{}/chat/completions", base_url.trim_end_matches('/'))
                 };
-                let body = serde_json::json!({
-                    "model": model,
-                    "stream": false,
-                    "temperature": 0.2,
-                    "max_tokens": 32,
-                    "messages": [
-                        {"role":"system","content":"Based on the user's question and the assistant's answer, generate a concise conversation title in the user's language. Return only the title, without quotes or punctuation wrapping it. Maximum 18 Chinese characters or 8 words."},
-                        {"role":"user","content": transcript}
-                    ]
-                });
                 if let Ok(response) = reqwest::Client::new()
                     .post(endpoint)
                     .bearer_auth(api_key)
@@ -2597,21 +2631,8 @@ pub mod commands {
                 {
                     if response.status().is_success() {
                         if let Ok(payload) = response.json::<serde_json::Value>().await {
-                            if let Some(candidate) =
-                                payload["choices"][0]["message"]["content"].as_str()
-                            {
-                                let candidate = candidate
-                                    .trim()
-                                    .trim_matches(|character| {
-                                        matches!(character, '"' | '\'' | '“' | '”' | '《' | '》')
-                                    })
-                                    .lines()
-                                    .next()
-                                    .unwrap_or_default()
-                                    .trim();
-                                if !candidate.is_empty() {
-                                    title = candidate.chars().take(36).collect();
-                                }
+                            if let Some(candidate) = chat_title_candidate(&payload) {
+                                title = candidate;
                             }
                             let estimated_usage;
                             let usage = if let Some(usage) = payload.get("usage") {
@@ -2828,6 +2849,41 @@ mod tests {
             .unwrap();
         assert_eq!(chat_tables, 2);
         assert_eq!(usage_link, 1);
+    }
+    #[test]
+    fn title_request_disables_deepseek_thinking() {
+        let body = commands::chat_title_request_body(
+            "deepseek-v4-flash",
+            "DeepSeek",
+            "https://api.deepseek.com",
+            "用户：帮我整理项目计划\n助手：可以分为三个阶段",
+        );
+        assert_eq!(body["thinking"]["type"], "disabled");
+        assert_eq!(body["max_tokens"], 96);
+    }
+    #[test]
+    fn title_request_keeps_other_openai_providers_compatible() {
+        let body = commands::chat_title_request_body(
+            "gpt-compatible",
+            "Custom",
+            "https://example.com/v1",
+            "用户：测试\n助手：完成",
+        );
+        assert!(body.get("thinking").is_none());
+    }
+    #[test]
+    fn title_response_normalizes_model_wrapping() {
+        let payload = serde_json::json!({
+            "choices": [{ "message": { "content": "标题：项目阶段规划。\n补充说明" } }]
+        });
+        assert_eq!(
+            commands::chat_title_candidate(&payload).as_deref(),
+            Some("项目阶段规划")
+        );
+        assert!(commands::chat_title_candidate(&serde_json::json!({
+            "choices": [{ "message": { "content": "" } }]
+        }))
+        .is_none());
     }
     #[test]
     fn memory_files_are_allowlisted() {

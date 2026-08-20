@@ -67,7 +67,9 @@ async function generateTitle() {
     const title = await invoke('chat_generate_title', { conversationId: id, modelProfileId: selectedModel.value?.id || null })
     if (conversationId.value === id) conversationTitle.value = title
     window.dispatchEvent(new CustomEvent('tiny-note-chat-updated'))
-  } catch { /* the conversation remains usable if title generation is unavailable */ } finally { titlesGenerating.delete(id) }
+  } catch (cause) {
+    console.warn('Conversation title generation failed', cause)
+  } finally { titlesGenerating.delete(id) }
 }
 async function pushResponse(content) {
   const text = content?.trim()
@@ -187,6 +189,7 @@ async function loadConversation(id) {
     references.value = messages.value.filter(item => item.role === 'user').at(-1)?.references || []
     draft.value = ''
     error.value = ''
+    if (conversationTitle.value === '新对话' && messages.value.some(message => message.role === 'user') && messages.value.some(message => message.role === 'assistant')) generateTitle()
   } catch (cause) {
     error.value = cause?.message || '历史对话读取失败'
     conversationId.value = ''
