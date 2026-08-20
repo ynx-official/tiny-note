@@ -40,6 +40,8 @@ const currentMode = ref('chat')
 const agentSegments = ref([])
 const currentAgentRunId = ref('')
 const pendingApproval = ref(null)
+const approvalBusy = ref(false)
+const approvalError = ref('')
 let activeAgentChannel = null
 const titlesGenerating = new Set()
 const fromHome = computed(() => route.query.from === 'home')
@@ -96,7 +98,7 @@ async function completeResponse() {
     await pushResponse(content)
     if (pendingSummary.value && content.trim()) await createNoteFromText(content, `${conversationTitle.value === '新对话' ? '对话总结' : conversationTitle.value} · 总结`)
     if (messages.value.filter(message => message.role === 'assistant').length === 1) generateTitle()
-  } catch (cause) { error.value = cause?.message || '回复保存失败' } finally { busy.value = false; responseSources.value = []; responseProposal.value = null; pendingSummary.value = false; agentSegments.value = []; currentAgentRunId.value = ''; pendingApproval.value = null; activeAgentChannel = null }
+  } catch (cause) { error.value = cause?.message || '回复保存失败' } finally { busy.value = false; responseSources.value = []; responseProposal.value = null; pendingSummary.value = false; agentSegments.value = []; currentAgentRunId.value = ''; pendingApproval.value = null; approvalBusy.value = false; approvalError.value = ''; activeAgentChannel = null }
 }
 function ensureContextConsent() {
   const modelId = selectedModel.value?.id
@@ -171,6 +173,7 @@ function createResponseChannel() {
     if (event.type === 'approvalRequired') {
       const segment = agentSegments.value.find(item => item.id === event.toolCallId)
       if (segment) segment.status = 'awaiting_approval'
+      approvalError.value = ''
       pendingApproval.value = { runId: event.runId, toolCallId: event.toolCallId, toolName: event.toolName, arguments: event.arguments || {}, approvalHash: event.approvalHash, description: event.description || 'Agent 请求执行写操作' }
     }
     if (event.type === 'toolResult') {
@@ -188,20 +191,23 @@ function createResponseChannel() {
 
 async function decideApproval(decision) {
   const approval = pendingApproval.value
-  if (!approval) return
+  if (!approval || approvalBusy.value) return
   error.value = ''
+  approvalError.value = ''
+  approvalBusy.value = true
   const channel = activeAgentChannel || createResponseChannel()
   activeAgentChannel = channel
-  pendingApproval.value = null
   const segment = agentSegments.value.find(item => item.id === approval.toolCallId)
   if (segment) segment.status = decision === 'approve' ? 'running' : 'rejected'
   try {
     await invoke('agent_resume', { request: { runId: approval.runId, toolCallId: approval.toolCallId, approvalHash: approval.approvalHash, decision, reason: decision === 'reject' ? '用户拒绝执行此操作' : null }, onEvent: channel })
+    if (pendingApproval.value?.toolCallId === approval.toolCallId) pendingApproval.value = null
   } catch (cause) {
-    error.value = cause?.message || cause?.code || '审批回传失败'
+    approvalError.value = cause?.message || cause?.code || '审批回传失败'
+    error.value = approvalError.value
     pendingApproval.value = approval
     if (segment) segment.status = 'awaiting_approval'
-  }
+  } finally { approvalBusy.value = false }
 }
 
 async function sendMessage(value, messageReferences = references.value) {
@@ -416,14 +422,17 @@ function formatToolDetail(value) {
       <div v-if="error" class="chat-page-error">{{ error }} <button type="button" @click="router.push('/settings')">打开模型设置</button></div>
       <div v-if="savedNote" class="chat-page-saved"><FileText :size="15" /><span>已保存为「{{ savedNote.title }}」</span><button type="button" @click="openSavedNote">打开笔记</button><button type="button" class="is-close" title="关闭" @click="savedNote = null"><X :size="13" /></button></div>
     </main>
-    <div v-if="pendingApproval" class="agent-approval-overlay" role="presentation">
-      <section class="agent-approval-dialog" role="dialog" aria-modal="true" aria-labelledby="agent-approval-title">
-        <div class="agent-approval-heading"><span><Wrench :size="18" /></span><div><strong id="agent-approval-title">确认 Agent 操作</strong><small>{{ pendingApproval.description }}</small></div></div>
-        <div class="agent-approval-tool"><b>{{ toolLabel(pendingApproval.toolName) }}</b><pre>{{ formatToolDetail(pendingApproval.arguments) }}</pre></div>
-        <p>批准仅对以上参数生效；如果参数发生变化，Agent 会重新请求确认。</p>
-        <div class="agent-approval-actions"><button type="button" class="is-reject" @click="decideApproval('reject')">拒绝</button><button type="button" class="is-approve" @click="decideApproval('approve')">批准并继续</button></div>
-      </section>
-    </div>
+    <Teleport to="body">
+      <div v-if="pendingApproval" class="agent-approval-overlay" role="presentation" @pointerdown.stop @click.stop>
+        <section class="agent-approval-dialog" role="dialog" aria-modal="true" aria-labelledby="agent-approval-title">
+          <div class="agent-approval-heading"><span><Wrench :size="18" /></span><div><strong id="agent-approval-title">确认 Agent 操作</strong><small>{{ pendingApproval.description }}</small></div></div>
+          <div class="agent-approval-tool"><b>{{ toolLabel(pendingApproval.toolName) }}</b><pre>{{ formatToolDetail(pendingApproval.arguments) }}</pre></div>
+          <p>批准仅对以上参数生效；如果参数发生变化，Agent 会重新请求确认。</p>
+          <p v-if="approvalError" class="agent-approval-error">{{ approvalError }}</p>
+          <div class="agent-approval-actions"><button type="button" class="is-reject" :disabled="approvalBusy" @click="decideApproval('reject')">拒绝</button><button type="button" class="is-approve" :disabled="approvalBusy" @click="decideApproval('approve')"><LoaderCircle v-if="approvalBusy" class="is-spinning" :size="14" />{{ approvalBusy ? '正在继续…' : '批准并继续' }}</button></div>
+        </section>
+      </div>
+    </Teleport>
     <form class="chat-page-composer" @submit.prevent="submit">
       <div v-if="references.length" class="chat-reference-tags"><span v-for="reference in references" :key="reference.key"><FileText v-if="reference.type === 'note'" :size="13" /><File v-else :size="13" />{{ reference.name }}<button type="button" @click="removeReference(reference.key)"><X :size="12" /></button></span></div>
       <textarea v-model="draft" rows="2" placeholder="输入消息..." @keydown.enter.exact.prevent="submit"></textarea>

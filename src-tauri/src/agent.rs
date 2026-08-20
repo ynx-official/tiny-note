@@ -565,6 +565,17 @@ pub fn agent_list_tools() -> Vec<AgentToolDto> {
     list_tools()
 }
 
+fn clear_cancel_if_current(state: &AppState, request_id: &str, cancel: &Arc<AtomicBool>) {
+    if let Ok(mut values) = state.cancels.lock() {
+        let is_current = values
+            .get(request_id)
+            .is_some_and(|current| Arc::ptr_eq(current, cancel));
+        if is_current {
+            values.remove(request_id);
+        }
+    }
+}
+
 #[tauri::command]
 pub fn agent_invoke(
     state: State<'_, AppState>,
@@ -593,7 +604,6 @@ pub fn agent_invoke(
         ));
     }
     let state_for_task = state.inner().clone();
-    let cancels = state.cancels.clone();
     thread::spawn(move || {
         let request_id = request.request_id.clone();
         let result = tokio::runtime::Builder::new_current_thread()
@@ -607,7 +617,12 @@ pub fn agent_invoke(
                 )
             })
             .and_then(|runtime| {
-                runtime.block_on(run_agent(&state_for_task, &request, &on_event, cancel))
+                runtime.block_on(run_agent(
+                    &state_for_task,
+                    &request,
+                    &on_event,
+                    cancel.clone(),
+                ))
             });
         if let Err((run_id, code, message)) = result {
             if let Some(id) = run_id.as_deref() {
@@ -620,7 +635,7 @@ pub fn agent_invoke(
                 message,
             });
         }
-        let _ = cancels.lock().map(|mut values| values.remove(&request_id));
+        clear_cancel_if_current(&state_for_task, &request_id, &cancel);
     });
     Ok(())
 }
@@ -670,7 +685,6 @@ pub fn agent_resume(
         ));
     }
     let state_for_task = state.inner().clone();
-    let cancels = state.cancels.clone();
     thread::spawn(move || {
         let request_id = descriptor.request_id.clone();
         let run_id = descriptor.run_id.clone();
@@ -691,7 +705,7 @@ pub fn agent_resume(
                     continuation,
                     request,
                     &on_event,
-                    cancel,
+                    cancel.clone(),
                 ))
             });
         if let Err((failed_run_id, code, message)) = result {
@@ -705,7 +719,7 @@ pub fn agent_resume(
                 message,
             });
         }
-        let _ = cancels.lock().map(|mut values| values.remove(&request_id));
+        clear_cancel_if_current(&state_for_task, &request_id, &cancel);
     });
     Ok(())
 }
@@ -1042,6 +1056,14 @@ fn process_pending_calls(
                 .map_err(|_| "无法保存 Agent 状态".to_string())?;
             set_run_status(state, &descriptor.run_id, "awaiting_approval")
                 .map_err(|_| "无法保存审批状态".to_string())?;
+            // The current worker stops after emitting ApprovalRequired. Release its
+            // request slot before the UI can call agent_resume, otherwise a fast
+            // approval races the worker cleanup and is rejected as a duplicate.
+            state
+                .cancels
+                .lock()
+                .map_err(|_| "无法释放待审批请求".to_string())?
+                .remove(&descriptor.request_id);
             let _ = on_event.send(AgentEvent::ApprovalRequired {
                 request_id: descriptor.request_id.clone(),
                 run_id: descriptor.run_id.clone(),
@@ -2050,6 +2072,27 @@ mod tests {
         let first = approval_hash("create_note", &json!({"title":"A","contentMarkdown":"one"}));
         let second = approval_hash("create_note", &json!({"title":"A","contentMarkdown":"two"}));
         assert_ne!(first, second);
+    }
+
+    #[test]
+    fn stale_worker_cannot_clear_resumed_request_slot() {
+        let state = test_state();
+        let old = Arc::new(AtomicBool::new(false));
+        let resumed = Arc::new(AtomicBool::new(false));
+        state
+            .cancels
+            .lock()
+            .unwrap()
+            .insert("request-1".into(), resumed.clone());
+
+        clear_cancel_if_current(&state, "request-1", &old);
+        let stored = state.cancels.lock().unwrap().get("request-1").cloned();
+        assert!(stored
+            .as_ref()
+            .is_some_and(|current| Arc::ptr_eq(current, &resumed)));
+
+        clear_cancel_if_current(&state, "request-1", &resumed);
+        assert!(!state.cancels.lock().unwrap().contains_key("request-1"));
     }
 
     #[test]
