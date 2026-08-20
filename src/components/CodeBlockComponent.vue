@@ -132,7 +132,7 @@ async function handleCopy() {
   font-size: 12px;
   cursor: pointer;
 }
-.language-select:focus { box-shadow: 0 0 0 2px rgba(37,99,235,.18); }
+.language-select:focus { box-shadow: none; }
 
 .code-block-content { display: flex; overflow: hidden; }
 .line-numbers {

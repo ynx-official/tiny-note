@@ -10,7 +10,27 @@ export const useNotesStore = defineStore('notes', { state: () => ({ notes: [], d
   async save(note) { this.saving = true; try { const updated = await invoke('note_update', { id: note.id, input: { title: note.title, notebookId: note.notebookId, contentHtml: note.contentHtml, contentText: note.contentText } }); if (updated) Object.assign(note, updated) } finally { this.saving = false } },
   scheduleSave(note) { clearTimeout(this.saveTimer); this.saveTimer = setTimeout(() => this.save(note), 800) },
   async remove(id) { await invoke('note_delete', { id }); this.notes = this.notes.filter(n => n.id !== id); if (this.activeId === id) this.activeId = this.notes[0]?.id || null; await this.load() },
+  async purge(id) { await invoke('note_purge', { id }); if (this.activeId === id) this.activeId = this.notes[0]?.id || null; await this.load() },
   async restore(id) { await invoke('note_restore', { id }); await this.load() },
+  async rename(id, title) {
+    const note = [...this.notes, ...this.deleted].find(item => item.id === id)
+    if (!note || !title?.trim()) return null
+    const updated = await invoke('note_update', { id, input: { title: title.trim(), notebookId: note.notebookId, contentHtml: note.contentHtml, contentText: note.contentText } })
+    if (updated) Object.assign(note, updated)
+    return updated
+  },
+  async duplicate(id) {
+    const copy = await invoke('note_copy', { id })
+    if (copy) { this.notes.unshift(copy); this.activeId = copy.id }
+    return copy
+  },
+  async move(id, notebookId) {
+    await invoke('note_move', { id, notebookId: notebookId || null })
+    const note = [...this.notes, ...this.deleted].find(item => item.id === id)
+    if (note) note.notebookId = notebookId || null
+    return note
+  },
   async createNotebook(name) { await invoke('notebook_create', { name }); await this.load() },
+  async updateNotebook(id, name) { await invoke('notebook_update', { id, name, description: '' }); await this.load() },
   async deleteNotebook(id) { await invoke('notebook_delete', { id }); await this.load() }
 } })

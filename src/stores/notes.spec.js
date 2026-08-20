@@ -44,4 +44,18 @@ describe('notes store', () => {
     expect(note.contentHtml).toContain('<h1>Guide</h1>')
     expect(note.contentHtml).not.toContain('<script>')
   })
+
+  it('supports context-menu note actions', async () => {
+    const store = useNotesStore()
+    await store.load()
+    const note = await store.create()
+    await store.rename(note.id, '右键菜单笔记')
+    const copy = await store.duplicate(note.id)
+    expect(copy.title).toBe('右键菜单笔记 副本')
+    await store.move(copy.id, null)
+    expect(store.notes.find(item => item.id === copy.id).notebookId).toBe(null)
+    await store.remove(copy.id)
+    await store.purge(copy.id)
+    expect(store.deleted.some(item => item.id === copy.id)).toBe(false)
+  })
 })

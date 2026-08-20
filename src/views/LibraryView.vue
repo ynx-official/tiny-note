@@ -99,12 +99,12 @@ function selectBase(id) { store.selectBase(id) }
         <div class="kb-section">
           <div class="section-label"><span>{{ t('personal') }}</span><button class="kb-add-button" title="新建知识库" @click.stop="category = 'personal'; creating = true"><Plus :size="14" /></button></div>
           <div v-for="kb in personalBases" :key="kb.id" class="kb-item">
-            <button :class="['kb-row', { active: kb.id === store.activeId }]" @click="selectBase(kb.id)"><span class="kb-dot peach"></span><span class="kb-row-name">{{ kb.name }}</span></button>
+            <button :class="['kb-row', { active: kb.id === store.activeId }]" @click="selectBase(kb.id)"><svg class="kb-icon" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M2 3h6a4 4 0 0 1 4 4v14a3 3 0 0 0-3-3H2z"/><path d="M22 3h-6a4 4 0 0 0-4 4v14a3 3 0 0 1 3-3h7z"/></svg><span class="kb-row-name">{{ kb.name }}</span></button>
             <span class="kb-row-actions"><button title="重命名" @click.stop="renameBase(kb)"><Pencil :size="13" /></button><button title="移入回收站" @click.stop="deleteBase(kb)"><Trash2 :size="13" /></button></span>
           </div>
           <div class="section-label local-label"><span>{{ t('local') }}</span><button class="kb-add-button" title="新建知识库" @click.stop="category = 'local'; creating = true"><Plus :size="14" /></button></div>
           <div v-for="kb in localBases" :key="kb.id" class="kb-item">
-            <button :class="['kb-row', { active: kb.id === store.activeId }]" @click="selectBase(kb.id)"><span class="kb-dot blue"></span><span class="kb-row-name">{{ kb.name }}</span></button>
+            <button :class="['kb-row', { active: kb.id === store.activeId }]" @click="selectBase(kb.id)"><svg class="kb-icon" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M2 3h6a4 4 0 0 1 4 4v14a3 3 0 0 0-3-3H2z"/><path d="M22 3h-6a4 4 0 0 0-4 4v14a3 3 0 0 1 3-3h7z"/></svg><span class="kb-row-name">{{ kb.name }}</span></button>
             <span class="kb-row-actions"><button title="重命名" @click.stop="renameBase(kb)"><Pencil :size="13" /></button><button title="移入回收站" @click.stop="deleteBase(kb)"><Trash2 :size="13" /></button></span>
           </div>
         </div>

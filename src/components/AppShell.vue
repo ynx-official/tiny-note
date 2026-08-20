@@ -3,7 +3,7 @@ import { computed, onMounted, onUnmounted, ref } from 'vue'
 import { useRouter } from 'vue-router'
 import { useI18n } from 'vue-i18n'
 import { getCurrentWindow } from '@tauri-apps/api/window'
-import { FileText, Library, Settings, Plus, Minus, Square, Copy, X, Bot, PanelLeftClose, PanelLeftOpen, Home } from 'lucide-vue-next'
+import { BookOpen, FileText, Settings, Plus, Minus, Square, Copy, X, PanelLeftClose, PanelLeftOpen, Home } from 'lucide-vue-next'
 
 const props = defineProps({ active: String })
 const router = useRouter()
@@ -13,7 +13,7 @@ const railCollapsed = ref(false)
 const isMaximized = ref(false)
 let appWindow = null
 let stopResizeListener = null
-const nav = computed(() => [{ key: 'notes', label: t('notes'), icon: FileText, path: '/notes' }, { key: 'library', label: t('library'), icon: Library, path: '/library' }, { key: 'settings', label: t('settings'), icon: Settings, path: '/settings' }])
+const nav = computed(() => [{ key: 'notes', label: t('notes'), icon: FileText, path: '/notes' }, { key: 'library', label: t('library'), icon: BookOpen, path: '/library' }, { key: 'settings', label: t('settings'), icon: Settings, path: '/settings' }])
 function navigate(path) { router.push(path) }
 
 function tauriWindow() {
@@ -61,9 +61,8 @@ onUnmounted(() => { if (stopResizeListener) stopResizeListener() })
 <template>
   <div class="window-shell app-container">
     <header class="topbar tauri-drag-region" @mousedown="startWindowDrag">
-      <div class="topbar-leading"><button class="sidebar-toggle-btn" :title="railCollapsed ? '展开导航' : '收起导航'" @click="railCollapsed = !railCollapsed"><PanelLeftOpen v-if="railCollapsed" :size="17" /><PanelLeftClose v-else :size="17" /></button></div>
-      <div class="brand"><span v-if="isMac" class="platform-dots"><i class="dot-red"></i><i class="dot-yellow"></i><i class="dot-green"></i></span><span class="brand-mark"><Bot :size="20" /></span><span>{{ t('appName') }}</span></div>
-      <div class="tab-strip"><button v-for="tab in [{ key: 'home', label: t('appName'), path: '/', icon: Home }, { key: 'notes', label: t('notes'), path: '/notes', icon: FileText }, { key: 'library', label: t('library'), path: '/library', icon: Library }]" :key="tab.key" :class="['tab', { active: active === tab.key }]" @click="navigate(tab.path)"><component :is="tab.icon" :size="16" /><span>{{ tab.label }}</span><span v-if="active === tab.key" class="tab-close">×</span></button><button v-if="active === 'settings'" class="tab active" @click="navigate('/settings')"><Settings :size="16" /><span>{{ t('settings') }}</span><span class="tab-close">×</span></button><button class="tab-plus" :title="t('newNote')" @click="navigate('/notes?new=1')"><Plus :size="15" /></button></div>
+      <div class="topbar-leading"><button class="sidebar-toggle-btn" :title="railCollapsed ? '展开导航' : '收起导航'" @click="railCollapsed = !railCollapsed"><PanelLeftOpen v-if="railCollapsed" :size="16" :stroke-width="1.8" /><PanelLeftClose v-else :size="16" :stroke-width="1.8" /></button></div>
+      <div class="tab-strip"><button v-for="tab in [{ key: 'home', label: t('appName'), path: '/', icon: Home }, { key: 'notes', label: t('notes'), path: '/notes', icon: FileText }, { key: 'library', label: t('library'), path: '/library', icon: FolderKanban }]" :key="tab.key" :class="['tab', { active: active === tab.key }]" @click="navigate(tab.path)"><component :is="tab.icon" :size="14" :stroke-width="1.8" /><span>{{ tab.label }}</span><span v-if="active === tab.key" class="tab-close">×</span></button><button v-if="active === 'settings'" class="tab active" @click="navigate('/settings')"><Settings :size="14" :stroke-width="1.8" /><span>{{ t('settings') }}</span><span class="tab-close">×</span></button><button class="tab-plus" :title="t('newNote')" @click="navigate('/notes?new=1')"><Plus :size="16" :stroke-width="2" /></button><div class="tabs-area-spacer"></div></div>
       <div v-if="!isMac" class="window-actions"><button aria-label="Minimize" title="Minimize" @click="minimizeWindow"><Minus :size="15" /></button><button :aria-label="isMaximized ? 'Restore' : 'Maximize'" :title="isMaximized ? 'Restore' : 'Maximize'" @click="toggleMaximize"><Copy v-if="isMaximized" :size="13" /><Square v-else :size="13" /></button><button class="close" aria-label="Close" title="Close" @click="closeWindow"><X :size="15" /></button></div>
     </header>
     <div class="app-body main-body">
