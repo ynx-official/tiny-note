@@ -1,5 +1,5 @@
 <script setup>
-import { computed, nextTick, onMounted, ref, watch } from 'vue'
+import { computed, nextTick, onMounted, onUnmounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { Channel } from '@tauri-apps/api/core'
 import { ArrowLeft, Copy, Plus, Send, Sparkles, Square } from 'lucide-vue-next'
@@ -18,6 +18,9 @@ const streamingText = ref('')
 const error = ref('')
 const requestId = ref('')
 const messagesRef = ref(null)
+const conversationId = ref('')
+const conversationTitle = ref('新对话')
+const titlesGenerating = new Set()
 const fromHome = computed(() => route.query.from === 'home')
 const selectedModel = computed(() => models.value.find(model => model.id === selectedModelId.value) || models.value.find(model => model.isDefault) || models.value[0] || null)
 
@@ -31,32 +34,76 @@ function assistantContext() {
   const history = messages.value.slice(-8).map(item => `${item.role === 'user' ? '用户' : '助手'}：${item.content}`).join('\n')
   return [referenceText ? `用户选择的引用：\n${referenceText}` : '', history ? `此前对话：\n${history}` : ''].filter(Boolean).join('\n\n') || '无额外上下文'
 }
-function pushResponse(content) {
-  if (content?.trim()) messages.value.push({ role: 'assistant', content: content.trim() })
+async function ensureConversation() {
+  if (conversationId.value) return conversationId.value
+  const conversation = await invoke('chat_create', { modelProfileId: selectedModel.value?.id || null })
+  conversationId.value = conversation.id
+  conversationTitle.value = conversation.title
+  await router.replace({ path: '/chat', query: { id: conversation.id } })
+  window.dispatchEvent(new CustomEvent('tiny-note-chat-updated'))
+  return conversation.id
+}
+async function saveMessage(role, content, messageReferences = []) {
+  const id = await ensureConversation()
+  const saved = await invoke('chat_add_message', { conversationId: id, role, content, references: messageReferences })
+  window.dispatchEvent(new CustomEvent('tiny-note-chat-updated'))
+  return saved
+}
+async function generateTitle() {
+  const id = conversationId.value
+  if (!id || conversationTitle.value !== '新对话' || titlesGenerating.has(id)) return
+  titlesGenerating.add(id)
+  try {
+    const title = await invoke('chat_generate_title', { conversationId: id, modelProfileId: selectedModel.value?.id || null })
+    if (conversationId.value === id) conversationTitle.value = title
+    window.dispatchEvent(new CustomEvent('tiny-note-chat-updated'))
+  } catch { /* the conversation remains usable if title generation is unavailable */ } finally { titlesGenerating.delete(id) }
+}
+async function pushResponse(content) {
+  const text = content?.trim()
+  if (!text) return
+  const saved = await saveMessage('assistant', text)
+  messages.value.push(saved)
+}
+async function completeResponse() {
+  const content = streamingText.value === '正在思考…' ? '模型没有返回内容，请换个问法再试。' : streamingText.value
+  streamingText.value = ''
+  try {
+    await pushResponse(content)
+    if (messages.value.filter(message => message.role === 'assistant').length === 1) generateTitle()
+  } catch (cause) { error.value = cause?.message || '回复保存失败' } finally { busy.value = false }
 }
 async function sendMessage(value, messageReferences = references.value) {
   const message = String(value || '').trim()
   if (!message || busy.value) return
   references.value = messageReferences || []
-  messages.value.push({ role: 'user', content: message, references: references.value.map(item => ({ ...item })) })
+  const messageReferenceCopies = references.value.map(item => ({ ...item }))
+  let savedUserMessage
+  try {
+    savedUserMessage = await saveMessage('user', message, messageReferenceCopies)
+  } catch (cause) {
+    error.value = cause?.message || cause?.code || '消息保存失败'
+    return
+  }
+  messages.value.push(savedUserMessage)
   draft.value = ''
   error.value = ''
   busy.value = true
   streamingText.value = '正在思考…'
   requestId.value = crypto.randomUUID()
   if (!window.__TAURI_INTERNALS__) {
-    window.setTimeout(() => { pushResponse(`这是浏览器预览回复：${message}`); streamingText.value = ''; busy.value = false }, 500)
+    window.setTimeout(async () => { streamingText.value = `这是浏览器预览回复：${message}`; await completeResponse() }, 500)
     return
   }
   const channel = new Channel()
-  channel.onmessage = event => {
+  channel.onmessage = async event => {
     if (event.type === 'delta') { if (streamingText.value === '正在思考…') streamingText.value = ''; streamingText.value += event.text }
     if (event.type === 'error') { error.value = event.message || '模型请求失败'; streamingText.value = ''; busy.value = false }
     if (event.type === 'cancelled') { streamingText.value = ''; busy.value = false }
-    if (event.type === 'completed') { pushResponse(streamingText.value === '正在思考…' ? '模型没有返回内容，请换个问法再试。' : streamingText.value); streamingText.value = ''; busy.value = false }
+    if (event.type === 'completed') await completeResponse()
   }
   try {
-    await invoke('note_ai_stream', { request: { requestId: requestId.value, action: 'custom', text: assistantContext(), instruction: message, modelProfileId: selectedModel.value?.id || null, thinkingMode: thinkingMode.value, source: 'chat' }, onEvent: channel })
+    await invoke('note_ai_stream', { request: { requestId: requestId.value, action: 'custom', text: assistantContext(), instruction: message, modelProfileId: selectedModel.value?.id || null, thinkingMode: thinkingMode.value, source: 'chat', conversationId: conversationId.value }, onEvent: channel })
   } catch (cause) { error.value = cause?.message || cause?.code || '模型请求失败'; streamingText.value = ''; busy.value = false }
 }
 function submit() { if (!busy.value) sendMessage(draft.value) }
@@ -73,12 +120,43 @@ function newChat() {
   references.value = []
   draft.value = ''
   error.value = ''
+  conversationId.value = ''
+  conversationTitle.value = '新对话'
+  router.replace('/chat')
 }
 async function copyMessage(content) { if (content) await navigator.clipboard?.writeText(content) }
 
+async function loadConversation(id) {
+  if (!id || id === conversationId.value) return
+  if (busy.value) await stop()
+  try {
+    const thread = await invoke('chat_get', { id })
+    if (!thread) throw new Error('对话不存在')
+    conversationId.value = thread.conversation.id
+    conversationTitle.value = thread.conversation.title
+    selectedModelId.value = thread.conversation.modelProfileId || selectedModelId.value
+    messages.value = thread.messages || []
+    references.value = messages.value.filter(item => item.role === 'user').at(-1)?.references || []
+    draft.value = ''
+    error.value = ''
+  } catch (cause) {
+    error.value = cause?.message || '历史对话读取失败'
+    conversationId.value = ''
+    messages.value = []
+  }
+}
+function handleDeleted(event) { if (event.detail?.id === conversationId.value) newChat() }
+
 watch(() => [messages.value.length, streamingText.value, busy.value], scrollToBottom, { flush: 'post' })
+watch(() => route.query.id, id => { if (id) loadConversation(String(id)); else if (conversationId.value && !busy.value) { conversationId.value = ''; conversationTitle.value = '新对话'; messages.value = [] } })
 onMounted(async () => {
   models.value = await invoke('model_list')
+  window.addEventListener('tiny-note-chat-deleted', handleDeleted)
+  if (route.query.id) {
+    selectedModelId.value = models.value.find(model => model.isDefault)?.id || models.value[0]?.id || ''
+    await loadConversation(String(route.query.id))
+    return
+  }
   let pending = null
   try {
     pending = JSON.parse(sessionStorage.getItem('tiny-note-chat-pending') || 'null')
@@ -89,13 +167,14 @@ onMounted(async () => {
   references.value = pending?.references || []
   if (pending?.message) await sendMessage(pending.message, references.value)
 })
+onUnmounted(() => window.removeEventListener('tiny-note-chat-deleted', handleDeleted))
 </script>
 
 <template>
   <div class="chat-page">
     <header class="chat-page-header">
       <div class="chat-page-header-side"><button v-if="fromHome" type="button" class="chat-page-back" title="返回首页" @click="goBack"><ArrowLeft :size="17" /><span>返回</span></button></div>
-      <div class="chat-page-title"><span class="chat-page-avatar"><Sparkles :size="15" /></span><div><strong>周五</strong><small>{{ selectedModel ? `${selectedModel.provider} · ${selectedModel.model}` : 'Tiny Note 助手' }}</small></div></div>
+      <div class="chat-page-title"><span class="chat-page-avatar"><Sparkles :size="15" /></span><div><strong>{{ conversationTitle === '新对话' ? '周五' : conversationTitle }}</strong><small>{{ selectedModel ? `${selectedModel.provider} · ${selectedModel.model}` : 'Tiny Note 助手' }}</small></div></div>
       <div class="chat-page-header-side is-right"><button type="button" class="chat-page-icon" title="新对话" @click="newChat"><Plus :size="18" /></button></div>
     </header>
     <main ref="messagesRef" class="chat-page-messages" aria-live="polite">

@@ -231,6 +231,36 @@ pub struct UsageStatsDto {
 
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
+pub struct ChatConversationDto {
+    pub id: String,
+    pub title: String,
+    pub model_profile_id: Option<String>,
+    pub message_count: i64,
+    pub preview: String,
+    pub created_at: String,
+    pub updated_at: String,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ChatMessageDto {
+    pub id: String,
+    pub conversation_id: String,
+    pub role: String,
+    pub content: String,
+    pub references: serde_json::Value,
+    pub created_at: String,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ChatThreadDto {
+    pub conversation: ChatConversationDto,
+    pub messages: Vec<ChatMessageDto>,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
 pub struct BalanceDto {
     pub supported: bool,
     pub available: Option<bool>,
@@ -281,6 +311,8 @@ pub struct AiRequest {
     pub thinking_mode: Option<String>,
     #[serde(default)]
     pub source: Option<String>,
+    #[serde(default)]
+    pub conversation_id: Option<String>,
 }
 
 #[derive(Debug, Serialize, Clone)]
@@ -317,8 +349,12 @@ fn init_database(conn: &Connection) -> Result<(), AppError> {
       CREATE INDEX IF NOT EXISTS idx_notes_deleted_updated ON notes(deleted_at, updated_at);
       CREATE TABLE IF NOT EXISTS knowledge_bases (id TEXT PRIMARY KEY, category TEXT NOT NULL CHECK(category IN ('personal','local')), name TEXT NOT NULL, description TEXT NOT NULL DEFAULT '', cover TEXT, root_path TEXT NOT NULL, created_at TEXT NOT NULL, updated_at TEXT NOT NULL);
       CREATE TABLE IF NOT EXISTS model_profiles (id TEXT PRIMARY KEY, name TEXT NOT NULL, provider TEXT NOT NULL, base_url TEXT NOT NULL, model TEXT NOT NULL, api_key TEXT NOT NULL DEFAULT '', is_default INTEGER NOT NULL DEFAULT 0);
-      CREATE TABLE IF NOT EXISTS usage_records (id TEXT PRIMARY KEY, ts INTEGER NOT NULL, model_id TEXT NOT NULL DEFAULT '', model_name TEXT NOT NULL DEFAULT '', provider TEXT NOT NULL DEFAULT '', source TEXT NOT NULL DEFAULT 'chat', prompt_tokens INTEGER NOT NULL DEFAULT 0, completion_tokens INTEGER NOT NULL DEFAULT 0, total_tokens INTEGER NOT NULL DEFAULT 0, reasoning_tokens INTEGER NOT NULL DEFAULT 0);
+      CREATE TABLE IF NOT EXISTS usage_records (id TEXT PRIMARY KEY, ts INTEGER NOT NULL, model_id TEXT NOT NULL DEFAULT '', model_name TEXT NOT NULL DEFAULT '', provider TEXT NOT NULL DEFAULT '', source TEXT NOT NULL DEFAULT 'chat', conversation_id TEXT NOT NULL DEFAULT '', prompt_tokens INTEGER NOT NULL DEFAULT 0, completion_tokens INTEGER NOT NULL DEFAULT 0, total_tokens INTEGER NOT NULL DEFAULT 0, reasoning_tokens INTEGER NOT NULL DEFAULT 0);
       CREATE INDEX IF NOT EXISTS idx_usage_records_ts ON usage_records(ts);
+      CREATE TABLE IF NOT EXISTS chat_conversations (id TEXT PRIMARY KEY, title TEXT NOT NULL DEFAULT '新对话', model_profile_id TEXT, created_at TEXT NOT NULL, updated_at TEXT NOT NULL);
+      CREATE INDEX IF NOT EXISTS idx_chat_conversations_updated ON chat_conversations(updated_at DESC);
+      CREATE TABLE IF NOT EXISTS chat_messages (id TEXT PRIMARY KEY, conversation_id TEXT NOT NULL REFERENCES chat_conversations(id) ON DELETE CASCADE, role TEXT NOT NULL CHECK(role IN ('user','assistant')), content TEXT NOT NULL, references_json TEXT NOT NULL DEFAULT '[]', created_at TEXT NOT NULL);
+      CREATE INDEX IF NOT EXISTS idx_chat_messages_conversation ON chat_messages(conversation_id, created_at);
       CREATE TABLE IF NOT EXISTS settings (key TEXT PRIMARY KEY, value TEXT NOT NULL);")
         .map_err(AppError::db)?;
     let model_columns = {
@@ -333,6 +369,25 @@ fn init_database(conn: &Connection) -> Result<(), AppError> {
     if !model_columns.iter().any(|column| column == "api_key") {
         conn.execute(
             "ALTER TABLE model_profiles ADD COLUMN api_key TEXT NOT NULL DEFAULT ''",
+            [],
+        )
+        .map_err(AppError::db)?;
+    }
+    let usage_columns = {
+        let mut statement = conn
+            .prepare("PRAGMA table_info(usage_records)")
+            .map_err(AppError::db)?;
+        let rows = statement
+            .query_map([], |row| row.get::<_, String>(1))
+            .map_err(AppError::db)?;
+        rows.collect::<Result<Vec<_>, _>>().map_err(AppError::db)?
+    };
+    if !usage_columns
+        .iter()
+        .any(|column| column == "conversation_id")
+    {
+        conn.execute(
+            "ALTER TABLE usage_records ADD COLUMN conversation_id TEXT NOT NULL DEFAULT ''",
             [],
         )
         .map_err(AppError::db)?;
@@ -450,6 +505,157 @@ fn note_from_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<NoteDto> {
 
 pub mod commands {
     use super::*;
+
+    fn chat_conversation_from_row(
+        row: &rusqlite::Row<'_>,
+    ) -> rusqlite::Result<ChatConversationDto> {
+        Ok(ChatConversationDto {
+            id: row.get(0)?,
+            title: row.get(1)?,
+            model_profile_id: row.get(2)?,
+            message_count: row.get(3)?,
+            preview: row.get(4)?,
+            created_at: row.get(5)?,
+            updated_at: row.get(6)?,
+        })
+    }
+
+    const CHAT_CONVERSATION_SELECT: &str = "SELECT c.id,c.title,c.model_profile_id,(SELECT COUNT(*) FROM chat_messages m WHERE m.conversation_id=c.id),COALESCE((SELECT content FROM chat_messages m WHERE m.conversation_id=c.id ORDER BY m.created_at DESC,m.rowid DESC LIMIT 1),''),c.created_at,c.updated_at FROM chat_conversations c";
+
+    #[tauri::command]
+    pub fn chat_list(state: State<'_, AppState>) -> Result<Vec<ChatConversationDto>, AppError> {
+        let conn = state
+            .db
+            .lock()
+            .map_err(|_| AppError::db("database lock poisoned"))?;
+        let sql = format!("{CHAT_CONVERSATION_SELECT} ORDER BY c.updated_at DESC");
+        let result = conn
+            .prepare(&sql)
+            .map_err(AppError::db)?
+            .query_map([], chat_conversation_from_row)
+            .map_err(AppError::db)?
+            .collect::<Result<Vec<_>, _>>()
+            .map_err(AppError::db);
+        result
+    }
+
+    #[tauri::command]
+    pub fn chat_create(
+        state: State<'_, AppState>,
+        model_profile_id: Option<String>,
+    ) -> Result<ChatConversationDto, AppError> {
+        let id = Uuid::new_v4().to_string();
+        let timestamp = now();
+        let conn = state
+            .db
+            .lock()
+            .map_err(|_| AppError::db("database lock poisoned"))?;
+        conn.execute(
+            "INSERT INTO chat_conversations(id,title,model_profile_id,created_at,updated_at) VALUES (?1,'新对话',?2,?3,?3)",
+            params![id, model_profile_id, timestamp],
+        )
+        .map_err(AppError::db)?;
+        let sql = format!("{CHAT_CONVERSATION_SELECT} WHERE c.id=?1");
+        conn.query_row(&sql, params![id], chat_conversation_from_row)
+            .map_err(AppError::db)
+    }
+
+    #[tauri::command]
+    pub fn chat_get(state: State<'_, AppState>, id: String) -> Result<ChatThreadDto, AppError> {
+        let conn = state
+            .db
+            .lock()
+            .map_err(|_| AppError::db("database lock poisoned"))?;
+        let sql = format!("{CHAT_CONVERSATION_SELECT} WHERE c.id=?1");
+        let conversation = conn
+            .query_row(&sql, params![id], chat_conversation_from_row)
+            .optional()
+            .map_err(AppError::db)?
+            .ok_or_else(|| AppError::not_found("chat_not_found", "Conversation not found"))?;
+        let messages = conn
+            .prepare("SELECT id,conversation_id,role,content,references_json,created_at FROM chat_messages WHERE conversation_id=?1 ORDER BY created_at ASC,rowid ASC")
+            .map_err(AppError::db)?
+            .query_map(params![conversation.id], |row| {
+                let references_json: String = row.get(4)?;
+                Ok(ChatMessageDto {
+                    id: row.get(0)?,
+                    conversation_id: row.get(1)?,
+                    role: row.get(2)?,
+                    content: row.get(3)?,
+                    references: serde_json::from_str(&references_json)
+                        .unwrap_or_else(|_| serde_json::json!([])),
+                    created_at: row.get(5)?,
+                })
+            })
+            .map_err(AppError::db)?
+            .collect::<Result<Vec<_>, _>>()
+            .map_err(AppError::db)?;
+        Ok(ChatThreadDto {
+            conversation,
+            messages,
+        })
+    }
+
+    #[tauri::command]
+    pub fn chat_add_message(
+        state: State<'_, AppState>,
+        conversation_id: String,
+        role: String,
+        content: String,
+        references: Option<serde_json::Value>,
+    ) -> Result<ChatMessageDto, AppError> {
+        if !matches!(role.as_str(), "user" | "assistant") {
+            return Err(AppError::invalid("invalid_chat_role", "Invalid chat role"));
+        }
+        if content.trim().is_empty() {
+            return Err(AppError::invalid(
+                "empty_chat_message",
+                "Message cannot be empty",
+            ));
+        }
+        let id = Uuid::new_v4().to_string();
+        let timestamp = now();
+        let references = references.unwrap_or_else(|| serde_json::json!([]));
+        let references_json = serde_json::to_string(&references)
+            .map_err(|error| AppError::invalid("invalid_references", &error.to_string()))?;
+        let mut conn = state
+            .db
+            .lock()
+            .map_err(|_| AppError::db("database lock poisoned"))?;
+        let transaction = conn.transaction().map_err(AppError::db)?;
+        transaction
+            .execute(
+                "INSERT INTO chat_messages(id,conversation_id,role,content,references_json,created_at) VALUES (?1,?2,?3,?4,?5,?6)",
+                params![id, conversation_id, role, content, references_json, timestamp],
+            )
+            .map_err(AppError::db)?;
+        transaction
+            .execute(
+                "UPDATE chat_conversations SET updated_at=?2 WHERE id=?1",
+                params![conversation_id, timestamp],
+            )
+            .map_err(AppError::db)?;
+        transaction.commit().map_err(AppError::db)?;
+        Ok(ChatMessageDto {
+            id,
+            conversation_id,
+            role,
+            content,
+            references,
+            created_at: timestamp,
+        })
+    }
+
+    #[tauri::command]
+    pub fn chat_delete(state: State<'_, AppState>, id: String) -> Result<(), AppError> {
+        let conn = state
+            .db
+            .lock()
+            .map_err(|_| AppError::db("database lock poisoned"))?;
+        conn.execute("DELETE FROM chat_conversations WHERE id=?1", params![id])
+            .map_err(AppError::db)?;
+        Ok(())
+    }
 
     #[tauri::command]
     pub fn note_list(
@@ -1674,6 +1880,7 @@ pub mod commands {
         provider: &str,
         model_name: &str,
         source: &str,
+        conversation_id: Option<&str>,
         usage: &serde_json::Value,
     ) -> Result<(), String> {
         let prompt_tokens = usage_i64(usage.get("prompt_tokens"));
@@ -1693,7 +1900,7 @@ pub mod commands {
             .lock()
             .map_err(|_| "database_lock_failed".to_string())?;
         conn.execute(
-            "INSERT INTO usage_records(id,ts,model_id,model_name,provider,source,prompt_tokens,completion_tokens,total_tokens,reasoning_tokens) VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10)",
+            "INSERT INTO usage_records(id,ts,model_id,model_name,provider,source,conversation_id,prompt_tokens,completion_tokens,total_tokens,reasoning_tokens) VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11)",
             params![
                 Uuid::new_v4().to_string(),
                 Utc::now().timestamp_millis(),
@@ -1701,6 +1908,7 @@ pub mod commands {
                 model_name,
                 provider,
                 source,
+                conversation_id.unwrap_or_default(),
                 prompt_tokens,
                 completion_tokens,
                 total_tokens,
@@ -1802,6 +2010,7 @@ pub mod commands {
         let mut stream = response.bytes_stream();
         let mut buffer = String::new();
         let mut usage = None;
+        let mut completion_characters = 0_i64;
         while let Some(chunk) = stream.next().await {
             if cancel.load(Ordering::Relaxed) {
                 let _ = on_event.send(AiEvent::Cancelled {
@@ -1821,6 +2030,7 @@ pub mod commands {
                     }
                     if let Ok(value) = serde_json::from_str::<serde_json::Value>(data) {
                         if let Some(text) = value["choices"][0]["delta"]["content"].as_str() {
+                            completion_characters += text.chars().count() as i64;
                             let _ = on_event.send(AiEvent::Delta {
                                 request_id: id.clone(),
                                 text: text.into(),
@@ -1833,12 +2043,201 @@ pub mod commands {
                 }
             }
         }
-        if let Some(usage) = usage {
-            let source = request.source.as_deref().unwrap_or("note_ai");
-            record_usage(state, &profile_id, &provider, &model, source, &usage)?;
-        }
+        let usage = usage.unwrap_or_else(|| {
+            let prompt_tokens = (prompt.chars().count() as i64 / 4).max(1);
+            let completion_tokens = (completion_characters / 4).max(1);
+            serde_json::json!({
+                "prompt_tokens": prompt_tokens,
+                "completion_tokens": completion_tokens,
+                "total_tokens": prompt_tokens + completion_tokens
+            })
+        });
+        let source = request.source.as_deref().unwrap_or("note_ai");
+        record_usage(
+            state,
+            &profile_id,
+            &provider,
+            &model,
+            source,
+            request.conversation_id.as_deref(),
+            &usage,
+        )?;
         let _ = on_event.send(AiEvent::Completed { request_id: id });
         Ok(())
+    }
+
+    fn fallback_chat_title(text: &str) -> String {
+        let compact = text.split_whitespace().collect::<Vec<_>>().join(" ");
+        let title = compact.chars().take(24).collect::<String>();
+        if title.is_empty() {
+            "新对话".into()
+        } else if compact.chars().count() > 24 {
+            format!("{title}…")
+        } else {
+            title
+        }
+    }
+
+    #[tauri::command]
+    pub async fn chat_generate_title(
+        state: State<'_, AppState>,
+        conversation_id: String,
+        model_profile_id: Option<String>,
+    ) -> Result<String, AppError> {
+        let state = state.inner().clone();
+        let (messages, existing_title) = {
+            let conn = state
+                .db
+                .lock()
+                .map_err(|_| AppError::db("database lock poisoned"))?;
+            let existing_title = conn
+                .query_row(
+                    "SELECT title FROM chat_conversations WHERE id=?1",
+                    params![conversation_id],
+                    |row| row.get::<_, String>(0),
+                )
+                .optional()
+                .map_err(AppError::db)?
+                .ok_or_else(|| AppError::not_found("chat_not_found", "Conversation not found"))?;
+            let messages = conn
+                .prepare("SELECT role,content FROM chat_messages WHERE conversation_id=?1 ORDER BY created_at ASC,rowid ASC LIMIT 2")
+                .map_err(AppError::db)?
+                .query_map(params![conversation_id], |row| {
+                    Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
+                })
+                .map_err(AppError::db)?
+                .collect::<Result<Vec<_>, _>>()
+                .map_err(AppError::db)?;
+            (messages, existing_title)
+        };
+        if existing_title != "新对话" || messages.len() < 2 {
+            return Ok(existing_title);
+        }
+        let first_message = messages
+            .iter()
+            .find(|(role, _)| role == "user")
+            .map(|(_, content)| content.as_str())
+            .unwrap_or_default();
+        let transcript = messages
+            .iter()
+            .map(|(role, content)| {
+                format!(
+                    "{}：{}",
+                    if role == "user" { "用户" } else { "助手" },
+                    content
+                )
+            })
+            .collect::<Vec<_>>()
+            .join("\n");
+        let fallback = fallback_chat_title(first_message);
+        let profile = {
+            let conn = state
+                .db
+                .lock()
+                .map_err(|_| AppError::db("database lock poisoned"))?;
+            if let Some(profile_id) = model_profile_id {
+                conn.query_row(
+                    "SELECT id,base_url,model,provider,api_key FROM model_profiles WHERE id=?1",
+                    params![profile_id],
+                    |row| {
+                        Ok((
+                            row.get::<_, String>(0)?,
+                            row.get::<_, String>(1)?,
+                            row.get::<_, String>(2)?,
+                            row.get::<_, String>(3)?,
+                            row.get::<_, String>(4)?,
+                        ))
+                    },
+                )
+                .optional()
+                .map_err(AppError::db)?
+            } else {
+                conn.query_row(
+                    "SELECT id,base_url,model,provider,api_key FROM model_profiles WHERE is_default=1 LIMIT 1",
+                    [],
+                    |row| Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?, row.get::<_, String>(2)?, row.get::<_, String>(3)?, row.get::<_, String>(4)?)),
+                )
+                .optional()
+                .map_err(AppError::db)?
+            }
+        };
+        let mut title = fallback;
+        if let Some((profile_id, base_url, model, provider, api_key)) = profile {
+            if !api_key.trim().is_empty() {
+                let endpoint = if base_url.ends_with("/chat/completions") {
+                    base_url
+                } else {
+                    format!("{}/chat/completions", base_url.trim_end_matches('/'))
+                };
+                let body = serde_json::json!({
+                    "model": model,
+                    "stream": false,
+                    "temperature": 0.2,
+                    "max_tokens": 32,
+                    "messages": [
+                        {"role":"system","content":"Based on the user's question and the assistant's answer, generate a concise conversation title in the user's language. Return only the title, without quotes or punctuation wrapping it. Maximum 18 Chinese characters or 8 words."},
+                        {"role":"user","content": transcript}
+                    ]
+                });
+                if let Ok(response) = reqwest::Client::new()
+                    .post(endpoint)
+                    .bearer_auth(api_key)
+                    .json(&body)
+                    .send()
+                    .await
+                {
+                    if response.status().is_success() {
+                        if let Ok(payload) = response.json::<serde_json::Value>().await {
+                            if let Some(candidate) =
+                                payload["choices"][0]["message"]["content"].as_str()
+                            {
+                                let candidate = candidate
+                                    .trim()
+                                    .trim_matches(|character| {
+                                        matches!(character, '"' | '\'' | '“' | '”' | '《' | '》')
+                                    })
+                                    .lines()
+                                    .next()
+                                    .unwrap_or_default()
+                                    .trim();
+                                if !candidate.is_empty() {
+                                    title = candidate.chars().take(36).collect();
+                                }
+                            }
+                            let estimated_usage;
+                            let usage = if let Some(usage) = payload.get("usage") {
+                                usage
+                            } else {
+                                let prompt_tokens =
+                                    (transcript.chars().count() as i64 / 4).max(1) + 32;
+                                let completion_tokens = (title.chars().count() as i64 / 4).max(1);
+                                estimated_usage = serde_json::json!({ "prompt_tokens": prompt_tokens, "completion_tokens": completion_tokens, "total_tokens": prompt_tokens + completion_tokens });
+                                &estimated_usage
+                            };
+                            let _ = record_usage(
+                                &state,
+                                &profile_id,
+                                &provider,
+                                &model,
+                                "title",
+                                Some(&conversation_id),
+                                usage,
+                            );
+                        }
+                    }
+                }
+            }
+        }
+        let conn = state
+            .db
+            .lock()
+            .map_err(|_| AppError::db("database lock poisoned"))?;
+        conn.execute(
+            "UPDATE chat_conversations SET title=?2,updated_at=?3 WHERE id=?1 AND title='新对话'",
+            params![conversation_id, title, now()],
+        )
+        .map_err(AppError::db)?;
+        Ok(title)
     }
 
     async fn demo_ai(
@@ -1906,6 +2305,12 @@ pub fn run() {
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
+            commands::chat_list,
+            commands::chat_create,
+            commands::chat_get,
+            commands::chat_add_message,
+            commands::chat_delete,
+            commands::chat_generate_title,
             commands::note_list,
             commands::note_get,
             commands::note_create,
@@ -1983,6 +2388,27 @@ mod tests {
             .query_row("SELECT COUNT(*) FROM usage_records", [], |r| r.get(0))
             .unwrap();
         assert_eq!(n, 0);
+    }
+    #[test]
+    fn migration_creates_chat_history_and_usage_link() {
+        let c = Connection::open_in_memory().unwrap();
+        init_database(&c).unwrap();
+        let chat_tables: i64 = c
+            .query_row(
+                "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name IN ('chat_conversations','chat_messages')",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        let usage_link: i64 = c
+            .query_row(
+                "SELECT COUNT(*) FROM pragma_table_info('usage_records') WHERE name='conversation_id'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(chat_tables, 2);
+        assert_eq!(usage_link, 1);
     }
     #[test]
     fn memory_files_are_allowlisted() {

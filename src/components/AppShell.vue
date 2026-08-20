@@ -5,6 +5,7 @@ import { useI18n } from 'vue-i18n'
 import { getCurrentWindow } from '@tauri-apps/api/window'
 import { BookOpen, FileText, Settings, Plus, Minus, Square, Copy, X, PanelLeftClose, PanelLeftOpen, Home } from 'lucide-vue-next'
 import AvatarDrawer from './AvatarDrawer.vue'
+import ChatHistoryDrawer from './ChatHistoryDrawer.vue'
 
 const props = defineProps({ active: String })
 const router = useRouter()
@@ -13,10 +14,12 @@ const isMac = /Macintosh|Mac OS/.test(navigator.userAgent || '')
 const railCollapsed = ref(false)
 const isMaximized = ref(false)
 const avatarOpen = ref(false)
+const historyOpen = ref(false)
 let appWindow = null
 let stopResizeListener = null
 const nav = computed(() => [{ key: 'notes', label: t('notes'), icon: FileText, path: '/notes' }, { key: 'library', label: t('library'), icon: BookOpen, path: '/library' }, { key: 'settings', label: t('settings'), icon: Settings, path: '/settings' }])
 function navigate(path) { router.push(path) }
+function openConversation(id) { router.push({ path: '/chat', query: { id } }) }
 
 function tauriWindow() {
   if (!appWindow) {
@@ -73,11 +76,12 @@ onUnmounted(() => { if (stopResizeListener) stopResizeListener() })
         <button class="rail-add" aria-label="New" @click="navigate('/notes?new=1')"><Plus :size="18" /></button>
         <nav><button v-for="item in nav.filter(item => item.key !== 'settings')" :key="item.key" :class="['rail-item', { active: props.active === item.key }]" :title="item.label" @click="navigate(item.path)"><component :is="item.icon" :size="19" /><span>{{ item.label }}</span></button></nav>
         <div class="rail-spacer"></div>
-        <button class="rail-item rail-clock" title="最近活动"><span>◷</span></button>
+        <button class="rail-item rail-clock" :class="{ active: historyOpen }" title="历史记录" @click="historyOpen = !historyOpen"><span>◷</span></button>
         <button class="rail-item" :class="{ active: props.active === 'settings' }" :title="t('settings')" @click="navigate('/settings')"><Settings :size="19" /><span>{{ t('settings') }}</span></button>
       </aside>
       <main class="content-wrap main-content"><div class="content-card content-wrapper"><slot /></div></main>
     </div>
     <AvatarDrawer v-model="avatarOpen" />
+    <ChatHistoryDrawer v-model="historyOpen" @open="openConversation" />
   </div>
 </template>
