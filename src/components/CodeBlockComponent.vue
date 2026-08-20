@@ -27,11 +27,11 @@
         <option value="plaintext">Plain Text</option>
       </select>
       <div class="header-actions">
-        <button class="action-btn" :title="copied ? copyDoneLabel : copyLabel" @click="handleCopy">
+        <button class="code-action-btn" :title="copied ? copyDoneLabel : copyLabel" @click="handleCopy">
           <Check v-if="copied" :size="14" />
           <Copy v-else :size="14" />
         </button>
-        <button class="action-btn danger" :title="deleteLabel" @click="deleteNode"><Trash2 :size="14" /></button>
+        <button class="code-action-btn danger" :title="deleteLabel" @click="deleteNode"><Trash2 :size="14" /></button>
       </div>
     </div>
     <div class="code-block-content">
@@ -100,7 +100,7 @@ async function handleCopy() {
 }
 
 .header-actions { display: flex; align-items: center; gap: 2px; }
-.action-btn {
+.code-action-btn {
   display: flex;
   align-items: center;
   justify-content: center;
@@ -113,8 +113,8 @@ async function handleCopy() {
   color: #888;
   cursor: pointer;
 }
-.action-btn:hover { background: #e0e0e0; color: #333; }
-.action-btn.danger:hover { background: #fee2e2; color: #ef4444; }
+.code-action-btn:hover { background: #e0e0e0; color: #333; }
+.code-action-btn.danger:hover { background: #fee2e2; color: #ef4444; }
 
 .language-select {
   width: auto;
@@ -180,5 +180,6 @@ async function handleCopy() {
 [data-theme='dark'] .line-numbers { border-color: #3f3f46; }
 [data-theme='dark'] .line-number { color: #777780; }
 [data-theme='dark'] .code-block-component pre code { color: #e5e7eb; }
-[data-theme='dark'] .action-btn:hover { background: #333338; color: #fff; }
+[data-theme='dark'] .code-action-btn { color: #a8a29e; }
+[data-theme='dark'] .code-action-btn:hover { background: #333338; color: #fff; }
 </style>

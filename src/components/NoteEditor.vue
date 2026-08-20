@@ -1,6 +1,7 @@
 <script setup>
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { EditorContent, useEditor } from '@tiptap/vue-3'
+import { BubbleMenu } from '@tiptap/vue-3/menus'
 import { Channel } from '@tauri-apps/api/core'
 import StarterKit from '@tiptap/starter-kit'
 import Underline from '@tiptap/extension-underline'
@@ -35,45 +36,95 @@ import { TextStyle } from '@tiptap/extension-text-style'
 import Color from '@tiptap/extension-color'
 import CodeBlockComponent from './CodeBlockComponent.vue'
 import TurndownService from 'turndown'
-import { Bold, Italic, Underline as UnderlineIcon, Strikethrough, List, ListOrdered, ListChecks, Quote, Code2, Undo2, Redo2, Eraser, Link2, Highlighter, PenLine, AlignLeft, AlignCenter, AlignRight, PlusCircle, MoreHorizontal, Layers, Sparkles, Trash2, Download, Printer } from 'lucide-vue-next'
+import { useRouter } from 'vue-router'
+import { BookOpen, Bold, CalendarDays, ChevronDown, CircleHelp, Copy, FileText, Italic, Languages, Maximize2, MessageSquare, Send, Table2, Underline as UnderlineIcon, Strikethrough, List, ListOrdered, ListChecks, Quote, Code2, Undo2, Redo2, Eraser, Link2, Highlighter, PenLine, AlignLeft, AlignCenter, AlignRight, Plus, PlusCircle, MoreHorizontal, Layers, Sparkles, Trash2, Download, Printer, Zap } from 'lucide-vue-next'
 import { useNotesStore } from '../stores/notes'
+import { useLibraryStore } from '../stores/library'
 import { useI18n } from 'vue-i18n'
 
 const lowlight = createLowlight()
 lowlight.register('javascript', javascript); lowlight.register('typescript', typescript); lowlight.register('python', python); lowlight.register('json', json); lowlight.register('html', xml); lowlight.register('xml', xml); lowlight.register('css', css); lowlight.register('bash', bash); lowlight.register('sql', sql); lowlight.register('markdown', markdown); lowlight.register('yaml', yaml); lowlight.register('rust', rust)
-const props = defineProps({ note: Object, tocVisible: { type: Boolean, default: false } }); const emit = defineEmits(['deleted', 'toggle-toc']); const store = useNotesStore(); const { t } = useI18n(); const aiBusy = ref(false); const aiText = ref(''); const aiRequestId = ref(''); const aiAction = ref('summarize'); const moreOpen = ref(false); const insertOpen = ref(false); const tablePickerOpen = ref(false); const textColorOpen = ref(false); const highlightOpen = ref(false); const headingOpen = ref(false); const imageDialogOpen = ref(false); const imageUrl = ref(''); const imageAlt = ref(''); const imageInput = ref(null); const tableRows = ref(0); const tableCols = ref(0); const fimEnabled = ref(false); const fimSuggestion = ref(''); const editorStateTick = ref(0); let fimTimer
+const props = defineProps({ note: Object, tocVisible: { type: Boolean, default: false } }); const emit = defineEmits(['deleted', 'toggle-toc']); const router = useRouter(); const store = useNotesStore(); const library = useLibraryStore(); const { t } = useI18n(); const aiBusy = ref(false); const aiText = ref(''); const aiRequestId = ref(''); const aiAction = ref('summarize'); const aiResultAction = ref(''); const aiPanelOpen = ref(false); const commandMenuOpen = ref(false); const aiPrompt = ref(''); const aiInputRef = ref(null); const commandMenuDirection = ref('down'); const moreOpen = ref(false); const insertOpen = ref(false); const tablePickerOpen = ref(false); const textColorOpen = ref(false); const highlightOpen = ref(false); const headingOpen = ref(false); const knowledgeMenuOpen = ref(false); const imageDialogOpen = ref(false); const imageUrl = ref(''); const imageAlt = ref(''); const imageInput = ref(null); const tableRows = ref(0); const tableCols = ref(0); const fimEnabled = ref(false); const fimSuggestion = ref(''); const editorStateTick = ref(0); let fimTimer; let savedSelection = null
+const aiActionLabels = { interpret: '解读', refine: '精炼', polish: '润色', expand: '扩写', translate: '翻译', summarize: '总结', continue_write: '续写', fix_grammar: '语法修正', generate_plan: '生成任务计划', generate_table: '生成表格', custom: 'AI 写作' }
+const aiErrorMessages = { model_profile_unavailable: '还没有配置可用模型，请先打开设置完成配置。', api_key_not_configured: '当前模型还没有配置 API Key，请先打开设置完成配置。', credential_store_unavailable: '系统凭据存储不可用，暂时无法调用 AI。', provider_request_failed: '模型服务请求失败，请检查模型地址和网络连接。', provider_stream_failed: '模型服务连接中断，请稍后重试。' }
+function revealAiResult() { nextTick(() => document.querySelector('.ai-result')?.scrollIntoView({ behavior: 'smooth', block: 'nearest' })) }
 const refreshEditorState = () => { editorStateTick.value += 1 }
-const editor = useEditor({ content: props.note?.contentHtml || '<p></p>', extensions: [StarterKit.configure({ codeBlock: false }), Underline, Link.configure({ openOnClick: false }), Highlight, Image.configure({ allowBase64: false }), Table.configure({ resizable: true }), TableRow, TableHeader, TableCell, TaskList, TaskItem.configure({ nested: true }), Subscript, Superscript, TextStyle, Color, TextAlign.configure({ types: ['heading', 'paragraph'] }), CodeBlockLowlight.extend({ addNodeView() { return VueNodeViewRenderer(CodeBlockComponent) } }).configure({ lowlight }), Placeholder.configure({ placeholder: '写下此刻的想法…' })], editorProps: { attributes: { class: 'note-prose' } }, onTransaction: refreshEditorState, onSelectionUpdate: refreshEditorState, onUpdate: ({ editor: e }) => { if (!props.note) return; props.note.contentHtml = e.getHTML(); props.note.contentText = e.getText(); if (!props.note.title || props.note.title === '未命名笔记') { const first = e.getText().split('\n').find(Boolean); if (first) props.note.title = first.slice(0, 60) } store.scheduleSave(props.note); if (fimEnabled.value) { clearTimeout(fimTimer); fimTimer = setTimeout(runFim, 2000) } } })
+const editor = useEditor({ content: props.note?.contentHtml || '<p></p>', extensions: [StarterKit.configure({ codeBlock: false, link: false, underline: false }), Underline, Link.configure({ openOnClick: false }), Highlight, Image.configure({ allowBase64: false }), Table.configure({ resizable: true }), TableRow, TableHeader, TableCell, TaskList, TaskItem.configure({ nested: true }), Subscript, Superscript, TextStyle, Color, TextAlign.configure({ types: ['heading', 'paragraph'] }), CodeBlockLowlight.extend({ addNodeView() { return VueNodeViewRenderer(CodeBlockComponent) } }).configure({ lowlight }), Placeholder.configure({ placeholder: '写下此刻的想法…' })], editorProps: { attributes: { class: 'note-prose' } }, onTransaction: refreshEditorState, onSelectionUpdate: refreshEditorState, onUpdate: ({ editor: e }) => { if (!props.note) return; props.note.contentHtml = e.getHTML(); props.note.contentText = e.getText(); if (!props.note.title || props.note.title === '未命名笔记') { const first = e.getText().split('\n').find(Boolean); if (first) props.note.title = first.slice(0, 60) } store.scheduleSave(props.note); if (fimEnabled.value) { clearTimeout(fimTimer); fimTimer = setTimeout(runFim, 2000) } } })
 const canUndo = computed(() => { editorStateTick.value; return editor.value?.can().undo() ?? false })
 const canRedo = computed(() => { editorStateTick.value; return editor.value?.can().redo() ?? false })
 const linkActive = computed(() => { editorStateTick.value; return editor.value?.isActive('link') ?? false })
 const canEditLink = computed(() => { editorStateTick.value; const instance = editor.value; return !!instance && (!instance.state.selection.empty || instance.isActive('link')) })
+const selectedText = computed(() => { editorStateTick.value; const instance = editor.value; if (!instance || instance.state.selection.empty) return ''; const { from, to } = instance.state.selection; return instance.state.doc.textBetween(from, to, '\n').trim() })
+const knowledgeGroups = computed(() => [
+  { id: 'personal', label: t('personal'), items: library.bases.filter(base => base.category === 'personal') },
+  { id: 'local', label: t('local'), items: library.bases.filter(base => base.category === 'local') }
+].filter(group => group.items.length))
+function shouldShowBubbleMenu({ state }) { return !state.selection.empty && state.doc.textBetween(state.selection.from, state.selection.to, '\n').trim().length > 0 }
 const textColorPalette = ['#1c1917', '#dc2626', '#ea580c', '#ca8a04', '#16a34a', '#0891b2', '#2563eb', '#7c3aed', '#db2777']
 const highlightPalette = ['#fef08a', '#fed7aa', '#fecaca', '#bbf7d0', '#bae6fd', '#c7d2fe', '#e9d5ff', '#fbcfe8']
 const currentHeadingLabel = computed(() => { editorStateTick.value; const instance = editor.value; if (!instance) return '标题'; for (const level of [1, 2, 3]) if (instance.isActive('heading', { level })) return `H${level}`; return '正文' })
-watch(() => props.note?.id, () => { if (props.note && editor.value) editor.value.commands.setContent(props.note.contentHtml || '<p></p>') })
+watch(() => props.note?.id, () => { savedSelection = null; closeAiPanel(); aiText.value = ''; aiResultAction.value = ''; aiBusy.value = false; if (props.note && editor.value) editor.value.commands.setContent(props.note.contentHtml || '<p></p>') })
 onBeforeUnmount(() => { clearTimeout(fimTimer); editor.value?.destroy() })
-onMounted(async () => { try { fimEnabled.value = (await (await import('../services/tauri')).invoke('settings_get')).fimEnabled === true } catch { fimEnabled.value = false } })
+onMounted(async () => { try { fimEnabled.value = (await (await import('../services/tauri')).invoke('settings_get')).fimEnabled === true } catch { fimEnabled.value = false }; if (!library.bases.length) { try { await library.load() } catch {} } })
 function toggle(type) { editor.value?.chain().focus()[type]().run() }
-async function runAi() {
+async function runAi(action = aiAction.value, requestText = props.note?.contentText || '', instruction = null) {
   if (!props.note || aiBusy.value) return
-  aiBusy.value = true; aiText.value = ''; aiRequestId.value = crypto.randomUUID()
-  if (!window.__TAURI_INTERNALS__) { aiText.value = '正在整理这段内容…'; setTimeout(() => { aiText.value = `\n\n> Tiny Note AI：${props.note.contentText.slice(0, 140)}`; aiBusy.value = false }, 700); return }
+  const actionLabel = aiActionLabels[action] || 'AI 写作'
+  aiBusy.value = true; aiText.value = `正在生成${actionLabel}…`; aiResultAction.value = action; aiRequestId.value = crypto.randomUUID()
+  revealAiResult()
+  if (!window.__TAURI_INTERNALS__) { setTimeout(() => { aiText.value = `\n\n> ${actionLabel}${instruction ? `（${instruction}）` : ''}：${requestText.slice(0, 140)}`; aiBusy.value = false }, 700); return }
   const channel = new Channel()
-  channel.onmessage = event => { if (event.type === 'delta') aiText.value += event.text; if (event.type === 'completed' || event.type === 'cancelled' || event.type === 'error') aiBusy.value = false }
-  try { await (await import('../services/tauri')).invoke('note_ai_stream', { request: { requestId: aiRequestId.value, action: aiAction.value, text: props.note.contentText, instruction: null, modelProfileId: null }, onEvent: channel }) } catch { aiText.value = 'AI 请求失败，请检查模型设置。'; aiBusy.value = false }
+  channel.onmessage = event => {
+    if (event.type === 'delta') {
+      if (aiText.value === `正在生成${actionLabel}…`) aiText.value = ''
+      aiText.value += event.text
+    }
+    if (event.type === 'error') {
+      aiText.value = `${actionLabel}失败：${aiErrorMessages[event.code] || '请求未完成，请稍后重试。'}`
+      aiBusy.value = false
+    }
+    if (event.type === 'cancelled') { aiText.value = '已停止生成。'; aiBusy.value = false }
+    if (event.type === 'completed') aiBusy.value = false
+  }
+  try { await (await import('../services/tauri')).invoke('note_ai_stream', { request: { requestId: aiRequestId.value, action, text: requestText, instruction, modelProfileId: null }, onEvent: channel }) } catch { aiText.value = 'AI 请求失败，请检查模型设置。'; aiBusy.value = false }
 }
 async function stopAi() { if (!aiRequestId.value) return; if (window.__TAURI_INTERNALS__) await (await import('../services/tauri')).invoke('note_ai_cancel', { requestId: aiRequestId.value }); aiBusy.value = false }
 function exportMarkdown() { if (!props.note || !editor.value) return; const markdown = new TurndownService().turndown(editor.value.getHTML()); const blob = new Blob([markdown], { type: 'text/markdown;charset=utf-8' }); const url = URL.createObjectURL(blob); const link = document.createElement('a'); link.href = url; link.download = `${props.note.title || 'note'}.md`; link.click(); URL.revokeObjectURL(url) }
 function printNote() { window.print() }
-function insertAi() { if (editor.value && aiText.value) { editor.value.commands.insertContent(aiText.value); aiText.value = '' } }
-function replaceWithAi() { if (editor.value && aiText.value) { editor.value.commands.setContent(`<p>${aiText.value.replaceAll('&', '&amp;').replaceAll('<', '&lt;').replaceAll('>', '&gt;').replaceAll('\n', '<br>')}</p>`); aiText.value = '' } }
+function restoreSavedSelection() { if (!editor.value || !savedSelection) return false; return editor.value.chain().focus().setTextSelection(savedSelection).run() }
+function insertAi() { if (editor.value && aiText.value) { restoreSavedSelection(); editor.value.commands.insertContent(aiText.value); aiText.value = ''; savedSelection = null } }
+function replaceWithAi() { if (editor.value && aiText.value) { if (restoreSavedSelection()) editor.value.commands.deleteSelection(); else editor.value.commands.clearContent(); editor.value.commands.insertContent(aiText.value); aiText.value = ''; savedSelection = null } }
 async function copyAi() { if (aiText.value) await navigator.clipboard?.writeText(aiText.value) }
+async function copySelection() { if (selectedText.value) await navigator.clipboard?.writeText(selectedText.value) }
+function saveCurrentSelection() { const selection = editor.value?.state.selection; if (selection && !selection.empty) savedSelection = { from: selection.from, to: selection.to } }
+function closeAiPanel() { aiPanelOpen.value = false; commandMenuOpen.value = false; aiPrompt.value = '' }
+function positionCommandMenu() {
+  const button = document.querySelector('.tiny-note-ai-input-wrapper .command-btn')
+  if (!button) return
+  const rect = button.getBoundingClientRect()
+  const menuHeight = 260
+  commandMenuDirection.value = window.innerHeight - rect.bottom < menuHeight && rect.top > window.innerHeight - rect.bottom ? 'up' : 'down'
+}
+async function openAiPanel() {
+  saveCurrentSelection(); aiPanelOpen.value = true; aiPrompt.value = ''
+  await nextTick(); aiInputRef.value?.focus(); positionCommandMenu(); commandMenuOpen.value = true
+}
+function toggleCommandMenu(event) { event.stopPropagation(); if (!commandMenuOpen.value) positionCommandMenu(); commandMenuOpen.value = !commandMenuOpen.value }
+function selectAiCommand(action) { saveCurrentSelection(); const text = selectedText.value || props.note?.contentText || ''; closeAiPanel(); runAi(action, text) }
+function sendCustomAi() { const instruction = aiPrompt.value.trim(); if (!instruction || aiBusy.value) return; saveCurrentSelection(); const text = selectedText.value || props.note?.contentText || ''; closeAiPanel(); runAi('custom', text, instruction) }
+function runSelectedAi(action) { const text = selectedText.value; if (!text || aiBusy.value) return; saveCurrentSelection(); runAi(action, text) }
+function openInConversation() {
+  const text = selectedText.value
+  if (!text) return
+  try { sessionStorage.setItem('tiny-note-assistant-draft', text) } catch {}
+  closeAiPanel()
+  router.push('/')
+}
 async function runFim() { if (!fimEnabled.value || !editor.value || !props.note?.contentText) return; const id = crypto.randomUUID(); const channel = new Channel(); let result = ''; channel.onmessage = event => { if (event.type === 'delta') result += event.text; if (event.type === 'completed') fimSuggestion.value = result }; try { await (await import('../services/tauri')).invoke('note_fim_stream', { request: { requestId: id, action: 'continue_write', text: props.note.contentText.slice(-800), instruction: `Continue naturally. Context after cursor: ${props.note.contentText.slice(-400)}`, modelProfileId: null }, onEvent: channel }) } catch { fimSuggestion.value = '' } }
 function acceptFim() { if (fimSuggestion.value && editor.value) { editor.value.commands.insertContent(fimSuggestion.value); fimSuggestion.value = '' } }
 function dismissFim() { fimSuggestion.value = '' }
 function insertCodeBlock() { editor.value?.chain().focus().toggleCodeBlock().run(); insertOpen.value = false }
-function closeToolbarMenus() { insertOpen.value = false; tablePickerOpen.value = false; textColorOpen.value = false; highlightOpen.value = false; headingOpen.value = false }
+function closeToolbarMenus() { insertOpen.value = false; tablePickerOpen.value = false; textColorOpen.value = false; highlightOpen.value = false; headingOpen.value = false; knowledgeMenuOpen.value = false; moreOpen.value = false }
 function toggleInsertMenu() { closeToolbarMenus(); insertOpen.value = !insertOpen.value }
 function selectTableCell(row, col) { tableRows.value = row; tableCols.value = col }
 function insertTable(rows = tableRows.value, cols = tableCols.value) {
@@ -137,6 +188,15 @@ function editLink() {
   if (linkActive.value) chain.extendMarkRange('link').setLink({ href }).run()
   else chain.setLink({ href }).run()
 }
+async function addToKnowledge(knowledgeBaseId) {
+  if (!props.note || !knowledgeBaseId) return
+  try { await library.addNoteReference(knowledgeBaseId, props.note); knowledgeMenuOpen.value = false } catch (error) { window.alert(error?.message || '添加到知识库失败，请重试') }
+}
+async function createKnowledgeFromEditor() {
+  const name = window.prompt(t('newKnowledge'))
+  if (!name?.trim()) return
+  try { await library.create(name.trim(), 'personal'); if (library.activeId) await addToKnowledge(library.activeId) } catch (error) { window.alert(error?.message || '创建知识库失败，请重试') }
+}
 const title = computed({ get: () => props.note?.title || '', set: v => { if (props.note) { props.note.title = v; store.scheduleSave(props.note) } } })
 </script>
 <template>
@@ -169,17 +229,67 @@ const title = computed({ get: () => props.note?.title || '', set: v => { if (pro
         <button title="右对齐" @click="editor?.chain().focus().setTextAlign('right').run()"><AlignRight :size="19" /></button>
       </div>
       <div class="toolbar-right-group">
-        <button title="加入知识库"><PlusCircle :size="19" /></button>
-        <span class="toolbar-menu-anchor"><button title="更多" @click="moreOpen = !moreOpen"><MoreHorizontal :size="20" /></button><div v-if="moreOpen" class="toolbar-more-menu"><button @click="exportMarkdown(); moreOpen = false"><Download :size="15" /> 导出 Markdown</button><button @click="printNote(); moreOpen = false"><Printer :size="15" /> 打印 / 保存 PDF</button><button class="danger" @click="emit('deleted', note.id); moreOpen = false"><Trash2 :size="15" /> 删除笔记</button></div></span>
-        <select v-model="aiAction" class="ai-select"><option value="interpret">解读</option><option value="refine">精炼</option><option value="polish">润色</option><option value="expand">扩写</option><option value="translate">翻译</option><option value="summarize">总结</option><option value="continue_write">续写</option><option value="fix_grammar">修复语法</option><option value="generate_plan">生成计划</option><option value="generate_table">生成表格</option><option value="custom">自定义</option></select>
+        <span class="toolbar-menu-anchor knowledge-menu-anchor"><button :title="t('addToKnowledge')" @click="closeToolbarMenus(); knowledgeMenuOpen = !knowledgeMenuOpen"><PlusCircle :size="19" /></button><div v-if="knowledgeMenuOpen" class="toolbar-knowledge-menu" @click.stop>
+          <button class="knowledge-menu-create" @click="createKnowledgeFromEditor"><Plus :size="14" />{{ t('newKnowledge') }}</button>
+          <div class="note-context-divider"></div>
+          <template v-if="knowledgeGroups.length">
+            <template v-for="group in knowledgeGroups" :key="group.id">
+              <div class="toolbar-knowledge-group-label">{{ group.label }}</div>
+              <button v-for="base in group.items" :key="base.id" class="toolbar-knowledge-item" @click="addToKnowledge(base.id)"><BookOpen :size="14" />{{ base.name }}</button>
+            </template>
+          </template>
+          <span v-else class="toolbar-knowledge-empty">{{ t('noKnowledgeBases') }}</span>
+        </div></span>
+        <span class="toolbar-menu-anchor"><button title="更多" @click="knowledgeMenuOpen = false; moreOpen = !moreOpen"><MoreHorizontal :size="20" /></button><div v-if="moreOpen" class="toolbar-more-menu"><button @click="exportMarkdown(); moreOpen = false"><Download :size="15" /> 导出 Markdown</button><button @click="printNote(); moreOpen = false"><Printer :size="15" /> 打印 / 保存 PDF</button><button class="danger" @click="emit('deleted', note.id); moreOpen = false"><Trash2 :size="15" /> 删除笔记</button></div></span>
         <button class="ai-button" :disabled="aiBusy" @click="runAi"><Layers :size="17" /> Tiny Note 助理</button>
         <button v-if="aiBusy" class="stop-button" @click="stopAi">{{ t('stop') }}</button>
       </div>
     </div>
     <div class="editor-head"><input v-model="title" class="title-input" :placeholder="t('untitled')" /><div class="editor-meta"><span :class="{ saving: store.saving }">{{ store.saving ? t('saving') : t('save') }}</span></div></div>
-    <button v-if="!tocVisible" class="toc-btn" title="目录" aria-label="目录" @click="emit('toggle-toc')"><span class="toc-char">目</span><span class="toc-char">录</span></button>
-    <EditorContent :editor="editor" class="editor-content" @keydown.tab.prevent="acceptFim" @keydown.esc="dismissFim" /><div v-if="fimSuggestion" class="fim-suggestion">{{ fimSuggestion }} <small>Tab 接受 · Esc 放弃</small></div>
-    <div v-if="aiText" class="ai-result"><div class="ai-result-label"><Sparkles :size="14" /> {{ t('ai') }} <span class="ai-actions"><button @click="copyAi">复制</button><button @click="insertAi">插入</button><button @click="replaceWithAi">替换</button><button @click="aiText=''">放弃</button></span></div><div>{{ aiText }}</div></div>
+    <button class="toc-btn" :class="{ 'is-open': tocVisible }" title="目录" aria-label="目录" @click="emit('toggle-toc')"><span class="toc-char">目</span><span class="toc-char">录</span></button>
+    <EditorContent :editor="editor" class="editor-content" @keydown.tab.prevent="acceptFim" @keydown.esc="dismissFim" />
+    <BubbleMenu v-if="editor" :editor="editor" :options="{ duration: 120, placement: 'top', maxWidth: 'none' }" :should-show="shouldShowBubbleMenu" class="tiny-note-bubble-menu">
+      <div v-if="aiPanelOpen" class="tiny-note-ai-input-wrapper" @mousedown.stop>
+        <textarea ref="aiInputRef" v-model="aiPrompt" class="tiny-note-ai-textarea" rows="1" placeholder="基于选中文本：或许你还不知道从何开始，别担心，一切都是慢慢…" @keydown.enter.exact.prevent="sendCustomAi" @keydown.esc.prevent="closeAiPanel"></textarea>
+        <div class="tiny-note-ai-input-actions">
+          <div class="tiny-note-ai-action-left">
+            <div class="tiny-note-command-dropdown">
+              <button class="tiny-note-command-btn" :class="{ active: commandMenuOpen }" @click.stop="toggleCommandMenu"><Zap :size="13" /><span>AI 指令</span><ChevronDown :size="12" /></button>
+              <Transition name="tiny-note-command-transition">
+                <div v-if="commandMenuOpen" class="tiny-note-command-menu" :class="`menu-${commandMenuDirection}`" @click.stop>
+                  <button class="tiny-note-command-item" @click="selectAiCommand('translate')"><Languages :size="14" /><span>翻译</span></button>
+                  <button class="tiny-note-command-item" @click="selectAiCommand('summarize')"><FileText :size="14" /><span>总结</span></button>
+                  <button class="tiny-note-command-item" @click="selectAiCommand('continue_write')"><PenLine :size="14" /><span>续写</span></button>
+                  <button class="tiny-note-command-item" @click="selectAiCommand('fix_grammar')"><CircleHelp :size="14" /><span>语法修正</span></button>
+                  <button class="tiny-note-command-item" @click="selectAiCommand('generate_plan')"><CalendarDays :size="14" /><span>生成任务计划</span></button>
+                  <button class="tiny-note-command-item" @click="selectAiCommand('generate_table')"><Table2 :size="14" /><span>生成表格</span></button>
+                </div>
+              </Transition>
+            </div>
+          </div>
+          <div class="tiny-note-ai-action-right">
+            <button class="tiny-note-send-btn" :class="{ active: aiPrompt.trim() }" :disabled="!aiPrompt.trim() || aiBusy" title="发送" @click="sendCustomAi"><Send :size="16" /></button>
+          </div>
+        </div>
+      </div>
+      <div v-else class="bubble-menu-container tiny-note-bubble-content" @mousedown.prevent>
+        <button class="bubble-btn ai-write-btn bubble-ai-button" title="AI 写作" @mousedown.prevent="openAiPanel"><Sparkles :size="14" /><span>AI 写作</span></button>
+        <span class="bubble-divider"></span>
+        <button class="bubble-btn" title="解读" @mousedown.prevent="runSelectedAi('interpret')"><CircleHelp :size="14" /><span>解读</span></button>
+        <button class="bubble-btn" title="精炼" @mousedown.prevent="runSelectedAi('refine')"><Zap :size="14" /><span>精炼</span></button>
+        <button class="bubble-btn" title="润色" @mousedown.prevent="runSelectedAi('polish')"><PenLine :size="14" /><span>润色</span></button>
+        <button class="bubble-btn" title="扩写" @mousedown.prevent="runSelectedAi('expand')"><Maximize2 :size="14" /><span>扩写</span></button>
+        <span class="bubble-divider"></span>
+        <button class="bubble-btn chat-open-btn" title="在对话中打开" @mousedown.prevent="openInConversation"><MessageSquare :size="14" /><span>在对话中打开</span></button>
+        <span class="bubble-divider"></span>
+        <button class="bubble-btn" title="粗体" :class="{ active: editor.isActive('bold') }" @mousedown.prevent="toggle('toggleBold')"><Bold :size="14" /></button>
+        <button class="bubble-btn" title="斜体" :class="{ active: editor.isActive('italic') }" @mousedown.prevent="toggle('toggleItalic')"><Italic :size="14" /></button>
+        <button class="bubble-btn" title="下划线" :class="{ active: editor.isActive('underline') }" @mousedown.prevent="toggle('toggleUnderline')"><UnderlineIcon :size="14" /></button>
+        <button class="bubble-btn" title="复制" @mousedown.prevent="copySelection"><Copy :size="14" /></button>
+      </div>
+    </BubbleMenu>
+    <div v-if="fimSuggestion" class="fim-suggestion">{{ fimSuggestion }} <small>Tab 接受 · Esc 放弃</small></div>
+    <div v-if="aiText" class="ai-result"><div class="ai-result-label"><Sparkles :size="14" /> {{ t('ai') }}<span v-if="aiResultAction"> · {{ aiActionLabels[aiResultAction] }}</span><span class="ai-actions"><button @click="copyAi">复制</button><button @click="insertAi">插入</button><button @click="replaceWithAi">替换</button><button @click="aiText = ''; aiResultAction = ''">放弃</button></span></div><div>{{ aiText }}</div></div>
     <div v-if="imageDialogOpen" class="editor-dialog-overlay" @click.self="imageDialogOpen = false">
       <div class="editor-dialog" role="dialog" aria-modal="true" aria-label="插入图片">
         <div class="editor-dialog-header"><strong>插入图片</strong><button class="editor-dialog-close" title="关闭" @click="imageDialogOpen = false">×</button></div>

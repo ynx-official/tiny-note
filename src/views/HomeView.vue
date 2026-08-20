@@ -2,7 +2,7 @@
 import { computed, onMounted, ref } from 'vue'
 import { useRouter } from 'vue-router'
 import { useI18n } from 'vue-i18n'
-import { BookOpen, FileSearch2, LibraryBig, NotebookPen, PenLine, Settings2, Sparkles, Paperclip, Send, MessageSquare, Globe2, ChevronDown, FileText, ChevronRight } from 'lucide-vue-next'
+import { BookOpen, ChevronDown, ChevronLeft, ChevronRight, File, FileSearch2, FileText, Folder, Globe2, LibraryBig, MessageSquare, NotebookPen, Paperclip, PenLine, Send, Settings2, Sparkles, X } from 'lucide-vue-next'
 import { useNotesStore } from '../stores/notes'
 import { useLibraryStore } from '../stores/library'
 
@@ -11,14 +11,13 @@ const { locale, t } = useI18n()
 const notes = useNotesStore()
 const library = useLibraryStore()
 const draft = ref('')
-const homeFileInput = ref(null)
-const homeKnowledgeInput = ref(null)
-const importing = ref(false)
-const importMenuOpen = ref(false)
-const knowledgeImportOpen = ref(false)
-const selectedKnowledgeBaseId = ref('')
+const referenceMenuOpen = ref(false)
+const referencePicker = ref(null)
+const referenceFileBaseId = ref(null)
+const references = ref([])
 const personalBases = computed(() => library.bases.filter(item => item.category === 'personal'))
 const localBases = computed(() => library.bases.filter(item => item.category === 'local'))
+const noteCandidates = computed(() => notes.notes.filter(note => !note.deletedAt))
 
 const copy = computed(() => locale.value === 'en' ? {
   subtitle: 'What would you like Tiny Note to help with?',
@@ -51,61 +50,66 @@ const copy = computed(() => locale.value === 'en' ? {
 function open(path) { router.push(path) }
 function startNote() { router.push('/notes?new=1') }
 function submitDraft() { startNote() }
-function openImport() {
-  importMenuOpen.value = !importMenuOpen.value
-  knowledgeImportOpen.value = false
+function closeReferenceMenu() {
+  referenceMenuOpen.value = false
+  referencePicker.value = null
+  referenceFileBaseId.value = null
 }
-function chooseNoteImport() {
-  knowledgeImportOpen.value = false
-  importMenuOpen.value = false
-  homeFileInput.value?.click()
+async function openReferenceMenu() {
+  referenceMenuOpen.value = !referenceMenuOpen.value
+  referencePicker.value = null
+  referenceFileBaseId.value = null
+  if (!referenceMenuOpen.value) return
+  if (!notes.notes.length) await notes.load()
+  if (!library.bases.length) await library.load()
 }
-function openKnowledgeImport() { knowledgeImportOpen.value = !knowledgeImportOpen.value }
-function chooseKnowledgeImport(baseId) {
-  selectedKnowledgeBaseId.value = baseId
-  knowledgeImportOpen.value = false
-  importMenuOpen.value = false
-  homeKnowledgeInput.value?.click()
+async function openReferencePicker(type) {
+  referencePicker.value = type
+  if (type === 'file' && !library.bases.length) await library.load()
+}
+function addReference(reference) {
+  if (!references.value.some(item => item.key === reference.key)) references.value.push(reference)
+  closeReferenceMenu()
+}
+function removeReference(key) {
+  references.value = references.value.filter(item => item.key !== key)
+}
+function addNoteReference(note) {
+  addReference({ key: `note:${note.id}`, type: 'note', name: note.title || t('untitled'), noteId: note.id })
+}
+function addFileReference(entry) {
+  addReference({ key: `file:${library.activeId}:${entry.relativePath}`, type: 'file', name: entry.name, baseId: library.activeId, baseName: library.active?.name || '', relativePath: entry.relativePath })
+}
+async function selectReferenceFileBase(baseId) {
+  referenceFileBaseId.value = baseId
+  await library.selectBase(baseId)
+  if (library.path) await library.navigate('')
+}
+async function openReferenceFolder(entry) {
+  await library.navigate(entry.relativePath)
+}
+async function referenceBack() {
+  await library.goBack()
+}
+
+function restoreAssistantDraft() {
+  try {
+    const text = sessionStorage.getItem('tiny-note-assistant-draft')
+    if (!text) return
+    sessionStorage.removeItem('tiny-note-assistant-draft')
+    draft.value = text
+  } catch {}
 }
 
 onMounted(async () => {
+  restoreAssistantDraft()
+  if (!notes.notes.length) await notes.load()
   if (!library.bases.length) await library.load()
 })
-async function importNoteFiles(event) {
-  const files = Array.from(event.target.files || [])
-  if (!files.length) return
-  importing.value = true
-  try {
-    for (const file of files) await notes.importText(file)
-    await router.push('/notes')
-  } catch (error) {
-    window.alert(error?.message || '文件导入失败，请重试')
-  } finally {
-    importing.value = false
-    event.target.value = ''
-  }
-}
-async function importKnowledgeFiles(event) {
-  const files = Array.from(event.target.files || [])
-  if (!files.length || !selectedKnowledgeBaseId.value) return
-  importing.value = true
-  try {
-    await library.selectBase(selectedKnowledgeBaseId.value)
-    if (library.path) await library.navigate('')
-    await library.importFiles(files)
-    await router.push('/library')
-  } catch (error) {
-    window.alert(error?.message || '知识库导入失败，请重试')
-  } finally {
-    importing.value = false
-    event.target.value = ''
-    selectedKnowledgeBaseId.value = ''
-  }
-}
 </script>
 
 <template>
-  <div class="home-page" @click="importMenuOpen = false; knowledgeImportOpen = false">
+  <div class="home-page" @click="closeReferenceMenu">
     <div class="home-content">
       <section class="home-hero" aria-labelledby="home-title">
         <div class="home-wordmark" aria-label="Tiny Note">
@@ -116,6 +120,15 @@ async function importKnowledgeFiles(event) {
       </section>
 
       <section class="home-composer" aria-label="快速开始">
+        <div v-if="references.length" class="home-reference-tags" aria-label="引用内容">
+          <div v-for="reference in references" :key="reference.key" class="home-reference-tag" :class="`home-reference-tag-${reference.type}`">
+            <FileText v-if="reference.type === 'note'" :size="14" />
+            <File v-else :size="14" />
+            <span class="home-reference-tag-name" :title="reference.name">{{ reference.name }}</span>
+            <small v-if="reference.type === 'file' && reference.baseName">{{ reference.baseName }}</small>
+            <button type="button" :title="t('removeReference')" @click.stop="removeReference(reference.key)"><X :size="13" /></button>
+          </div>
+        </div>
         <textarea v-model="draft" rows="1" :placeholder="copy.placeholder" @keydown.enter.exact.prevent="submitDraft" />
         <div class="home-composer-actions">
           <div class="home-composer-left">
@@ -123,27 +136,46 @@ async function importKnowledgeFiles(event) {
             <button class="home-select-button" type="button" @click="open('/settings')"><Globe2 :size="16" /><span>{{ copy.localAi }}</span><ChevronDown :size="13" /></button>
           </div>
           <div class="home-composer-right">
-            <div class="home-import-anchor" @click.stop>
-              <button class="home-icon-button" type="button" :class="{ active: importMenuOpen }" title="导入" :disabled="importing" @click="openImport"><Paperclip :size="18" /></button>
-              <div v-if="importMenuOpen" class="home-import-menu">
-                <button class="home-import-option" @click="chooseNoteImport"><FileText :size="16" /><span>{{ t('importNote') }}</span><ChevronRight :size="14" /></button>
-                <div class="home-import-divider"></div>
-                <button class="home-import-option" :class="{ active: knowledgeImportOpen }" @click="openKnowledgeImport"><BookOpen :size="16" /><span>{{ t('importToKnowledge') }}</span><ChevronRight :size="14" /></button>
-                <div v-if="knowledgeImportOpen" class="home-knowledge-options">
-                  <template v-if="personalBases.length">
-                    <div class="home-import-group-label">{{ t('personal') }}</div>
-                    <button v-for="base in personalBases" :key="base.id" class="home-import-option" @click="chooseKnowledgeImport(base.id)"><BookOpen :size="14" /><span>{{ base.name }}</span></button>
+            <div class="home-reference-anchor" @click.stop>
+              <button class="home-icon-button" type="button" :class="{ active: referenceMenuOpen }" :title="t('referenceFile')" @click="openReferenceMenu"><Paperclip :size="18" /></button>
+              <div v-if="referenceMenuOpen" class="home-reference-menu">
+                <template v-if="!referencePicker">
+                  <div class="home-reference-menu-title">{{ t('referenceContent') }}</div>
+                  <button class="home-reference-option" @click="openReferencePicker('note')"><FileText :size="16" /><span>{{ t('referenceNote') }}</span><ChevronRight :size="14" /></button>
+                  <button class="home-reference-option" @click="openReferencePicker('file')"><File :size="16" /><span>{{ t('referenceFile') }}</span><ChevronRight :size="14" /></button>
+                </template>
+
+                <template v-else-if="referencePicker === 'note'">
+                  <div class="home-reference-menu-header"><button type="button" @click="referencePicker = null"><ChevronLeft :size="15" /></button><strong>{{ t('referenceNote') }}</strong></div>
+                  <div v-if="!noteCandidates.length" class="home-reference-empty">{{ t('referenceNoNotes') }}</div>
+                  <button v-for="note in noteCandidates" :key="note.id" class="home-reference-option" @click="addNoteReference(note)"><FileText :size="15" /><span>{{ note.title || t('untitled') }}</span></button>
+                </template>
+
+                <template v-else>
+                  <div class="home-reference-menu-header">
+                    <button type="button" @click="referenceFileBaseId ? (library.path ? referenceBack() : (referenceFileBaseId = null)) : (referencePicker = null)"><ChevronLeft :size="15" /></button>
+                    <strong>{{ referenceFileBaseId ? (library.active?.name || t('referenceFile')) : t('referenceFile') }}</strong>
+                  </div>
+                  <template v-if="!referenceFileBaseId">
+                    <template v-if="personalBases.length">
+                      <div class="home-reference-group-label">{{ t('personal') }}</div>
+                      <button v-for="base in personalBases" :key="base.id" class="home-reference-option" @click="selectReferenceFileBase(base.id)"><BookOpen :size="14" /><span>{{ base.name }}</span><ChevronRight :size="13" /></button>
+                    </template>
+                    <template v-if="localBases.length">
+                      <div class="home-reference-group-label">{{ t('local') }}</div>
+                      <button v-for="base in localBases" :key="base.id" class="home-reference-option" @click="selectReferenceFileBase(base.id)"><BookOpen :size="14" /><span>{{ base.name }}</span><ChevronRight :size="13" /></button>
+                    </template>
+                    <div v-if="!library.bases.length" class="home-reference-empty">{{ t('noKnowledgeBases') }}</div>
                   </template>
-                  <template v-if="localBases.length">
-                    <div class="home-import-group-label">{{ t('local') }}</div>
-                    <button v-for="base in localBases" :key="base.id" class="home-import-option" @click="chooseKnowledgeImport(base.id)"><BookOpen :size="14" /><span>{{ base.name }}</span></button>
+                  <template v-else>
+                    <div v-if="library.path" class="home-reference-path" :title="library.path">{{ library.path }}</div>
+                    <div v-if="library.loading && !library.entries.length" class="home-reference-empty">{{ t('loading') }}</div>
+                    <div v-else-if="!library.entries.length" class="home-reference-empty">{{ t('referenceNoFiles') }}</div>
+                    <button v-for="entry in library.entries" :key="entry.relativePath" class="home-reference-option" @click="entry.kind === 'folder' ? openReferenceFolder(entry) : addFileReference(entry)"><Folder v-if="entry.kind === 'folder'" :size="15" /><File v-else :size="15" /><span>{{ entry.name }}</span><ChevronRight v-if="entry.kind === 'folder'" :size="13" /></button>
                   </template>
-                  <span v-if="!library.bases.length" class="home-import-empty">{{ t('noKnowledgeBases') }}</span>
-                </div>
+                </template>
               </div>
             </div>
-            <input ref="homeFileInput" type="file" multiple hidden accept=".md,.markdown,.txt,.note" @change="importNoteFiles" />
-            <input ref="homeKnowledgeInput" type="file" multiple hidden accept=".pdf,.epub,.md,.markdown,.html,.htm,.txt,.json,.xml,.note" @change="importKnowledgeFiles" />
             <button class="home-send-button" type="button" :class="{ active: draft.trim() }" :title="copy.start" @click="submitDraft"><Send :size="18" /></button>
           </div>
         </div>
