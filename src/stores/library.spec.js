@@ -29,4 +29,18 @@ describe('library store', () => {
     await store.remove('drafts')
     expect(store.entries.some(entry => entry.name === 'drafts')).toBe(false)
   })
+
+  it('adds a note reference as a collision-safe .note file', async () => {
+    const store = useLibraryStore()
+    await store.load()
+    const result = await store.addNoteReference(store.activeId, {
+      id: 'note-1',
+      title: '设计/计划',
+      contentHtml: '<p>hello</p>',
+      updatedAt: '2026-08-20T00:00:00.000Z'
+    })
+
+    expect(result.name).toBe('设计计划.note')
+    expect(store.entries.some(entry => entry.name === '设计计划.note')).toBe(true)
+  })
 })

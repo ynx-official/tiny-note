@@ -2,11 +2,13 @@
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { useI18n } from 'vue-i18n'
-import { ChevronRight, CirclePlus, Copy, Download, FolderInput, Pencil, Plus, RotateCcw, Trash2 } from 'lucide-vue-next'
+import { BookOpen, ChevronRight, CirclePlus, Copy, Download, FolderInput, Pencil, Plus, RotateCcw, Trash2 } from 'lucide-vue-next'
 import { useNotesStore } from '../stores/notes'
+import { useLibraryStore } from '../stores/library'
 import NoteEditor from '../components/NoteEditor.vue'
 
 const store = useNotesStore()
+const library = useLibraryStore()
 const route = useRoute()
 const router = useRouter()
 const { t } = useI18n()
@@ -28,7 +30,12 @@ const contextMenuRef = ref(null)
 const contextMoveAnchorRef = ref(null)
 const contextMoveSubmenuRef = ref(null)
 const contextMoveStyle = ref({ left: '0px', top: '0px' })
+const contextKnowledgeOpen = ref(false)
+const contextKnowledgeAnchorRef = ref(null)
+const contextKnowledgeSubmenuRef = ref(null)
+const contextKnowledgeStyle = ref({ left: '0px', top: '0px' })
 let contextMoveTimer = null
+let contextKnowledgeTimer = null
 
 const list = computed(() => showDeleted.value ? store.deleted : store.visible)
 const contextNote = computed(() => contextMenu.value ? list.value.find(note => note.id === contextMenu.value.noteId) || store.notes.find(note => note.id === contextMenu.value.noteId) || store.deleted.find(note => note.id === contextMenu.value.noteId) : null)
@@ -41,6 +48,10 @@ const folders = computed(() => [
   { id: 'all', name: t('allNotes'), count: store.notes.length },
   ...store.notebooks.map(book => ({ id: book.id, name: book.name, count: store.notes.filter(note => note.notebookId === book.id).length }))
 ])
+const knowledgeGroups = computed(() => [
+  { id: 'personal', label: t('personal'), items: library.bases.filter(base => base.category === 'personal') },
+  { id: 'local', label: t('local'), items: library.bases.filter(base => base.category === 'local') }
+].filter(group => group.items.length))
 
 watch(query, async value => { store.search = value; await store.load() })
 watch(() => store.activeId, () => { tocVisible.value = false })
@@ -96,13 +107,17 @@ async function deleteNotebook() {
 function closeContextMenu() {
   contextMenu.value = null
   contextMoveOpen.value = false
+  contextKnowledgeOpen.value = false
   if (contextMoveTimer) window.clearTimeout(contextMoveTimer)
+  if (contextKnowledgeTimer) window.clearTimeout(contextKnowledgeTimer)
   contextMoveTimer = null
+  contextKnowledgeTimer = null
 }
 async function openContextMenu(event, note) {
   const menuWidth = 180
   const menuHeight = showDeleted.value ? 108 : 180
   contextMoveOpen.value = false
+  contextKnowledgeOpen.value = false
   contextMenu.value = {
     noteId: note.id,
     x: Math.max(8, Math.min(event.clientX, window.innerWidth - menuWidth - 8)),
@@ -132,6 +147,51 @@ function hideMoveSubmenu() {
 function cancelHideMoveSubmenu() {
   if (contextMoveTimer) window.clearTimeout(contextMoveTimer)
   contextMoveTimer = null
+}
+async function showKnowledgeSubmenu() {
+  if (contextKnowledgeTimer) window.clearTimeout(contextKnowledgeTimer)
+  contextKnowledgeOpen.value = true
+  await nextTick()
+  positionKnowledgeSubmenu()
+}
+function hideKnowledgeSubmenu() {
+  contextKnowledgeTimer = window.setTimeout(() => { contextKnowledgeOpen.value = false }, 180)
+}
+function cancelHideKnowledgeSubmenu() {
+  if (contextKnowledgeTimer) window.clearTimeout(contextKnowledgeTimer)
+  contextKnowledgeTimer = null
+}
+function positionKnowledgeSubmenu() {
+  const anchor = contextKnowledgeAnchorRef.value
+  const submenu = contextKnowledgeSubmenuRef.value
+  if (!anchor || !submenu) return
+  const itemRect = anchor.getBoundingClientRect()
+  const submenuRect = submenu.getBoundingClientRect()
+  const gap = 6
+  const opensRight = itemRect.right + gap + submenuRect.width <= window.innerWidth - 8
+  const left = opensRight ? itemRect.right + gap : Math.max(8, itemRect.left - submenuRect.width - gap)
+  const top = itemRect.top + submenuRect.height <= window.innerHeight - 8 ? itemRect.top : Math.max(8, itemRect.bottom - submenuRect.height)
+  contextKnowledgeStyle.value = { left: left + 'px', top: top + 'px' }
+}
+async function addContextNoteToKnowledge(knowledgeBaseId) {
+  const note = contextNote.value
+  if (!note || !knowledgeBaseId) return
+  try {
+    await library.addNoteReference(knowledgeBaseId, note)
+    closeContextMenu()
+  } catch (error) {
+    window.alert(error?.message || '添加到知识库失败，请重试')
+  }
+}
+async function createKnowledgeBaseForContext() {
+  const name = window.prompt(t('newKnowledge'))
+  if (!name?.trim()) return
+  try {
+    await library.create(name.trim(), 'personal')
+    if (library.activeId) await addContextNoteToKnowledge(library.activeId)
+  } catch (error) {
+    window.alert(error?.message || '创建知识库失败，请重试')
+  }
 }
 function positionMoveSubmenu() {
   const anchor = contextMoveAnchorRef.value
@@ -285,7 +345,9 @@ onBeforeUnmount(() => {
 
     <div v-if="contextMenu && contextNote" ref="contextMenuRef" class="note-context-menu" :style="{ left: contextMenu.x + 'px', top: contextMenu.y + 'px' }" @click.stop @contextmenu.prevent.stop>
       <template v-if="!showDeleted">
-        <button @click="closeContextMenu"><CirclePlus :size="15" /><span>添加到知识库</span><ChevronRight class="context-arrow" :size="14" /></button>
+        <div ref="contextKnowledgeAnchorRef" class="note-context-submenu-anchor" @mouseenter="showKnowledgeSubmenu" @mouseleave="hideKnowledgeSubmenu">
+          <button class="has-submenu"><BookOpen :size="15" /><span>{{ t('addToKnowledge') }}</span><ChevronRight class="context-arrow" :size="14" /></button>
+        </div>
         <div ref="contextMoveAnchorRef" class="note-context-submenu-anchor" @mouseenter="showMoveSubmenu" @mouseleave="hideMoveSubmenu">
           <button class="has-submenu"><FolderInput :size="15" /><span>移动到笔记本</span><ChevronRight class="context-arrow" :size="14" /></button>
         </div>
@@ -298,6 +360,20 @@ onBeforeUnmount(() => {
         <button class="danger" @click="deleteContextNote"><Trash2 :size="15" /><span>{{ t('permanentlyDelete') }}</span></button>
       </template>
     </div>
+
+    <Teleport to="body">
+      <div v-if="contextKnowledgeOpen && contextMenu && contextNote" ref="contextKnowledgeSubmenuRef" class="note-context-submenu note-knowledge-submenu" :style="contextKnowledgeStyle" @mouseenter="cancelHideKnowledgeSubmenu" @mouseleave="hideKnowledgeSubmenu" @click.stop @contextmenu.prevent.stop>
+        <button class="note-context-create-item" @click="createKnowledgeBaseForContext"><Plus :size="14" />{{ t('newKnowledge') }}</button>
+        <div class="note-context-divider"></div>
+        <template v-if="knowledgeGroups.length">
+          <template v-for="group in knowledgeGroups" :key="group.id">
+            <div class="note-context-group-label">{{ group.label }}</div>
+            <button v-for="base in group.items" :key="base.id" @click="addContextNoteToKnowledge(base.id)"><BookOpen :size="14" />{{ base.name }}</button>
+          </template>
+        </template>
+        <span v-else class="note-context-empty">{{ t('noKnowledgeBases') }}</span>
+      </div>
+    </Teleport>
 
     <Teleport to="body">
       <div v-if="contextMoveOpen && contextMenu && contextNote" ref="contextMoveSubmenuRef" class="note-context-submenu" :style="contextMoveStyle" @mouseenter="cancelHideMoveSubmenu" @mouseleave="hideMoveSubmenu" @click.stop @contextmenu.prevent.stop>

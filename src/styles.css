@@ -560,6 +560,8 @@ body, button, input, select, textarea { font-family: -apple-system, BlinkMacSyst
 .note-context-submenu button:hover { background:var(--bg-hover); }
 .note-context-submenu button svg { width:14px; height:14px; flex-shrink:0; color:var(--text-secondary); }
 .note-context-submenu button.selected { background:var(--bg-active); color:var(--text-primary); font-weight:500; }
+.note-context-group-label { padding:6px 12px 3px; color:var(--text-tertiary); font-size:11px; line-height:1.4; }
+.note-context-create-item { color:var(--text-primary); }
 .note-context-empty { display:flex; align-items:center; justify-content:center; padding:7px 12px; color:var(--text-tertiary); font-size:12px; pointer-events:none; }
 .note-context-submenu .note-context-divider { height:1px; margin:4px 12px; background:var(--border-color); }
 .note-context-menu .note-context-divider { height:1px; margin:4px 12px; background:var(--border-color); }
