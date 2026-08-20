@@ -4,6 +4,9 @@ on:
   push:
   pull_request:
 
+permissions:
+  contents: read
+
 jobs:
   checks:
     runs-on: ubuntu-latest
@@ -43,7 +46,10 @@ jobs:
 
   windows-bundle:
     needs: checks
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
     runs-on: windows-latest
+    permissions:
+      contents: write
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -61,6 +67,7 @@ jobs:
 
   macos-bundle:
     needs: checks
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
     strategy:
       matrix:
         include:
@@ -69,6 +76,8 @@ jobs:
           - runner: macos-14
             args: --target aarch64-apple-darwin
     runs-on: ${{ matrix.runner }}
+    permissions:
+      contents: write
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -82,5 +91,7 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:
           args: ${{ matrix.args }}
+          tagName: tiny-note-v__VERSION__
+          releaseName: Tiny Note v__VERSION__
           releaseDraft: true
           prerelease: true
