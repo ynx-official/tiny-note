@@ -6,6 +6,12 @@ function saveBrowserState(state) { localStorage.setItem(key, JSON.stringify(stat
 function normalizeRelativePath(value = '') { return String(value).replaceAll('\\', '/').replace(/^\/+|\/+$/g, '') }
 function parentPath(value = '') { const path = normalizeRelativePath(value); const index = path.lastIndexOf('/'); return index < 0 ? '' : path.slice(0, index) }
 function entryName(value = '') { const path = normalizeRelativePath(value); return path.split('/').pop() || path }
+const browserMemorySeed = [
+  { fileName: 'SOUL.md', nameKey: 'SOUL', description: '灵魂设定', content: '# 灵魂设定\n\nTiny Note 助手的工作方式、表达风格和安全边界。\n\n## 说话风格\n- 先给结论，再补充必要细节\n- 亲切、清晰，不编造不确定的信息\n' },
+  { fileName: 'USER.md', nameKey: 'USER', description: '用户档案', content: '# 用户档案\n\n> 记录用户主动提供、并希望跨会话保留的偏好。\n\n## 语言\n- 简体中文\n\n## 兴趣与工作习惯\n- （待补充）\n' },
+  { fileName: 'MEMORY.md', nameKey: 'MEMORY', description: '长期记忆', content: '# 长期记忆\n\n> 记录跨会话需要记住的重要事实、事件和承诺。\n\n## 重要事实\n- （待补充）\n' },
+  { fileName: 'Agent.md', nameKey: 'Agent', description: '经验与技巧', content: '# 经验与技巧\n\n> 记录 Tiny Note 助手在工作中积累的可复用经验。\n\n## 工具使用经验\n- （待补充）\n' }
+]
 function ensureLibraryParents(state, knowledgeBaseId, relativePath, now) {
   const parts = normalizeRelativePath(relativePath).split('/').filter(Boolean)
   parts.pop()
@@ -28,6 +34,8 @@ export async function invoke(command, args = {}) {
   if (!state.notebooks) state.notebooks = [{ id: 'uncategorized', name: '未分类', description: '', createdAt: new Date().toISOString(), updatedAt: new Date().toISOString() }]
   if (!state.kbs) state.kbs = [{ id: 'personal-demo', category: 'personal', name: '我的笔记', description: '', rootPath: '', createdAt: new Date().toISOString(), updatedAt: new Date().toISOString() }, { id: 'local-demo', category: 'local', name: '我的书籍', description: '', rootPath: '', createdAt: new Date().toISOString(), updatedAt: new Date().toISOString() }]
   if (!state.libraryFiles) state.libraryFiles = []
+  if (!state.memories) state.memories = browserMemorySeed.map(file => ({ ...file, updatedAt: new Date().toISOString() }))
+  if (!state.usageRecords) state.usageRecords = []
   const now = new Date().toISOString()
   let result
   if (command === 'note_list') result = state.notes.filter(n => Boolean(n.deletedAt) === Boolean(args.deleted) && (!args.search || `${n.title} ${n.contentText}`.toLowerCase().includes(args.search.toLowerCase())))
@@ -115,6 +123,23 @@ export async function invoke(command, args = {}) {
   }
   else if (command === 'settings_get') result = state.settings || { theme: 'system', language: 'zh-CN', fimEnabled: false }
   else if (command === 'settings_update') { state.settings = args.settings; result = state.settings }
+  else if (command === 'memory_list') result = state.memories
+  else if (command === 'memory_update') {
+    const memory = state.memories.find(item => item.fileName === args.fileName)
+    if (!memory) throw new Error('记忆文件不存在')
+    memory.content = String(args.content || '')
+    memory.size = memory.content.length
+    memory.updatedAt = now
+    result = null
+  }
+  else if (command === 'usage_get_stats') {
+    const range = args.range || 'all'
+    const start = range === 'today' ? new Date(new Date().setHours(0, 0, 0, 0)).getTime() : range === '7d' ? Date.now() - 7 * 86400000 : range === '30d' ? Date.now() - 30 * 86400000 : 0
+    const records = state.usageRecords.filter(item => item.ts >= start)
+    const summary = records.reduce((acc, item) => { acc.totalPrompt += item.promptTokens; acc.totalCompletion += item.completionTokens; acc.totalTokens += item.totalTokens; acc.totalReasoning += item.reasoningTokens || 0; return acc }, { totalPrompt: 0, totalCompletion: 0, totalTokens: 0, totalReasoning: 0, totalRequests: records.length })
+    result = { range, summary, byModel: [], byDay: [], bySource: [] }
+  }
+  else if (command === 'usage_clear') { state.usageRecords = []; result = null }
   else if (command === 'model_list') result = state.models || []
   else if (command === 'model_fetch_models') {
     // Keep the browser fallback aligned with the Tauri DTO shape while
@@ -123,6 +148,10 @@ export async function invoke(command, args = {}) {
     const provider = String(request.provider || '').toLowerCase()
     const presets = provider.includes('deepseek') ? ['deepseek-chat', 'deepseek-reasoner'] : provider.includes('智谱') || provider.includes('zhipu') ? ['glm-4-flash', 'glm-4-plus'] : provider.includes('kimi') || provider.includes('moonshot') ? ['moonshot-v1-8k', 'moonshot-v1-32k'] : provider.includes('minimax') ? ['MiniMax-Text-01'] : provider.includes('千问') || provider.includes('qwen') ? ['qwen-turbo', 'qwen-plus', 'qwen-max'] : ['gpt-4o-mini', 'gpt-4.1-mini']
     result = presets.map(id => ({ id, name: id, ownedBy: request.provider || 'OpenAI-compatible' }))
+  }
+  else if (command === 'model_query_balance') {
+    const model = (state.models || []).find(item => item.id === args.modelId)
+    result = { supported: false, available: null, currency: null, totalBalance: 0, grantedBalance: 0, toppedUpBalance: 0, voucherBalance: 0, cashBalance: 0, updatedAt: now, error: model?.provider?.toLowerCase().includes('deepseek') ? '余额查询需要桌面端凭据服务。' : null }
   }
   else if (command === 'model_upsert') { state.models = [...(state.models || []).filter(m => m.id !== args.profile.id), { ...args.profile, apiKeyConfigured: Boolean(args.apiKey) || args.profile.apiKeyConfigured }]; result = null }
   else if (command === 'model_delete') { state.models = (state.models || []).filter(m => m.id !== args.id); result = null }

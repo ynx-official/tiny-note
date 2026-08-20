@@ -2,15 +2,22 @@
 import { computed, onMounted, ref } from 'vue'
 import { useRouter } from 'vue-router'
 import { useI18n } from 'vue-i18n'
-import { BookOpen, ChevronDown, ChevronLeft, ChevronRight, File, FileSearch2, FileText, Folder, Globe2, LibraryBig, MessageSquare, NotebookPen, Paperclip, PenLine, Send, Settings2, Sparkles, X } from 'lucide-vue-next'
+import { Channel } from '@tauri-apps/api/core'
+import { BookOpen, ChevronDown, ChevronLeft, ChevronRight, File, FileSearch2, FileText, Folder, Globe2, LibraryBig, MessageSquare, NotebookPen, Paperclip, PenLine, Send, Settings2, Sparkles, Square, X } from 'lucide-vue-next'
 import { useNotesStore } from '../stores/notes'
 import { useLibraryStore } from '../stores/library'
+import { invoke } from '../services/tauri'
 
 const router = useRouter()
 const { locale, t } = useI18n()
 const notes = useNotesStore()
 const library = useLibraryStore()
 const draft = ref('')
+const messages = ref([])
+const streamingText = ref('')
+const busy = ref(false)
+const requestId = ref('')
+const chatError = ref('')
 const referenceMenuOpen = ref(false)
 const referencePicker = ref(null)
 const referenceFileBaseId = ref(null)
@@ -22,7 +29,7 @@ const noteCandidates = computed(() => notes.notes.filter(note => !note.deletedAt
 const copy = computed(() => locale.value === 'en' ? {
   subtitle: 'What would you like Tiny Note to help with?',
   placeholder: 'Write an idea or start a note…',
-  noteMode: 'Note mode',
+  noteMode: 'Chat mode',
   localAi: 'Local AI · Quick',
   features: [
     ['Notes workspace', 'Capture and organize ideas', NotebookPen, '/notes'],
@@ -35,7 +42,7 @@ const copy = computed(() => locale.value === 'en' ? {
 } : {
   subtitle: '需要 Tiny Note 帮您做些什么？',
   placeholder: '写下一个想法，开始一篇笔记…',
-  noteMode: '笔记模式',
+  noteMode: '对话模式',
   localAi: '本地 AI · 快速',
   features: [
     ['笔记工作区', '记录并整理每个想法', NotebookPen, '/notes'],
@@ -49,7 +56,42 @@ const copy = computed(() => locale.value === 'en' ? {
 
 function open(path) { router.push(path) }
 function startNote() { router.push('/notes?new=1') }
-function submitDraft() { startNote() }
+function assistantContext() {
+  const referenceText = references.value.map(item => `${item.type === 'note' ? '笔记' : '文件'}：${item.name}`).join('\n')
+  const history = messages.value.slice(-8).map(item => `${item.role === 'user' ? '用户' : '助手'}：${item.content}`).join('\n')
+  return [referenceText ? `用户选择的引用：\n${referenceText}` : '', history ? `此前对话：\n${history}` : ''].filter(Boolean).join('\n\n') || '无额外上下文'
+}
+function pushResponse(content) { if (content?.trim()) messages.value.push({ role: 'assistant', content: content.trim() }) }
+async function submitDraft() {
+  const message = draft.value.trim()
+  if (!message || busy.value) return
+  messages.value.push({ role: 'user', content: message, references: references.value.map(item => ({ ...item })) })
+  draft.value = ''
+  chatError.value = ''
+  busy.value = true
+  streamingText.value = '正在思考…'
+  requestId.value = crypto.randomUUID()
+  if (!window.__TAURI_INTERNALS__) {
+    window.setTimeout(() => { pushResponse(`这是浏览器预览回复：${message}`); streamingText.value = ''; busy.value = false }, 500)
+    return
+  }
+  const channel = new Channel()
+  channel.onmessage = event => {
+    if (event.type === 'delta') { if (streamingText.value === '正在思考…') streamingText.value = ''; streamingText.value += event.text }
+    if (event.type === 'error') { chatError.value = event.message || '模型请求失败'; streamingText.value = ''; busy.value = false }
+    if (event.type === 'cancelled') { streamingText.value = ''; busy.value = false }
+    if (event.type === 'completed') { pushResponse(streamingText.value === '正在思考…' ? '模型没有返回内容，请换个问法再试。' : streamingText.value); streamingText.value = ''; busy.value = false }
+  }
+  try {
+    await invoke('note_ai_stream', { request: { requestId: requestId.value, action: 'custom', text: assistantContext(), instruction: message, modelProfileId: null, source: 'chat' }, onEvent: channel })
+  } catch (error) { chatError.value = error?.message || '模型请求失败'; streamingText.value = ''; busy.value = false }
+}
+async function stopChat() {
+  if (!busy.value || !requestId.value || !window.__TAURI_INTERNALS__) return
+  try { await invoke('note_ai_cancel', { requestId: requestId.value }) } catch {}
+  busy.value = false
+  streamingText.value = ''
+}
 function closeReferenceMenu() {
   referenceMenuOpen.value = false
   referencePicker.value = null
@@ -120,6 +162,11 @@ onMounted(async () => {
       </section>
 
       <section class="home-composer" aria-label="快速开始">
+        <div v-if="messages.length || busy || chatError" class="home-chat-history" aria-live="polite">
+          <div v-for="(message, index) in messages" :key="`${index}-${message.role}`" class="home-chat-message" :class="`is-${message.role}`"><span>{{ message.content }}</span></div>
+          <div v-if="busy" class="home-chat-message is-assistant"><span>{{ streamingText || '正在思考…' }}</span></div>
+          <div v-if="chatError" class="home-chat-error">{{ chatError }} <button type="button" @click="open('/settings')">打开模型设置</button></div>
+        </div>
         <div v-if="references.length" class="home-reference-tags" aria-label="引用内容">
           <div v-for="reference in references" :key="reference.key" class="home-reference-tag" :class="`home-reference-tag-${reference.type}`">
             <FileText v-if="reference.type === 'note'" :size="14" />
@@ -176,7 +223,8 @@ onMounted(async () => {
                 </template>
               </div>
             </div>
-            <button class="home-send-button" type="button" :class="{ active: draft.trim() }" :title="copy.start" @click="submitDraft"><Send :size="18" /></button>
+            <button v-if="busy" class="home-send-button active" type="button" title="停止生成" @click="stopChat"><Square :size="16" /></button>
+            <button v-else class="home-send-button" type="button" :class="{ active: draft.trim() }" :title="copy.start" @click="submitDraft"><Send :size="18" /></button>
           </div>
         </div>
       </section>

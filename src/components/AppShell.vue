@@ -4,6 +4,7 @@ import { useRouter } from 'vue-router'
 import { useI18n } from 'vue-i18n'
 import { getCurrentWindow } from '@tauri-apps/api/window'
 import { BookOpen, FileText, Settings, Plus, Minus, Square, Copy, X, PanelLeftClose, PanelLeftOpen, Home } from 'lucide-vue-next'
+import AvatarDrawer from './AvatarDrawer.vue'
 
 const props = defineProps({ active: String })
 const router = useRouter()
@@ -11,6 +12,7 @@ const { t } = useI18n()
 const isMac = /Macintosh|Mac OS/.test(navigator.userAgent || '')
 const railCollapsed = ref(false)
 const isMaximized = ref(false)
+const avatarOpen = ref(false)
 let appWindow = null
 let stopResizeListener = null
 const nav = computed(() => [{ key: 'notes', label: t('notes'), icon: FileText, path: '/notes' }, { key: 'library', label: t('library'), icon: BookOpen, path: '/library' }, { key: 'settings', label: t('settings'), icon: Settings, path: '/settings' }])
@@ -67,7 +69,7 @@ onUnmounted(() => { if (stopResizeListener) stopResizeListener() })
     </header>
     <div class="app-body main-body">
       <aside class="rail sidebar" :class="{ 'is-collapsed': railCollapsed }">
-        <button class="rail-avatar" aria-label="Tiny Note"><span>🐶</span><i class="avatar-status"></i></button>
+        <button class="rail-avatar" aria-label="Tiny Note" @click="avatarOpen = true"><span>🐶</span><i class="avatar-status"></i></button>
         <button class="rail-add" aria-label="New" @click="navigate('/notes?new=1')"><Plus :size="18" /></button>
         <nav><button v-for="item in nav.filter(item => item.key !== 'settings')" :key="item.key" :class="['rail-item', { active: props.active === item.key }]" :title="item.label" @click="navigate(item.path)"><component :is="item.icon" :size="19" /><span>{{ item.label }}</span></button></nav>
         <div class="rail-spacer"></div>
@@ -76,5 +78,6 @@ onUnmounted(() => { if (stopResizeListener) stopResizeListener() })
       </aside>
       <main class="content-wrap main-content"><div class="content-card content-wrapper"><slot /></div></main>
     </div>
+    <AvatarDrawer v-model="avatarOpen" />
   </div>
 </template>

@@ -1,8 +1,15 @@
 <script setup>
 import { computed, onMounted, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
-import { Check, ChevronDown, ChevronRight, Cpu, Globe2, Info, KeyRound, Languages, Moon, Monitor, Palette, Plus, RefreshCw, Search, Sparkles, Sun, Trash2, X } from 'lucide-vue-next'
+import { Check, ChevronDown, ChevronRight, Cpu, Globe2, Info, Languages, Moon, Monitor, Palette, Plus, RefreshCw, Search, Sparkles, Sun, Trash2, X } from 'lucide-vue-next'
 import { invoke } from '../services/tauri'
+import doubaoIcon from '../assets/providers/doubao.png'
+import qwenIcon from '../assets/providers/qwen.png'
+import zhipuIcon from '../assets/providers/zhipu.png'
+import deepseekIcon from '../assets/providers/deepseek.png'
+import kimiIcon from '../assets/providers/kimi.png'
+import minimaxIcon from '../assets/providers/minimax.png'
+import otherIcon from '../assets/providers/other.png'
 
 const { t, locale } = useI18n()
 const settings = ref({ theme: 'system', language: locale.value, fimEnabled: false })
@@ -19,14 +26,17 @@ const modelCatalog = ref([])
 const selectedModelIds = ref([])
 const modelFetchBusy = ref(false)
 const modelFetchError = ref('')
+const balanceStates = ref({})
+const balanceRefreshingAll = ref(false)
 
 const providerOptions = [
-  { key: 'qwen', label: '通义千问', mark: 'Q', baseUrl: 'https://dashscope.aliyuncs.com/compatible-mode/v1' },
-  { key: 'zhipu', label: '智谱', mark: 'Z', baseUrl: 'https://open.bigmodel.cn/api/paas/v4' },
-  { key: 'deepseek', label: 'DeepSeek', mark: 'DS', baseUrl: 'https://api.deepseek.com/v1' },
-  { key: 'kimi', label: 'Kimi', mark: 'K', baseUrl: 'https://api.moonshot.cn/v1' },
-  { key: 'minimax', label: 'MiniMax', mark: 'M', baseUrl: 'https://api.minimax.chat/v1' },
-  { key: 'custom', label: '其他', mark: '···', baseUrl: '' }
+  { key: 'doubao', label: '豆包', mark: '豆', icon: doubaoIcon, baseUrl: 'https://ark.cn-beijing.volces.com/api/v3' },
+  { key: 'qwen', label: '千问', mark: '千', icon: qwenIcon, baseUrl: 'https://dashscope.aliyuncs.com/compatible-mode/v1' },
+  { key: 'zhipu', label: '智谱', mark: '智', icon: zhipuIcon, baseUrl: 'https://open.bigmodel.cn/api/paas/v4' },
+  { key: 'deepseek', label: 'DeepSeek', mark: 'DS', icon: deepseekIcon, baseUrl: 'https://api.deepseek.com' },
+  { key: 'kimi', label: 'Kimi', mark: 'K', icon: kimiIcon, baseUrl: 'https://api.moonshot.cn/v1' },
+  { key: 'minimax', label: 'MiniMax', mark: 'M', icon: minimaxIcon, baseUrl: 'https://api.minimaxi.com/v1' },
+  { key: 'custom', label: '其他', mark: '···', icon: otherIcon, baseUrl: '' }
 ]
 
 const themeOptions = computed(() => [
@@ -51,12 +61,21 @@ const filteredSections = computed(() => {
   return settingsSections.value.filter(section => `${section.label} ${section.description}`.toLocaleLowerCase().includes(query))
 })
 const activeSection = computed(() => settingsSections.value.find(section => section.id === activeSectionId.value) || settingsSections.value[0])
-const selectedProvider = computed(() => providerOptions.find(option => option.key === draft.value?.providerKey) || providerOptions[2])
+const selectedProvider = computed(() => providerOptions.find(option => option.key === draft.value?.providerKey) || providerOptions[3])
 const selectedCatalogModels = computed(() => modelCatalog.value.filter(option => selectedModelIds.value.includes(option.id)))
 const primaryModel = computed(() => models.value.find(model => model.isDefault) || models.value[0] || null)
+const balanceModels = computed(() => {
+  const byProvider = new Map()
+  for (const model of models.value) {
+    const provider = String(model.provider || '').trim().toLowerCase() || 'unknown'
+    const current = byProvider.get(provider)
+    if (!current || (model.isDefault && !current.isDefault)) byProvider.set(provider, model)
+  }
+  return [...byProvider.values()]
+})
 
 function emptyDraft() {
-  const provider = providerOptions[2]
+  const provider = providerOptions[3]
   return { id: '', name: '', providerKey: provider.key, provider: provider.label, baseUrl: provider.baseUrl, model: '', isDefault: models.value.length === 0, apiKey: '' }
 }
 
@@ -202,6 +221,58 @@ async function removeModel(id) {
   if (!window.confirm(t('confirmDelete'))) return
   await invoke('model_delete', { id })
   models.value = await invoke('model_list')
+  const next = { ...balanceStates.value }
+  delete next[id]
+  balanceStates.value = next
+}
+
+function providerForModel(model) {
+  const value = String(model?.provider || '').toLowerCase()
+  return providerOptions.find(option => option.key === value || option.label.toLowerCase() === value || value.includes(option.key)) || providerOptions.at(-1)
+}
+
+function providerIcon(model) {
+  return providerForModel(model).icon
+}
+
+function isDeepSeek(model) {
+  return providerForModel(model).key === 'deepseek'
+}
+
+function formatBalance(value, currency = '') {
+  const amount = Number(value) || 0
+  return (currency || '¥') + amount.toFixed(2)
+}
+
+function formatBalanceTime(value) {
+  if (!value) return ''
+  try {
+    return new Intl.DateTimeFormat(locale.value === 'zh-CN' ? 'zh-CN' : 'en-US', { dateStyle: 'medium', timeStyle: 'short' }).format(new Date(value))
+  } catch {
+    return ''
+  }
+}
+
+async function queryBalanceFor(model) {
+  if (!model || !isDeepSeek(model)) return
+  balanceStates.value = { ...balanceStates.value, [model.id]: { loading: true } }
+  try {
+    const data = await invoke('model_query_balance', { modelId: model.id })
+    balanceStates.value = { ...balanceStates.value, [model.id]: { loading: false, data, updatedAt: data.updatedAt || new Date().toISOString() } }
+  } catch (error) {
+    balanceStates.value = { ...balanceStates.value, [model.id]: { loading: false, error: error?.message || '余额查询失败' } }
+  }
+}
+
+async function queryAllBalances() {
+  const targets = balanceModels.value.filter(isDeepSeek)
+  if (!targets.length || balanceRefreshingAll.value) return
+  balanceRefreshingAll.value = true
+  try {
+    await Promise.all(targets.map(queryBalanceFor))
+  } finally {
+    balanceRefreshingAll.value = false
+  }
 }
 
 onMounted(async () => {
@@ -267,13 +338,13 @@ watch(filteredSections, sections => {
               <strong>首选模型</strong>
               <div class="settings-primary-select-wrap">
                 <button type="button" class="settings-primary-select" @click.stop="primaryModelMenuOpen = !primaryModelMenuOpen; providerMenuOpen = false">
-                  <span v-if="primaryModel" class="settings-primary-model"><span class="provider-mark" :class="'provider-' + (primaryModel.provider || '').toLowerCase()">{{ (primaryModel.provider || 'AI').slice(0, 2) }}</span><span><b>{{ primaryModel.name }}</b><small>{{ primaryModel.provider }} · {{ primaryModel.model }}</small></span></span>
+                  <span v-if="primaryModel" class="settings-primary-model"><img :src="providerIcon(primaryModel)" :alt="primaryModel.provider" class="provider-icon-image" /><span><b>{{ primaryModel.name }}</b><small>{{ primaryModel.provider }} · {{ primaryModel.model }}</small></span></span>
                   <span v-else class="settings-primary-empty">{{ t('noModels') }}</span>
                   <ChevronDown :size="15" :class="{ expanded: primaryModelMenuOpen }" />
                 </button>
                 <div v-if="primaryModelMenuOpen" class="settings-primary-menu" @click.stop>
                   <button v-for="model in models" :key="model.id" type="button" :class="{ active: model.id === primaryModel?.id }" @click="setPrimaryModel(model)">
-                    <span class="provider-mark" :class="'provider-' + (model.provider || '').toLowerCase()">{{ (model.provider || 'AI').slice(0, 2) }}</span><span><b>{{ model.name }}</b><small>{{ model.model }}</small></span><Check v-if="model.id === primaryModel?.id" :size="15" />
+                    <img :src="providerIcon(model)" :alt="model.provider" class="provider-icon-image" /><span><b>{{ model.name }}</b><small>{{ model.model }}</small></span><Check v-if="model.id === primaryModel?.id" :size="15" />
                   </button>
                   <span v-if="!models.length" class="settings-primary-menu-empty">{{ t('noModels') }}</span>
                 </div>
@@ -283,13 +354,32 @@ watch(filteredSections, sections => {
             <button type="button" class="settings-add-model-row" @click="addModel"><Plus :size="17" /><span>{{ t('addModel') }}</span><ChevronRight :size="15" /></button>
             <div v-if="models.length" class="settings-model-list">
               <div v-for="model in models" :key="model.id" class="settings-model-card">
-                <span class="provider-mark" :class="'provider-' + (model.provider || '').toLowerCase()">{{ (model.provider || 'AI').slice(0, 2) }}</span>
+                <img :src="providerIcon(model)" :alt="model.provider" class="provider-icon-image" />
                 <div class="settings-model-card-copy"><strong>{{ model.name }}</strong><small>{{ model.provider }} · {{ model.model }}</small></div>
                 <span class="settings-model-status">{{ model.apiKeyConfigured ? t('configured') : t('notConfigured') }}</span>
                 <button type="button" class="model-delete-btn" :title="t('delete')" @click="removeModel(model.id)"><Trash2 :size="16" /></button>
               </div>
             </div>
             <div v-else class="settings-empty settings-empty-large">{{ t('noModels') }}</div>
+            <div class="settings-subheading settings-balance-heading"><span>账户余额</span><button type="button" class="settings-balance-refresh-all" :disabled="balanceRefreshingAll || !balanceModels.some(isDeepSeek)" @click="queryAllBalances"><RefreshCw :size="14" :class="{ spinning: balanceRefreshingAll }" />刷新全部</button></div>
+            <div v-if="balanceModels.length" class="settings-balance-list">
+              <article v-for="model in balanceModels" :key="'balance-' + model.provider" class="settings-balance-card">
+                <header class="settings-balance-card-head">
+                  <img :src="providerIcon(model)" :alt="model.provider" class="provider-icon-image" />
+                  <div class="settings-balance-card-copy"><strong>{{ model.name }}</strong><small>{{ model.provider }}</small></div>
+                  <button type="button" class="settings-balance-query" :disabled="!isDeepSeek(model) || balanceStates[model.id]?.loading" @click="queryBalanceFor(model)"><RefreshCw v-if="balanceStates[model.id]?.loading" :size="13" class="spinning" /><span v-else>查询余额</span></button>
+                </header>
+                <div v-if="!isDeepSeek(model)" class="settings-balance-muted">该厂商暂不提供标准余额接口</div>
+                <div v-else-if="balanceStates[model.id]?.error" class="settings-balance-error">{{ balanceStates[model.id].error }}</div>
+                <div v-else-if="balanceStates[model.id]?.data?.supported === false" class="settings-balance-muted">{{ balanceStates[model.id].data.error || '余额查询需要桌面端凭据服务' }}</div>
+                <div v-else-if="balanceStates[model.id]?.data" class="settings-balance-values">
+                  <div class="settings-balance-total"><small>总余额</small><strong>{{ formatBalance(balanceStates[model.id].data.totalBalance, balanceStates[model.id].data.currency) }}</strong></div>
+                  <div><small>赠金余额</small><strong>{{ formatBalance(balanceStates[model.id].data.grantedBalance, balanceStates[model.id].data.currency) }}</strong></div>
+                  <div><small>充值余额</small><strong>{{ formatBalance(balanceStates[model.id].data.toppedUpBalance, balanceStates[model.id].data.currency) }}</strong></div>
+                  <span class="settings-balance-updated">更新于 {{ formatBalanceTime(balanceStates[model.id].updatedAt) }}</span>
+                </div>
+              </article>
+            </div>
           </section>
 
           <section v-else class="settings-detail-section settings-about-section">
@@ -307,10 +397,10 @@ watch(filteredSections, sections => {
           <label class="settings-modal-label">模型厂商</label>
           <div class="settings-provider-control">
             <button type="button" class="settings-provider-trigger" @click.stop="providerMenuOpen = !providerMenuOpen; primaryModelMenuOpen = false">
-              <span class="provider-mark" :class="'provider-' + selectedProvider.key">{{ selectedProvider.mark }}</span><span>{{ selectedProvider.label }}</span><ChevronDown :size="15" :class="{ expanded: providerMenuOpen }" />
+              <img :src="selectedProvider.icon" :alt="selectedProvider.label" class="provider-icon-image" /><span>{{ selectedProvider.label }}</span><ChevronDown :size="15" :class="{ expanded: providerMenuOpen }" />
             </button>
             <div v-if="providerMenuOpen" class="settings-provider-menu" @click.stop>
-              <button v-for="option in providerOptions" :key="option.key" type="button" :class="{ active: option.key === draft.providerKey }" @click="selectProvider(option)"><span class="provider-mark" :class="'provider-' + option.key">{{ option.mark }}</span><span>{{ option.label }}</span><Check v-if="option.key === draft.providerKey" :size="15" /></button>
+              <button v-for="option in providerOptions" :key="option.key" type="button" :class="{ active: option.key === draft.providerKey }" @click="selectProvider(option)"><img :src="option.icon" :alt="option.label" class="provider-icon-image" /><span>{{ option.label }}</span><Check v-if="option.key === draft.providerKey" :size="15" /></button>
             </div>
           </div>
           <div class="settings-modal-form-grid">

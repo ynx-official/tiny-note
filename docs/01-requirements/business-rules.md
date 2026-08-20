@@ -6,4 +6,4 @@
 - 导入同名文件默认保留两份，用户可选择替换或跳过。
 - 可搜索笔记标题/正文纯文本、知识库目录名/文件名和 `.note` 标题，不做全文语义索引。
 - FIM 默认关闭，开启前提示外部 API 请求和潜在费用。
-- API Key 不进入 SQLite 或任何前端 DTO，配置读取只返回 `apiKeyConfigured`。
+- API Key 存入本地 SQLite；不进入任何前端 DTO，配置读取只返回 `apiKeyConfigured`。

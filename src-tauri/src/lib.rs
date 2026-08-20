@@ -173,6 +173,76 @@ pub struct SettingsDto {
     pub fim_enabled: bool,
 }
 
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct MemoryFileDto {
+    pub file_name: String,
+    pub name_key: String,
+    pub description: String,
+    pub content: String,
+    pub size: usize,
+    pub updated_at: Option<String>,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct UsageSummaryDto {
+    pub total_prompt: i64,
+    pub total_completion: i64,
+    pub total_tokens: i64,
+    pub total_reasoning: i64,
+    pub total_requests: i64,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct UsageAggregateDto {
+    pub key: String,
+    pub label: String,
+    pub provider: String,
+    pub model_name: String,
+    pub source: String,
+    pub prompt_tokens: i64,
+    pub completion_tokens: i64,
+    pub total_tokens: i64,
+    pub reasoning_tokens: i64,
+    pub requests: i64,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct UsageDayDto {
+    pub date: String,
+    pub prompt_tokens: i64,
+    pub completion_tokens: i64,
+    pub total_tokens: i64,
+    pub requests: i64,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct UsageStatsDto {
+    pub range: String,
+    pub summary: UsageSummaryDto,
+    pub by_model: Vec<UsageAggregateDto>,
+    pub by_day: Vec<UsageDayDto>,
+    pub by_source: Vec<UsageAggregateDto>,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct BalanceDto {
+    pub supported: bool,
+    pub available: Option<bool>,
+    pub currency: Option<String>,
+    pub total_balance: f64,
+    pub granted_balance: f64,
+    pub topped_up_balance: f64,
+    pub voucher_balance: f64,
+    pub cash_balance: f64,
+    pub updated_at: String,
+}
+
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct CreateNote {
@@ -208,6 +278,8 @@ pub struct AiRequest {
     pub text: String,
     pub instruction: Option<String>,
     pub model_profile_id: Option<String>,
+    #[serde(default)]
+    pub source: Option<String>,
 }
 
 #[derive(Debug, Serialize, Clone)]
@@ -243,9 +315,27 @@ fn init_database(conn: &Connection) -> Result<(), AppError> {
       CREATE TABLE IF NOT EXISTS notes (id TEXT PRIMARY KEY, notebook_id TEXT REFERENCES notebooks(id) ON DELETE SET NULL, title TEXT NOT NULL, content_html TEXT NOT NULL, content_text TEXT NOT NULL, deleted_at TEXT, created_at TEXT NOT NULL, updated_at TEXT NOT NULL);
       CREATE INDEX IF NOT EXISTS idx_notes_deleted_updated ON notes(deleted_at, updated_at);
       CREATE TABLE IF NOT EXISTS knowledge_bases (id TEXT PRIMARY KEY, category TEXT NOT NULL CHECK(category IN ('personal','local')), name TEXT NOT NULL, description TEXT NOT NULL DEFAULT '', cover TEXT, root_path TEXT NOT NULL, created_at TEXT NOT NULL, updated_at TEXT NOT NULL);
-      CREATE TABLE IF NOT EXISTS model_profiles (id TEXT PRIMARY KEY, name TEXT NOT NULL, provider TEXT NOT NULL, base_url TEXT NOT NULL, model TEXT NOT NULL, is_default INTEGER NOT NULL DEFAULT 0);
+      CREATE TABLE IF NOT EXISTS model_profiles (id TEXT PRIMARY KEY, name TEXT NOT NULL, provider TEXT NOT NULL, base_url TEXT NOT NULL, model TEXT NOT NULL, api_key TEXT NOT NULL DEFAULT '', is_default INTEGER NOT NULL DEFAULT 0);
+      CREATE TABLE IF NOT EXISTS usage_records (id TEXT PRIMARY KEY, ts INTEGER NOT NULL, model_id TEXT NOT NULL DEFAULT '', model_name TEXT NOT NULL DEFAULT '', provider TEXT NOT NULL DEFAULT '', source TEXT NOT NULL DEFAULT 'chat', prompt_tokens INTEGER NOT NULL DEFAULT 0, completion_tokens INTEGER NOT NULL DEFAULT 0, total_tokens INTEGER NOT NULL DEFAULT 0, reasoning_tokens INTEGER NOT NULL DEFAULT 0);
+      CREATE INDEX IF NOT EXISTS idx_usage_records_ts ON usage_records(ts);
       CREATE TABLE IF NOT EXISTS settings (key TEXT PRIMARY KEY, value TEXT NOT NULL);")
         .map_err(AppError::db)?;
+    let model_columns = {
+        let mut statement = conn
+            .prepare("PRAGMA table_info(model_profiles)")
+            .map_err(AppError::db)?;
+        let rows = statement
+            .query_map([], |row| row.get::<_, String>(1))
+            .map_err(AppError::db)?;
+        rows.collect::<Result<Vec<_>, _>>().map_err(AppError::db)?
+    };
+    if !model_columns.iter().any(|column| column == "api_key") {
+        conn.execute(
+            "ALTER TABLE model_profiles ADD COLUMN api_key TEXT NOT NULL DEFAULT ''",
+            [],
+        )
+        .map_err(AppError::db)?;
+    }
     let count: i64 = conn
         .query_row("SELECT COUNT(*) FROM notebooks", [], |r| r.get(0))
         .map_err(AppError::db)?;
@@ -294,6 +384,54 @@ fn ensure_default_kbs(state: &AppState) -> Result<(), AppError> {
         }
     }
     Ok(())
+}
+
+const MEMORY_DEFINITIONS: [(&str, &str, &str, &str); 4] = [
+    (
+        "SOUL.md",
+        "SOUL",
+        "灵魂设定",
+        "# 灵魂设定\n\nTiny Note 助手的工作方式、表达风格和安全边界。\n\n## 说话风格\n- 先给结论，再补充必要细节\n- 亲切、清晰，不编造不确定的信息\n\n## 做事原则\n- 尊重用户的隐私和本地数据\n- 涉及外部请求、费用或删除操作时明确提示\n",
+    ),
+    (
+        "USER.md",
+        "USER",
+        "用户档案",
+        "# 用户档案\n\n> 记录用户主动提供、并希望跨会话保留的偏好。\n\n## 语言\n- 简体中文\n\n## 兴趣与工作习惯\n- （待补充）\n",
+    ),
+    (
+        "MEMORY.md",
+        "MEMORY",
+        "长期记忆",
+        "# 长期记忆\n\n> 记录跨会话需要记住的重要事实、事件和承诺。\n\n## 重要事实\n- （待补充）\n\n## 待办与承诺\n- （待补充）\n",
+    ),
+    (
+        "Agent.md",
+        "Agent",
+        "经验与技巧",
+        "# 经验与技巧\n\n> 记录 Tiny Note 助手在工作中积累的可复用经验。\n\n## 工具使用经验\n- （待补充）\n\n## 避坑指南\n- （待补充）\n",
+    ),
+];
+
+fn memory_definition(
+    file_name: &str,
+) -> Option<(&'static str, &'static str, &'static str, &'static str)> {
+    MEMORY_DEFINITIONS
+        .iter()
+        .copied()
+        .find(|(name, _, _, _)| *name == file_name)
+}
+
+fn ensure_memory_files(state: &AppState) -> Result<PathBuf, AppError> {
+    let dir = state.data_dir.join("memories");
+    fs::create_dir_all(&dir).map_err(AppError::fs)?;
+    for (file_name, _, _, content) in MEMORY_DEFINITIONS {
+        let path = dir.join(file_name);
+        if !path.exists() {
+            fs::write(path, content).map_err(AppError::fs)?;
+        }
+    }
+    Ok(dir)
 }
 
 fn note_from_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<NoteDto> {
@@ -995,21 +1133,220 @@ pub mod commands {
     }
 
     #[tauri::command]
+    pub fn memory_list(state: State<'_, AppState>) -> Result<Vec<MemoryFileDto>, AppError> {
+        let dir = ensure_memory_files(&state)?;
+        MEMORY_DEFINITIONS
+            .iter()
+            .map(|(file_name, name_key, description, _)| {
+                let path = dir.join(file_name);
+                let content = fs::read_to_string(&path).map_err(AppError::fs)?;
+                let updated_at = fs::metadata(&path)
+                    .ok()
+                    .and_then(|metadata| metadata.modified().ok())
+                    .map(|time| chrono::DateTime::<Utc>::from(time).to_rfc3339());
+                Ok(MemoryFileDto {
+                    file_name: (*file_name).into(),
+                    name_key: (*name_key).into(),
+                    description: (*description).into(),
+                    size: content.chars().count(),
+                    content,
+                    updated_at,
+                })
+            })
+            .collect()
+    }
+
+    #[tauri::command]
+    pub fn memory_update(
+        state: State<'_, AppState>,
+        file_name: String,
+        content: String,
+    ) -> Result<(), AppError> {
+        if memory_definition(&file_name).is_none() {
+            return Err(AppError::invalid(
+                "invalid_memory_file",
+                "Unknown memory file",
+            ));
+        }
+        if content.len() > 512 * 1024 {
+            return Err(AppError::invalid(
+                "memory_file_too_large",
+                "Memory file is too large",
+            ));
+        }
+        let dir = ensure_memory_files(&state)?;
+        fs::write(dir.join(file_name), content).map_err(AppError::fs)
+    }
+
+    #[tauri::command]
+    pub fn usage_get_stats(
+        state: State<'_, AppState>,
+        range: Option<String>,
+    ) -> Result<UsageStatsDto, AppError> {
+        let range = range.unwrap_or_else(|| "all".into());
+        let start_ts = match range.as_str() {
+            "today" => {
+                let now = chrono::Local::now();
+                now.date_naive()
+                    .and_hms_opt(0, 0, 0)
+                    .map(|value| value.and_utc().timestamp_millis())
+                    .unwrap_or(0)
+            }
+            "7d" => Utc::now().timestamp_millis() - 7 * 24 * 60 * 60 * 1000,
+            "30d" => Utc::now().timestamp_millis() - 30 * 24 * 60 * 60 * 1000,
+            _ => 0,
+        };
+        let conn = state
+            .db
+            .lock()
+            .map_err(|_| AppError::db("database lock poisoned"))?;
+        let mut statement = conn
+            .prepare("SELECT ts,model_id,model_name,provider,source,prompt_tokens,completion_tokens,total_tokens,reasoning_tokens FROM usage_records WHERE ts >= ?1 ORDER BY ts ASC")
+            .map_err(AppError::db)?;
+        let records = statement
+            .query_map(params![start_ts], |row| {
+                Ok((
+                    row.get::<_, i64>(0)?,
+                    row.get::<_, String>(1)?,
+                    row.get::<_, String>(2)?,
+                    row.get::<_, String>(3)?,
+                    row.get::<_, String>(4)?,
+                    row.get::<_, i64>(5)?,
+                    row.get::<_, i64>(6)?,
+                    row.get::<_, i64>(7)?,
+                    row.get::<_, i64>(8)?,
+                ))
+            })
+            .map_err(AppError::db)?
+            .collect::<Result<Vec<_>, _>>()
+            .map_err(AppError::db)?;
+        drop(statement);
+        drop(conn);
+
+        let mut summary = UsageSummaryDto {
+            total_prompt: 0,
+            total_completion: 0,
+            total_tokens: 0,
+            total_reasoning: 0,
+            total_requests: records.len() as i64,
+        };
+        let mut by_model: HashMap<String, UsageAggregateDto> = HashMap::new();
+        let mut by_source: HashMap<String, UsageAggregateDto> = HashMap::new();
+        let mut by_day: HashMap<String, UsageDayDto> = HashMap::new();
+        for (ts, model_id, model_name, provider, source, prompt, completion, total, reasoning) in
+            records
+        {
+            summary.total_prompt += prompt;
+            summary.total_completion += completion;
+            summary.total_tokens += total;
+            summary.total_reasoning += reasoning;
+            let model_key = format!("{}|{}", provider, model_name);
+            let model = by_model
+                .entry(model_key.clone())
+                .or_insert_with(|| UsageAggregateDto {
+                    key: model_key.clone(),
+                    label: if model_name.is_empty() {
+                        provider.clone()
+                    } else {
+                        model_name.clone()
+                    },
+                    provider: provider.clone(),
+                    model_name: model_name.clone(),
+                    source: String::new(),
+                    prompt_tokens: 0,
+                    completion_tokens: 0,
+                    total_tokens: 0,
+                    reasoning_tokens: 0,
+                    requests: 0,
+                });
+            model.prompt_tokens += prompt;
+            model.completion_tokens += completion;
+            model.total_tokens += total;
+            model.reasoning_tokens += reasoning;
+            model.requests += 1;
+
+            let source_key = if source == "title" {
+                "chat"
+            } else {
+                source.as_str()
+            };
+            let source_item =
+                by_source
+                    .entry(source_key.into())
+                    .or_insert_with(|| UsageAggregateDto {
+                        key: source_key.into(),
+                        label: source_key.into(),
+                        provider: String::new(),
+                        model_name: String::new(),
+                        source: source_key.into(),
+                        prompt_tokens: 0,
+                        completion_tokens: 0,
+                        total_tokens: 0,
+                        reasoning_tokens: 0,
+                        requests: 0,
+                    });
+            source_item.prompt_tokens += prompt;
+            source_item.completion_tokens += completion;
+            source_item.total_tokens += total;
+            source_item.reasoning_tokens += reasoning;
+            source_item.requests += 1;
+
+            let date = chrono::DateTime::<Utc>::from_timestamp_millis(ts)
+                .unwrap_or_else(Utc::now)
+                .format("%Y-%m-%d")
+                .to_string();
+            let day = by_day.entry(date.clone()).or_insert_with(|| UsageDayDto {
+                date,
+                prompt_tokens: 0,
+                completion_tokens: 0,
+                total_tokens: 0,
+                requests: 0,
+            });
+            day.prompt_tokens += prompt;
+            day.completion_tokens += completion;
+            day.total_tokens += total;
+            day.requests += 1;
+            let _ = model_id;
+        }
+        let mut by_model = by_model.into_values().collect::<Vec<_>>();
+        by_model.sort_by_key(|item| std::cmp::Reverse(item.total_tokens));
+        let mut by_source = by_source.into_values().collect::<Vec<_>>();
+        by_source.sort_by_key(|item| std::cmp::Reverse(item.total_tokens));
+        let mut by_day = by_day.into_values().collect::<Vec<_>>();
+        by_day.sort_by(|left, right| left.date.cmp(&right.date));
+        Ok(UsageStatsDto {
+            range,
+            summary,
+            by_model,
+            by_day,
+            by_source,
+        })
+    }
+
+    #[tauri::command]
+    pub fn usage_clear(state: State<'_, AppState>) -> Result<(), AppError> {
+        let conn = state
+            .db
+            .lock()
+            .map_err(|_| AppError::db("database lock poisoned"))?;
+        conn.execute("DELETE FROM usage_records", [])
+            .map_err(AppError::db)?;
+        Ok(())
+    }
+
+    #[tauri::command]
     pub fn model_list(state: State<'_, AppState>) -> Result<Vec<ModelProfileDto>, AppError> {
         let conn = state
             .db
             .lock()
             .map_err(|_| AppError::db("database lock poisoned"))?;
         let result = conn.prepare(
-        "SELECT id,name,provider,base_url,model,is_default FROM model_profiles ORDER BY name",
+        "SELECT id,name,provider,base_url,model,api_key,is_default FROM model_profiles ORDER BY name",
     )
     .map_err(AppError::db)?
     .query_map([], |r| {
         let id: String = r.get(0)?;
-        let configured = keyring::Entry::new("tiny-note", &format!("model:{id}"))
-            .ok()
-            .and_then(|e| e.get_password().ok())
-            .is_some();
+        let configured = !r.get::<_, String>(5)?.trim().is_empty();
         Ok(ModelProfileDto {
             id,
             name: r.get(1)?,
@@ -1017,7 +1354,7 @@ pub mod commands {
             base_url: r.get(3)?,
             model: r.get(4)?,
             api_key_configured: configured,
-            is_default: r.get::<_, i64>(5)? != 0,
+            is_default: r.get::<_, i64>(6)? != 0,
         })
     })
     .map_err(AppError::db)?
@@ -1061,10 +1398,14 @@ pub mod commands {
             code: "provider_request_failed".into(),
             message: "Model list request failed".into(),
         })?;
+        let status = response.status();
         if !response.status().is_success() {
             return Err(AppError::Operation {
                 code: "provider_request_failed".into(),
-                message: "Model provider rejected the request".into(),
+                message: format!(
+                    "Model provider rejected the request (HTTP {})",
+                    status.as_u16()
+                ),
             });
         }
         let payload =
@@ -1073,11 +1414,13 @@ pub mod commands {
                 .await
                 .map_err(|_| AppError::Operation {
                     code: "provider_request_failed".into(),
-                    message: "Model list response was invalid".into(),
+                    message: format!("Model list response was invalid (HTTP {})", status.as_u16()),
                 })?;
         let rows = payload
             .get("data")
             .and_then(serde_json::Value::as_array)
+            .or_else(|| payload.get("models").and_then(serde_json::Value::as_array))
+            .or_else(|| payload.get("result").and_then(serde_json::Value::as_array))
             .or_else(|| payload.as_array())
             .ok_or_else(|| AppError::Operation {
                 code: "provider_request_failed".into(),
@@ -1087,9 +1430,12 @@ pub mod commands {
             .iter()
             .filter_map(|row| {
                 let id = row
-                    .get("id")
-                    .and_then(serde_json::Value::as_str)
-                    .or_else(|| row.get("name").and_then(serde_json::Value::as_str))?
+                    .as_str()
+                    .or_else(|| {
+                        row.get("id")
+                            .and_then(serde_json::Value::as_str)
+                            .or_else(|| row.get("name").and_then(serde_json::Value::as_str))
+                    })?
                     .trim()
                     .to_string();
                 if id.is_empty() {
@@ -1115,6 +1461,125 @@ pub mod commands {
     }
 
     #[tauri::command]
+    pub async fn model_query_balance(
+        state: State<'_, AppState>,
+        model_id: String,
+    ) -> Result<BalanceDto, AppError> {
+        let (provider, base_url, key) = {
+            let conn = state
+                .db
+                .lock()
+                .map_err(|_| AppError::db("database lock poisoned"))?;
+            conn.query_row(
+                "SELECT provider,base_url,api_key FROM model_profiles WHERE id=?1",
+                params![model_id],
+                |row| {
+                    Ok((
+                        row.get::<_, String>(0)?,
+                        row.get::<_, String>(1)?,
+                        row.get::<_, String>(2)?,
+                    ))
+                },
+            )
+            .map_err(|_| AppError::not_found("model_not_found", "Model profile not found"))?
+        };
+        let provider_key = provider.to_lowercase();
+        if !provider_key.contains("deepseek") {
+            return Ok(BalanceDto {
+                supported: false,
+                available: None,
+                currency: None,
+                total_balance: 0.0,
+                granted_balance: 0.0,
+                topped_up_balance: 0.0,
+                voucher_balance: 0.0,
+                cash_balance: 0.0,
+                updated_at: now(),
+            });
+        }
+        if key.trim().is_empty() {
+            return Err(AppError::Operation {
+                code: "api_key_not_configured".into(),
+                message: "API key is not configured".into(),
+            });
+        }
+        let root = base_url
+            .trim()
+            .trim_end_matches('/')
+            .strip_suffix("/chat/completions")
+            .unwrap_or(base_url.trim().trim_end_matches('/'))
+            .trim_end_matches('/')
+            .strip_suffix("/v1")
+            .unwrap_or(
+                base_url
+                    .trim()
+                    .trim_end_matches('/')
+                    .strip_suffix("/chat/completions")
+                    .unwrap_or(base_url.trim().trim_end_matches('/'))
+                    .trim_end_matches('/'),
+            )
+            .trim_end_matches('/');
+        let endpoint = format!("{root}/user/balance");
+        let response = reqwest::Client::new()
+            .get(&endpoint)
+            .bearer_auth(key)
+            .header("Accept", "application/json")
+            .send()
+            .await
+            .map_err(|_| AppError::Operation {
+                code: "balance_request_failed".into(),
+                message: "Balance request failed".into(),
+            })?;
+        let status = response.status();
+        let payload =
+            response
+                .json::<serde_json::Value>()
+                .await
+                .map_err(|_| AppError::Operation {
+                    code: "balance_response_invalid".into(),
+                    message: "Balance response was invalid".into(),
+                })?;
+        if !status.is_success() {
+            return Err(AppError::Operation {
+                code: "balance_request_failed".into(),
+                message: "Balance provider rejected the request".into(),
+            });
+        }
+        let info = payload
+            .get("balance_infos")
+            .and_then(serde_json::Value::as_array)
+            .and_then(|items| items.first())
+            .cloned()
+            .unwrap_or_default();
+        let number = |key: &str| {
+            info.get(key)
+                .and_then(|value| {
+                    value
+                        .as_f64()
+                        .or_else(|| value.as_str().and_then(|text| text.parse().ok()))
+                })
+                .unwrap_or(0.0)
+        };
+        let topped_up = number("topped_up_balance");
+        Ok(BalanceDto {
+            supported: true,
+            available: payload
+                .get("is_available")
+                .and_then(serde_json::Value::as_bool),
+            currency: info
+                .get("currency")
+                .and_then(serde_json::Value::as_str)
+                .map(str::to_string),
+            total_balance: number("total_balance"),
+            granted_balance: number("granted_balance"),
+            topped_up_balance: topped_up,
+            voucher_balance: 0.0,
+            cash_balance: topped_up,
+            updated_at: now(),
+        })
+    }
+
+    #[tauri::command]
     pub fn model_upsert(
         state: State<'_, AppState>,
         profile: ModelProfileDto,
@@ -1124,20 +1589,19 @@ pub mod commands {
             .db
             .lock()
             .map_err(|_| AppError::db("database lock poisoned"))?;
-        conn.execute("INSERT INTO model_profiles(id,name,provider,base_url,model,is_default) VALUES (?1,?2,?3,?4,?5,?6) ON CONFLICT(id) DO UPDATE SET name=excluded.name,provider=excluded.provider,base_url=excluded.base_url,model=excluded.model,is_default=excluded.is_default",params![profile.id,profile.name,profile.provider,profile.base_url,profile.model,profile.is_default as i64]).map_err(AppError::db)?;
-        drop(conn);
-        if let Some(key) = api_key.filter(|x| !x.is_empty()) {
-            keyring::Entry::new("tiny-note", &format!("model:{}", profile.id))
-                .map_err(|_| AppError::Operation {
-                    code: "credential_store_unavailable".into(),
-                    message: "Credential store unavailable".into(),
-                })?
-                .set_password(&key)
-                .map_err(|_| AppError::Operation {
-                    code: "credential_store_unavailable".into(),
-                    message: "Credential store unavailable".into(),
-                })?;
-        }
+        let existing_key = conn
+            .query_row(
+                "SELECT api_key FROM model_profiles WHERE id=?1",
+                params![profile.id],
+                |row| row.get::<_, String>(0),
+            )
+            .optional()
+            .map_err(AppError::db)?
+            .unwrap_or_default();
+        let key = api_key
+            .filter(|value| !value.trim().is_empty())
+            .unwrap_or(existing_key);
+        conn.execute("INSERT INTO model_profiles(id,name,provider,base_url,model,api_key,is_default) VALUES (?1,?2,?3,?4,?5,?6,?7) ON CONFLICT(id) DO UPDATE SET name=excluded.name,provider=excluded.provider,base_url=excluded.base_url,model=excluded.model,api_key=excluded.api_key,is_default=excluded.is_default",params![profile.id,profile.name,profile.provider,profile.base_url,profile.model,key,profile.is_default as i64]).map_err(AppError::db)?;
         Ok(())
     }
 
@@ -1149,9 +1613,6 @@ pub mod commands {
             .map_err(|_| AppError::db("database lock poisoned"))?;
         conn.execute("DELETE FROM model_profiles WHERE id=?1", params![id])
             .map_err(AppError::db)?;
-        if let Ok(e) = keyring::Entry::new("tiny-note", &format!("model:{id}")) {
-            let _ = e.delete_credential();
-        }
         Ok(())
     }
 
@@ -1195,6 +1656,60 @@ pub mod commands {
         Ok(())
     }
 
+    fn usage_i64(value: Option<&serde_json::Value>) -> i64 {
+        value
+            .and_then(|value| {
+                value
+                    .as_i64()
+                    .or_else(|| value.as_u64().map(|number| number as i64))
+                    .or_else(|| value.as_str().and_then(|text| text.parse().ok()))
+            })
+            .unwrap_or(0)
+    }
+
+    fn record_usage(
+        state: &AppState,
+        model_id: &str,
+        provider: &str,
+        model_name: &str,
+        source: &str,
+        usage: &serde_json::Value,
+    ) -> Result<(), String> {
+        let prompt_tokens = usage_i64(usage.get("prompt_tokens"));
+        let completion_tokens = usage_i64(usage.get("completion_tokens"));
+        let total_tokens =
+            usage_i64(usage.get("total_tokens")).max(prompt_tokens + completion_tokens);
+        let reasoning_tokens = usage_i64(
+            usage
+                .get("completion_tokens_details")
+                .and_then(|details| details.get("reasoning_tokens")),
+        );
+        if total_tokens <= 0 && model_name.is_empty() {
+            return Ok(());
+        }
+        let conn = state
+            .db
+            .lock()
+            .map_err(|_| "database_lock_failed".to_string())?;
+        conn.execute(
+            "INSERT INTO usage_records(id,ts,model_id,model_name,provider,source,prompt_tokens,completion_tokens,total_tokens,reasoning_tokens) VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10)",
+            params![
+                Uuid::new_v4().to_string(),
+                Utc::now().timestamp_millis(),
+                model_id,
+                model_name,
+                provider,
+                source,
+                prompt_tokens,
+                completion_tokens,
+                total_tokens,
+                reasoning_tokens
+            ],
+        )
+        .map_err(|_| "usage_record_failed".to_string())?;
+        Ok(())
+    }
+
     async fn stream_ai(
         state: &AppState,
         request: &AiRequest,
@@ -1212,26 +1727,30 @@ pub mod commands {
                 .map_err(|_| "database_lock_failed".to_string())?;
             let query = if let Some(profile_id) = &request.model_profile_id {
                 conn.query_row(
-                    "SELECT id,base_url,model FROM model_profiles WHERE id=?1",
+                    "SELECT id,base_url,model,provider,api_key FROM model_profiles WHERE id=?1",
                     params![profile_id],
                     |r| {
                         Ok((
                             r.get::<_, String>(0)?,
                             r.get::<_, String>(1)?,
                             r.get::<_, String>(2)?,
+                            r.get::<_, String>(3)?,
+                            r.get::<_, String>(4)?,
                         ))
                     },
                 )
                 .optional()
             } else {
                 conn.query_row(
-                    "SELECT id,base_url,model FROM model_profiles WHERE is_default=1 LIMIT 1",
+                    "SELECT id,base_url,model,provider,api_key FROM model_profiles WHERE is_default=1 LIMIT 1",
                     [],
                     |r| {
                         Ok((
                             r.get::<_, String>(0)?,
                             r.get::<_, String>(1)?,
                             r.get::<_, String>(2)?,
+                            r.get::<_, String>(3)?,
+                            r.get::<_, String>(4)?,
                         ))
                     },
                 )
@@ -1239,13 +1758,12 @@ pub mod commands {
             };
             query.map_err(|_| "model_profile_unavailable".to_string())?
         };
-        let Some((profile_id, base_url, model)) = profile else {
+        let Some((profile_id, base_url, model, provider, key)) = profile else {
             return demo_ai(request, on_event, cancel).await;
         };
-        let key = keyring::Entry::new("tiny-note", &format!("model:{profile_id}"))
-            .map_err(|_| "credential_store_unavailable".to_string())?
-            .get_password()
-            .map_err(|_| "api_key_not_configured".to_string())?;
+        if key.trim().is_empty() {
+            return Err("api_key_not_configured".into());
+        }
         let endpoint = if base_url.ends_with("/chat/completions") {
             base_url
         } else {
@@ -1263,7 +1781,7 @@ pub mod commands {
                 request.action, request.text
             )
         };
-        let body = serde_json::json!({ "model": model, "stream": true, "messages": [{"role":"system","content":"You are Tiny Note writing assistant."},{"role":"user","content":prompt}] });
+        let body = serde_json::json!({ "model": model, "stream": true, "stream_options": { "include_usage": true }, "messages": [{"role":"system","content":"You are Tiny Note writing assistant."},{"role":"user","content":prompt}] });
         let response = reqwest::Client::new()
             .post(endpoint)
             .bearer_auth(key)
@@ -1276,6 +1794,7 @@ pub mod commands {
         }
         let mut stream = response.bytes_stream();
         let mut buffer = String::new();
+        let mut usage = None;
         while let Some(chunk) = stream.next().await {
             if cancel.load(Ordering::Relaxed) {
                 let _ = on_event.send(AiEvent::Cancelled {
@@ -1300,9 +1819,16 @@ pub mod commands {
                                 text: text.into(),
                             });
                         }
+                        if value.get("usage").is_some() {
+                            usage = value.get("usage").cloned();
+                        }
                     }
                 }
             }
+        }
+        if let Some(usage) = usage {
+            let source = request.source.as_deref().unwrap_or("note_ai");
+            record_usage(state, &profile_id, &provider, &model, source, &usage)?;
         }
         let _ = on_event.send(AiEvent::Completed { request_id: id });
         Ok(())
@@ -1399,8 +1925,13 @@ pub fn run() {
             commands::library_preview,
             commands::settings_get,
             commands::settings_update,
+            commands::memory_list,
+            commands::memory_update,
+            commands::usage_get_stats,
+            commands::usage_clear,
             commands::model_list,
             commands::model_fetch_models,
+            commands::model_query_balance,
             commands::model_upsert,
             commands::model_delete,
             commands::note_ai_stream,
@@ -1436,5 +1967,20 @@ mod tests {
             .query_row("SELECT COUNT(*) FROM notebooks", [], |r| r.get(0))
             .unwrap();
         assert_eq!(n, 1);
+    }
+    #[test]
+    fn migration_creates_usage_records() {
+        let c = Connection::open_in_memory().unwrap();
+        init_database(&c).unwrap();
+        let n: i64 = c
+            .query_row("SELECT COUNT(*) FROM usage_records", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(n, 0);
+    }
+    #[test]
+    fn memory_files_are_allowlisted() {
+        assert!(memory_definition("MEMORY.md").is_some());
+        assert!(memory_definition("../MEMORY.md").is_none());
+        assert!(memory_definition("secrets.txt").is_none());
     }
 }

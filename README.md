@@ -34,7 +34,8 @@ Windows x64 NSIS 安装包由 `npm run tauri:build` 生成在：
 - SQLite 笔记/笔记本、800ms 自动保存、搜索、复制/移动、最近删除恢复和 Markdown/TXT 导入。
 - TipTap 编辑器：常用格式、表格、任务列表、代码、图片 URL、Markdown 导出和系统打印。
 - 个人/本地知识库、文件夹、相对路径安全校验、文本导入、递归名称搜索、预览和系统回收站。
-- 主题/语言、系统凭据存储模型配置、OpenAI-compatible SSE、停止/插入/替换/复制/放弃和默认关闭的 FIM。
+- 主题/语言、SQLite 模型配置（包含 API Key）、OpenAI-compatible SSE、停止/插入/替换/复制/放弃和默认关闭的 FIM。
+- 首页对话模式与笔记 AI 共用 OpenAI-compatible SSE；首页请求按 `chat` 来源写入用量统计，笔记 AI 按 `note_ai` 来源统计。模型返回的 prompt、completion、reasoning 和 total token 会记录到本地 SQLite。
 
 AI 未配置模型时使用离线演示流；配置模型后请求只从 Rust 发出，API Key 不返回前端。
 

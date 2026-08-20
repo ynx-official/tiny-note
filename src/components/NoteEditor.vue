@@ -163,7 +163,7 @@ async function sendAssistantMessage(prompt) {
     }
   }
   try {
-    await (await import('../services/tauri')).invoke('note_ai_stream', { request: { requestId: assistantRequestId.value, action: 'custom', text: context, instruction: message, modelProfileId: null }, onEvent: channel })
+    await (await import('../services/tauri')).invoke('note_ai_stream', { request: { requestId: assistantRequestId.value, action: 'custom', text: context, instruction: message, modelProfileId: null, source: 'note_ai' }, onEvent: channel })
   } catch {
     pushAssistantResponse('AI 请求失败，请检查模型设置。')
     assistantStreamingText.value = ''
