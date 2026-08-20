@@ -39,7 +39,7 @@ async function ensureConversation() {
   const conversation = await invoke('chat_create', { modelProfileId: selectedModel.value?.id || null })
   conversationId.value = conversation.id
   conversationTitle.value = conversation.title
-  await router.replace({ path: '/chat', query: { id: conversation.id } })
+  await router.replace({ path: '/chat', query: { id: conversation.id, ...(fromHome.value ? { from: 'home' } : {}) } })
   window.dispatchEvent(new CustomEvent('tiny-note-chat-updated'))
   return conversation.id
 }
@@ -122,7 +122,7 @@ function newChat() {
   error.value = ''
   conversationId.value = ''
   conversationTitle.value = '新对话'
-  router.replace('/chat')
+  router.replace({ path: '/chat', query: fromHome.value ? { from: 'home' } : {} })
 }
 async function copyMessage(content) { if (content) await navigator.clipboard?.writeText(content) }
 

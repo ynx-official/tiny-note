@@ -20,6 +20,11 @@ let stopResizeListener = null
 const nav = computed(() => [{ key: 'notes', label: t('notes'), icon: FileText, path: '/notes' }, { key: 'library', label: t('library'), icon: BookOpen, path: '/library' }, { key: 'settings', label: t('settings'), icon: Settings, path: '/settings' }])
 function navigate(path) { router.push(path) }
 function openConversation(id) { router.push({ path: '/chat', query: { id } }) }
+function closeHistoryOnOutsideClick(event) {
+  if (!historyOpen.value || !(event.target instanceof Element)) return
+  if (event.target.closest('.history-drawer, .rail-clock')) return
+  historyOpen.value = false
+}
 
 function tauriWindow() {
   if (!appWindow) {
@@ -56,12 +61,13 @@ async function startWindowDrag(event) {
 }
 
 onMounted(async () => {
+  document.addEventListener('pointerdown', closeHistoryOnOutsideClick)
   const current = tauriWindow()
   if (!current) return
   await syncMaximized()
   try { stopResizeListener = await current.onResized(syncMaximized) } catch { /* keep controls usable if event permission is unavailable */ }
 })
-onUnmounted(() => { if (stopResizeListener) stopResizeListener() })
+onUnmounted(() => { if (stopResizeListener) stopResizeListener(); document.removeEventListener('pointerdown', closeHistoryOnOutsideClick) })
 </script>
 <template>
   <div class="window-shell app-container">

@@ -1186,7 +1186,7 @@ body, button, input, select, textarea { font-family: -apple-system, BlinkMacSyst
 .assistant-drawer-close { position:absolute; top:12px; right:10px; z-index:2; display:grid; place-items:center; width:28px; height:28px; border-radius:7px; color:var(--text-tertiary); }
 .assistant-drawer-close:hover,.assistant-close:hover,.assistant-icon-button:hover:not(:disabled) { color:var(--text-primary); background:var(--bg-hover); }
 .assistant-panel { display:flex; min-width:0; min-height:0; height:100%; flex-direction:column; }
-.assistant-panel-header { min-height:54px; display:flex; align-items:center; justify-content:space-between; flex-shrink:0; padding:0 52px 0 18px; border-bottom:1px solid var(--line); }
+.assistant-panel-header { min-height:54px; display:flex; align-items:center; justify-content:space-between; flex-shrink:0; padding:0 12px 0 18px; border-bottom:1px solid var(--line); }
 .assistant-panel-header h2 { margin:0; color:var(--text-primary); font-size:16px; font-weight:600; }
 .assistant-header-actions { display:flex; align-items:center; gap:4px; }
 .assistant-close,.assistant-icon-button { display:grid; place-items:center; width:28px; height:28px; border-radius:7px; color:var(--text-tertiary); }
