@@ -1,16 +1,24 @@
 <script setup>
-import { computed, ref } from 'vue'
+import { computed, onMounted, ref } from 'vue'
 import { useRouter } from 'vue-router'
 import { useI18n } from 'vue-i18n'
-import { FileSearch2, LibraryBig, NotebookPen, PenLine, Settings2, Sparkles, Paperclip, Send, MessageSquare, Globe2, ChevronDown } from 'lucide-vue-next'
+import { BookOpen, FileSearch2, LibraryBig, NotebookPen, PenLine, Settings2, Sparkles, Paperclip, Send, MessageSquare, Globe2, ChevronDown, FileText, ChevronRight } from 'lucide-vue-next'
 import { useNotesStore } from '../stores/notes'
+import { useLibraryStore } from '../stores/library'
 
 const router = useRouter()
-const { locale } = useI18n()
+const { locale, t } = useI18n()
 const notes = useNotesStore()
+const library = useLibraryStore()
 const draft = ref('')
 const homeFileInput = ref(null)
+const homeKnowledgeInput = ref(null)
 const importing = ref(false)
+const importMenuOpen = ref(false)
+const knowledgeImportOpen = ref(false)
+const selectedKnowledgeBaseId = ref('')
+const personalBases = computed(() => library.bases.filter(item => item.category === 'personal'))
+const localBases = computed(() => library.bases.filter(item => item.category === 'local'))
 
 const copy = computed(() => locale.value === 'en' ? {
   subtitle: 'What would you like Tiny Note to help with?',
@@ -43,8 +51,27 @@ const copy = computed(() => locale.value === 'en' ? {
 function open(path) { router.push(path) }
 function startNote() { router.push('/notes?new=1') }
 function submitDraft() { startNote() }
-function openImport() { homeFileInput.value?.click() }
-async function importFiles(event) {
+function openImport() {
+  importMenuOpen.value = !importMenuOpen.value
+  knowledgeImportOpen.value = false
+}
+function chooseNoteImport() {
+  knowledgeImportOpen.value = false
+  importMenuOpen.value = false
+  homeFileInput.value?.click()
+}
+function openKnowledgeImport() { knowledgeImportOpen.value = !knowledgeImportOpen.value }
+function chooseKnowledgeImport(baseId) {
+  selectedKnowledgeBaseId.value = baseId
+  knowledgeImportOpen.value = false
+  importMenuOpen.value = false
+  homeKnowledgeInput.value?.click()
+}
+
+onMounted(async () => {
+  if (!library.bases.length) await library.load()
+})
+async function importNoteFiles(event) {
   const files = Array.from(event.target.files || [])
   if (!files.length) return
   importing.value = true
@@ -58,10 +85,27 @@ async function importFiles(event) {
     event.target.value = ''
   }
 }
+async function importKnowledgeFiles(event) {
+  const files = Array.from(event.target.files || [])
+  if (!files.length || !selectedKnowledgeBaseId.value) return
+  importing.value = true
+  try {
+    await library.selectBase(selectedKnowledgeBaseId.value)
+    if (library.path) await library.navigate('')
+    await library.importFiles(files)
+    await router.push('/library')
+  } catch (error) {
+    window.alert(error?.message || '知识库导入失败，请重试')
+  } finally {
+    importing.value = false
+    event.target.value = ''
+    selectedKnowledgeBaseId.value = ''
+  }
+}
 </script>
 
 <template>
-  <div class="home-page">
+  <div class="home-page" @click="importMenuOpen = false; knowledgeImportOpen = false">
     <div class="home-content">
       <section class="home-hero" aria-labelledby="home-title">
         <div class="home-wordmark" aria-label="Tiny Note">
@@ -79,8 +123,27 @@ async function importFiles(event) {
             <button class="home-select-button" type="button" @click="open('/settings')"><Globe2 :size="16" /><span>{{ copy.localAi }}</span><ChevronDown :size="13" /></button>
           </div>
           <div class="home-composer-right">
-            <button class="home-icon-button" type="button" title="导入文件" :disabled="importing" @click="openImport"><Paperclip :size="18" /></button>
-            <input ref="homeFileInput" type="file" multiple hidden accept=".md,.markdown,.txt,.note" @change="importFiles" />
+            <div class="home-import-anchor" @click.stop>
+              <button class="home-icon-button" type="button" :class="{ active: importMenuOpen }" title="导入" :disabled="importing" @click="openImport"><Paperclip :size="18" /></button>
+              <div v-if="importMenuOpen" class="home-import-menu">
+                <button class="home-import-option" @click="chooseNoteImport"><FileText :size="16" /><span>{{ t('importNote') }}</span><ChevronRight :size="14" /></button>
+                <div class="home-import-divider"></div>
+                <button class="home-import-option" :class="{ active: knowledgeImportOpen }" @click="openKnowledgeImport"><BookOpen :size="16" /><span>{{ t('importToKnowledge') }}</span><ChevronRight :size="14" /></button>
+                <div v-if="knowledgeImportOpen" class="home-knowledge-options">
+                  <template v-if="personalBases.length">
+                    <div class="home-import-group-label">{{ t('personal') }}</div>
+                    <button v-for="base in personalBases" :key="base.id" class="home-import-option" @click="chooseKnowledgeImport(base.id)"><BookOpen :size="14" /><span>{{ base.name }}</span></button>
+                  </template>
+                  <template v-if="localBases.length">
+                    <div class="home-import-group-label">{{ t('local') }}</div>
+                    <button v-for="base in localBases" :key="base.id" class="home-import-option" @click="chooseKnowledgeImport(base.id)"><BookOpen :size="14" /><span>{{ base.name }}</span></button>
+                  </template>
+                  <span v-if="!library.bases.length" class="home-import-empty">{{ t('noKnowledgeBases') }}</span>
+                </div>
+              </div>
+            </div>
+            <input ref="homeFileInput" type="file" multiple hidden accept=".md,.markdown,.txt,.note" @change="importNoteFiles" />
+            <input ref="homeKnowledgeInput" type="file" multiple hidden accept=".pdf,.epub,.md,.markdown,.html,.htm,.txt,.json,.xml,.note" @change="importKnowledgeFiles" />
             <button class="home-send-button" type="button" :class="{ active: draft.trim() }" :title="copy.start" @click="submitDraft"><Send :size="18" /></button>
           </div>
         </div>
