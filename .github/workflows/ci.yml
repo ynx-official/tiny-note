@@ -1,0 +1,67 @@
+name: Tiny Note CI
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  checks:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: 22, cache: npm }
+      - run: npm ci
+      - run: npm run test:unit
+      - run: npm run lint
+      - run: npm run build
+      - uses: dtolnay/rust-toolchain@stable
+        with: { toolchain: stable }
+      - run: cargo fmt --all -- --check
+        working-directory: src-tauri
+      - run: cargo test
+        working-directory: src-tauri
+
+  windows-bundle:
+    needs: checks
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: 22, cache: npm }
+      - run: npm ci
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: tauri-apps/tauri-action@v0
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          tagName: tiny-note-v__VERSION__
+          releaseName: Tiny Note v__VERSION__
+          releaseDraft: true
+          prerelease: true
+
+  macos-bundle:
+    needs: checks
+    strategy:
+      matrix:
+        include:
+          - runner: macos-13
+            args: --target x86_64-apple-darwin
+          - runner: macos-14
+            args: --target aarch64-apple-darwin
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: 22, cache: npm }
+      - run: npm ci
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: x86_64-apple-darwin,aarch64-apple-darwin
+      - uses: tauri-apps/tauri-action@v0
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          args: ${{ matrix.args }}
+          releaseDraft: true
+          prerelease: true

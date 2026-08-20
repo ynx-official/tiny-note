@@ -1,0 +1,45 @@
+@import './friday-variables.css';
+
+* {
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0;
+  -webkit-user-select: none;
+  user-select: none;
+}
+
+input,
+textarea,
+[contenteditable] {
+  -webkit-user-select: text;
+  user-select: text;
+}
+
+body {
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, "Apple Color Emoji", Arial, sans-serif, "Segoe UI Emoji", "Segoe UI Symbol";
+  background-color: var(--bg-primary);
+  color: var(--text-primary);
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+a {
+  text-decoration: none;
+  color: inherit;
+}
+
+.tauri-drag-region {
+  -webkit-app-region: drag;
+  app-region: drag;
+}
+
+.tauri-drag-region button,
+.tauri-drag-region a,
+.tauri-drag-region input,
+.tauri-drag-region select,
+.tauri-drag-region textarea,
+.tauri-drag-region [role="button"],
+.tauri-drag-region [role="tab"] {
+  -webkit-app-region: no-drag;
+  app-region: no-drag;
+}
