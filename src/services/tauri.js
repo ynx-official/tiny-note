@@ -116,6 +116,14 @@ export async function invoke(command, args = {}) {
   else if (command === 'settings_get') result = state.settings || { theme: 'system', language: 'zh-CN', fimEnabled: false }
   else if (command === 'settings_update') { state.settings = args.settings; result = state.settings }
   else if (command === 'model_list') result = state.models || []
+  else if (command === 'model_fetch_models') {
+    // Keep the browser fallback aligned with the Tauri DTO shape while
+    // accepting the legacy flat shape during hot reloads.
+    const request = args.request || args
+    const provider = String(request.provider || '').toLowerCase()
+    const presets = provider.includes('deepseek') ? ['deepseek-chat', 'deepseek-reasoner'] : provider.includes('智谱') || provider.includes('zhipu') ? ['glm-4-flash', 'glm-4-plus'] : provider.includes('kimi') || provider.includes('moonshot') ? ['moonshot-v1-8k', 'moonshot-v1-32k'] : provider.includes('minimax') ? ['MiniMax-Text-01'] : provider.includes('千问') || provider.includes('qwen') ? ['qwen-turbo', 'qwen-plus', 'qwen-max'] : ['gpt-4o-mini', 'gpt-4.1-mini']
+    result = presets.map(id => ({ id, name: id, ownedBy: request.provider || 'OpenAI-compatible' }))
+  }
   else if (command === 'model_upsert') { state.models = [...(state.models || []).filter(m => m.id !== args.profile.id), { ...args.profile, apiKeyConfigured: Boolean(args.apiKey) || args.profile.apiKeyConfigured }]; result = null }
   else if (command === 'model_delete') { state.models = (state.models || []).filter(m => m.id !== args.id); result = null }
   else result = []
