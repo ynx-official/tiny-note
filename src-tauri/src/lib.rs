@@ -2193,6 +2193,22 @@ pub mod commands {
             .unwrap_or(0)
     }
 
+    pub(super) fn writing_action_instruction(action: &str) -> &'static str {
+        match action {
+            "interpret" => "Explain the selected text clearly. Identify its main point, implications, and any ambiguous terms. Do not rewrite it.",
+            "refine" => "Make the selected text shorter and more precise. Remove repetition while preserving every important fact and the original tone.",
+            "polish" => "Improve clarity, flow, wording, and readability while preserving the meaning, tone, and factual content.",
+            "expand" => "Expand the selected text with useful detail, transitions, and concrete explanation. Preserve its viewpoint and tone; do not invent facts.",
+            "translate" => "Translate the selected text into the requested target language. Preserve meaning, formatting, names, and technical terms.",
+            "summarize" => "Summarize the selected text concisely, retaining its key claims and conclusions.",
+            "continue_write" => "Continue naturally from the selected text in the same language, voice, structure, and level of detail.",
+            "fix_grammar" => "Correct grammar, spelling, punctuation, and awkward phrasing without changing meaning or tone.",
+            "generate_plan" => "Turn the selected text into a practical task plan with clear, ordered, actionable steps.",
+            "generate_table" => "Organize the selected text into a concise Markdown table. Do not add unsupported facts.",
+            _ => "Perform the requested writing action while preserving the source meaning and factual content.",
+        }
+    }
+
     fn record_usage(
         state: &AppState,
         model_id: &str,
@@ -2356,10 +2372,11 @@ pub mod commands {
             .filter(|value| !value.trim().is_empty())
             .collect::<Vec<_>>()
             .join("\n\n---\n\n");
+        let action_instruction = writing_action_instruction(&request.action);
         let prompt = if request.mode.as_deref() == Some("edit") {
             format!(
-                "{}\n{}\nPerform the requested edit. Return only the complete proposed replacement in Markdown, without commentary. Preserve formatting and facts unless explicitly asked to change them.\n\n{}",
-                request.instruction.clone().unwrap_or_default(), thinking_hint, bounded_context
+                "User instruction: {}\nWriting action: {}\n{}\nReturn only the complete proposed replacement in Markdown, without commentary.\n\n{}",
+                request.instruction.clone().unwrap_or_default(), action_instruction, thinking_hint, bounded_context
             )
         } else if request.action == "custom" {
             format!(
@@ -2370,8 +2387,8 @@ pub mod commands {
             )
         } else {
             format!(
-                "{}\nPerform the '{}' writing action. Return only the proposed replacement in Markdown, without commentary. Preserve the original meaning and formatting unless the request says otherwise.\n\n{}",
-                thinking_hint, request.action, bounded_context
+                "{}\n{}\nReturn only the proposed replacement in Markdown, without commentary.\n\n{}",
+                thinking_hint, action_instruction, bounded_context
             )
         };
         let body = serde_json::json!({ "model": model, "stream": true, "stream_options": { "include_usage": true }, "messages": [{"role":"system","content":"You are Tiny Note writing assistant."},{"role":"user","content":prompt}] });
@@ -2884,6 +2901,15 @@ mod tests {
             "choices": [{ "message": { "content": "" } }]
         }))
         .is_none());
+    }
+    #[test]
+    fn writing_actions_have_specific_model_instructions() {
+        let expand = commands::writing_action_instruction("expand");
+        let polish = commands::writing_action_instruction("polish");
+        assert!(expand.contains("Expand the selected text"));
+        assert!(expand.contains("do not invent facts"));
+        assert!(polish.contains("clarity, flow, wording"));
+        assert_ne!(expand, polish);
     }
     #[test]
     fn memory_files_are_allowlisted() {

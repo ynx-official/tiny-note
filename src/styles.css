@@ -55,6 +55,11 @@
 .ai-output-action.replace:hover:not(:disabled) { border-color:transparent; color:#fff; background:linear-gradient(135deg,#5568d3 0%,#653d91 100%); }
 .ai-output-action.insert { border-color:#6685ea; color:#5b78df; font-weight:600; }
 .ai-output-action.insert:hover:not(:disabled) { background:#eef3ff; border-color:#4f6fd8; color:#4162c5; }
+.ai-consent-dialog { width:min(430px,calc(100vw - 32px)); }
+.ai-consent-dialog .editor-dialog-header strong { display:flex; align-items:center; gap:8px; }
+.ai-consent-dialog .editor-dialog-header strong svg { color:var(--accent-color); }
+.ai-consent-dialog .editor-dialog-body p { margin:0; color:var(--text-primary); font-size:13px; line-height:1.65; }
+.ai-consent-dialog .editor-dialog-body small { color:var(--text-tertiary); font-size:11px; line-height:1.5; }
 [data-theme='dark'] .ai-output-overlay { background:rgba(0,0,0,.08); }
 [data-theme='dark'] .ai-output-panel { border-color:#374151; background:#1f2937; box-shadow:0 8px 32px rgba(0,0,0,.4); }
 [data-theme='dark'] .ai-output-header { border-bottom-color:#374151; }
