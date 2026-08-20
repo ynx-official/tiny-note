@@ -783,6 +783,40 @@ body, button, input, select, textarea { font-family: -apple-system, BlinkMacSyst
 .home-reference-group-label { padding:7px 10px 3px; color:var(--text-tertiary); font-size:11px; }
 .home-reference-path { overflow:hidden; padding:6px 10px 5px; color:var(--text-tertiary); font-size:10px; text-overflow:ellipsis; white-space:nowrap; }
 .home-reference-empty { display:flex; align-items:center; justify-content:center; min-height:54px; padding:8px 10px; color:var(--text-tertiary); font-size:12px; text-align:center; }
+
+/* AI context, source attribution, and explicit edit review */
+.ai-diff-preview { display:grid; grid-template-columns:1fr 1fr; gap:10px; white-space:pre-wrap; }
+.ai-diff-before,.ai-diff-after { min-height:90px; padding:10px; border-radius:7px; border:1px solid var(--border-color); }
+.ai-diff-before { background:color-mix(in srgb, #ef4444 8%, var(--bg-primary)); text-decoration-color:#dc2626; }
+.ai-diff-after { background:color-mix(in srgb, #22c55e 8%, var(--bg-primary)); }
+.ai-diff-preview small { display:block; margin-bottom:6px; color:var(--text-tertiary); font-size:10px; text-transform:uppercase; }
+.ai-source-list,.chat-source-list,.tiny-note-assistant-sources { display:flex; flex-wrap:wrap; gap:5px; margin-top:10px; }
+.ai-source-list span,.chat-source-chip,.tiny-note-assistant-sources span { display:inline-flex; align-items:center; gap:4px; max-width:220px; padding:4px 6px; border:1px solid var(--border-color); border-radius:6px; background:var(--bg-secondary); color:var(--text-secondary); font-size:10px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.ai-source-list small,.chat-source-chip small,.tiny-note-assistant-sources small { color:var(--text-tertiary); }
+.tiny-note-assistant-proposal-state { margin-top:7px; padding:7px; border-radius:6px; background:color-mix(in srgb, var(--accent-color) 8%, var(--bg-primary)); color:var(--text-secondary); font-size:10px; }
+.chat-review-proposal { margin-top:7px; padding:6px 9px; border-radius:6px; background:var(--accent-color); color:white; font-size:11px; }
+.chat-reference-tags { display:flex; flex-wrap:wrap; gap:5px; padding:0 0 7px; }
+.chat-reference-tags > span { display:inline-flex; align-items:center; gap:5px; padding:4px 6px; border:1px solid var(--border-color); border-radius:6px; background:var(--bg-secondary); font-size:10px; }
+.chat-reference-tags button { display:grid; place-items:center; color:var(--text-tertiary); }
+.chat-reference-anchor { position:relative; display:flex; align-items:center; gap:7px; }
+.chat-attach-button { display:grid; width:28px; height:28px; place-items:center; border-radius:6px; color:var(--text-secondary); }
+.chat-attach-button:hover { background:var(--bg-hover); }
+.chat-reference-menu { position:absolute; z-index:40; left:0; bottom:calc(100% + 8px); display:flex; flex-direction:column; width:260px; max-height:330px; overflow:auto; padding:6px; border:1px solid var(--border-color); border-radius:9px; background:var(--bg-primary); box-shadow:0 8px 28px rgba(0,0,0,.14); }
+.chat-reference-menu strong,.chat-reference-menu small { padding:6px 8px; color:var(--text-tertiary); font-size:10px; }
+.chat-reference-menu button { display:flex; align-items:center; gap:7px; min-height:31px; padding:6px 8px; border-radius:6px; overflow:hidden; text-align:left; text-overflow:ellipsis; white-space:nowrap; }
+.chat-reference-menu button:hover { background:var(--bg-hover); }
+.file-index-status.is-indexed { color:#16a34a; }
+.file-index-status.is-failed { color:#dc2626; }
+.file-index-status.is-unsupported,.file-index-status.is-pending { color:var(--text-tertiary); }
+.revision-dialog { width:min(520px,calc(100vw - 32px)); }
+.revision-list { max-height:420px; overflow:auto; padding:10px; }
+.revision-list > p { padding:28px 12px; color:var(--text-tertiary); text-align:center; }
+.revision-list > button { width:100%; display:flex; align-items:center; justify-content:space-between; gap:12px; padding:10px; border-radius:7px; text-align:left; }
+.revision-list > button:hover { background:var(--bg-hover); }
+.revision-list > button span { min-width:0; display:flex; flex-direction:column; gap:3px; }
+.revision-list > button strong { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; font-size:12px; }
+.revision-list > button small { color:var(--text-tertiary); font-size:10px; }
+@media (max-width: 820px) { .ai-diff-preview { grid-template-columns:1fr; } }
 .home-send-button { border-color:transparent; color:#fff; background:var(--text-tertiary); }
 .home-send-button.active { background:var(--text-primary); }
 .home-features { width:100%; display:grid; grid-template-columns:repeat(5, minmax(0, 1fr)); gap:20px; }

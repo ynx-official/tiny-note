@@ -24,7 +24,7 @@ function ensureLibraryParents(state, knowledgeBaseId, relativePath, now) {
   }
 }
 function libraryEntry(file) {
-  return { name: entryName(file.relativePath), relativePath: file.relativePath, kind: file.kind, size: file.size || 0, modifiedAt: file.modifiedAt, extension: file.kind === 'file' ? (entryName(file.relativePath).split('.').pop() || '').toLowerCase() : null }
+  return { name: entryName(file.relativePath), relativePath: file.relativePath, kind: file.kind, size: file.size || 0, modifiedAt: file.modifiedAt, extension: file.kind === 'file' ? (entryName(file.relativePath).split('.').pop() || '').toLowerCase() : null, indexStatus: file.kind === 'file' ? 'indexed' : null }
 }
 
 export async function invoke(command, args = {}) {
@@ -38,12 +38,14 @@ export async function invoke(command, args = {}) {
   if (!state.usageRecords) state.usageRecords = []
   if (!state.chatConversations) state.chatConversations = []
   if (!state.chatMessages) state.chatMessages = []
+  if (!state.editProposals) state.editProposals = []
+  if (!state.noteRevisions) state.noteRevisions = []
   const now = new Date().toISOString()
   let result
   if (command === 'chat_list') result = state.chatConversations.map(conversation => { const messages = state.chatMessages.filter(message => message.conversationId === conversation.id); return { ...conversation, messageCount: messages.length, preview: messages.at(-1)?.content || '' } }).sort((a, b) => b.updatedAt.localeCompare(a.updatedAt))
   else if (command === 'chat_create') { result = { id: crypto.randomUUID(), title: '新对话', modelProfileId: args.modelProfileId || null, messageCount: 0, preview: '', createdAt: now, updatedAt: now }; state.chatConversations.unshift(result) }
   else if (command === 'chat_get') { const conversation = state.chatConversations.find(item => item.id === args.id); result = conversation ? { conversation: { ...conversation, messageCount: state.chatMessages.filter(message => message.conversationId === conversation.id).length, preview: state.chatMessages.filter(message => message.conversationId === conversation.id).at(-1)?.content || '' }, messages: state.chatMessages.filter(message => message.conversationId === conversation.id) } : null }
-  else if (command === 'chat_add_message') { const conversation = state.chatConversations.find(item => item.id === args.conversationId); result = { id: crypto.randomUUID(), conversationId: args.conversationId, role: args.role, content: args.content, references: args.references || [], createdAt: now }; state.chatMessages.push(result); if (conversation) conversation.updatedAt = now }
+  else if (command === 'chat_add_message') { const conversation = state.chatConversations.find(item => item.id === args.conversationId); result = { id: crypto.randomUUID(), conversationId: args.conversationId, role: args.role, content: args.content, references: args.references || [], sources: args.sources || [], proposalId: args.proposalId || null, createdAt: now }; state.chatMessages.push(result); if (conversation) conversation.updatedAt = now }
   else if (command === 'chat_delete') { state.chatConversations = state.chatConversations.filter(item => item.id !== args.id); state.chatMessages = state.chatMessages.filter(item => item.conversationId !== args.id); result = null }
   else if (command === 'chat_generate_title') { const conversation = state.chatConversations.find(item => item.id === args.conversationId); const firstRound = state.chatMessages.filter(item => item.conversationId === args.conversationId).slice(0, 2); const first = firstRound.find(item => item.role === 'user'); const compact = String(first?.content || '').replace(/\s+/g, ' ').trim(); result = firstRound.length < 2 ? '新对话' : (compact.length > 24 ? compact.slice(0, 24) + '…' : (compact || '新对话')); if (conversation?.title === '新对话' && result !== '新对话') { conversation.title = result; conversation.updatedAt = now } }
   else if (command === 'note_list') result = state.notes.filter(n => Boolean(n.deletedAt) === Boolean(args.deleted) && (!args.search || `${n.title} ${n.contentText}`.toLowerCase().includes(args.search.toLowerCase())))
@@ -129,6 +131,24 @@ export async function invoke(command, args = {}) {
     const kind = extension === 'html' || extension === 'htm' ? 'html' : extension || 'text'
     result = file ? { title: entryName(target), kind, mimeType: kind === 'html' ? 'text/html' : 'text/plain', content: file.content || '' } : null
   }
+  else if (command === 'context_search') {
+    const query = String(args.query || '').toLowerCase()
+    const noteSources = state.notes.filter(note => !note.deletedAt && `${note.title} ${note.contentText}`.toLowerCase().includes(query)).map(note => ({ id: `note:${note.id}`, sourceType: 'note', title: note.title, noteId: note.id, knowledgeBaseId: null, relativePath: null, snippet: note.contentText.slice(0, 160), content: note.contentText.slice(0, 2000), contentHash: '', score: 1, explicit: false, truncated: note.contentText.length > 2000 }))
+    const fileSources = state.libraryFiles.filter(file => file.kind === 'file' && `${file.relativePath} ${file.content || ''}`.toLowerCase().includes(query)).map(file => ({ id: `file:${file.knowledgeBaseId}:${file.relativePath}`, sourceType: 'file', title: entryName(file.relativePath), noteId: null, knowledgeBaseId: file.knowledgeBaseId, relativePath: file.relativePath, snippet: String(file.content || '').slice(0, 160), content: String(file.content || '').slice(0, 2000), contentHash: '', score: 1, explicit: false, truncated: String(file.content || '').length > 2000 }))
+    result = { sources: [...noteSources, ...fileSources].slice(0, 6), totalCharacters: 0, truncated: false }
+  }
+  else if (command === 'search_index_status' || command === 'search_index_rebuild' || command === 'search_index_retry_failed') result = { documents: state.notes.filter(note => !note.deletedAt).length + state.libraryFiles.filter(file => file.kind === 'file').length, chunks: state.notes.length + state.libraryFiles.length, indexed: state.notes.filter(note => !note.deletedAt).length + state.libraryFiles.filter(file => file.kind === 'file').length, failed: 0, unsupported: 0 }
+  else if (command === 'note_edit_get') result = state.editProposals.find(item => item.id === args.proposalId)
+  else if (command === 'note_edit_discard') { const proposal = state.editProposals.find(item => item.id === args.proposalId); if (proposal) proposal.status = 'discarded'; result = null }
+  else if (command === 'note_edit_apply') {
+    const proposal = state.editProposals.find(item => item.id === args.proposalId)
+    const note = state.notes.find(item => item.id === proposal?.noteId)
+    if (note) { state.noteRevisions.unshift({ id: crypto.randomUUID(), noteId: note.id, title: note.title, contentHtml: note.contentHtml, contentText: note.contentText, reason: 'ai_edit', createdAt: now }); Object.assign(note, { contentHtml: args.contentHtml, contentText: args.contentText, updatedAt: now }); if (proposal) proposal.status = 'applied' }
+    result = note
+  }
+  else if (command === 'note_revision_list') result = state.noteRevisions.filter(item => item.noteId === args.noteId)
+  else if (command === 'note_revision_get') result = state.noteRevisions.find(item => item.id === args.id)
+  else if (command === 'note_revision_restore') { const revision = state.noteRevisions.find(item => item.id === args.id); const note = state.notes.find(item => item.id === revision?.noteId); if (revision && note) Object.assign(note, { title: revision.title, contentHtml: revision.contentHtml, contentText: revision.contentText, updatedAt: now }); result = note }
   else if (command === 'settings_get') result = state.settings || { theme: 'system', language: 'zh-CN', fimEnabled: false }
   else if (command === 'settings_update') { state.settings = args.settings; result = state.settings }
   else if (command === 'memory_list') result = state.memories

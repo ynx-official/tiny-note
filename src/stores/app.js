@@ -1,0 +1,94 @@
+import { defineStore } from 'pinia'
+import { invoke } from '../services/tauri'
+
+const DEFAULT_SETTINGS = { theme: 'system', language: 'zh-CN', fimEnabled: false }
+let initialization = null
+let stopSystemThemeListener = null
+
+function mediaQuery() {
+  return typeof window !== 'undefined' && typeof window.matchMedia === 'function'
+    ? window.matchMedia('(prefers-color-scheme: dark)')
+    : null
+}
+
+export function applyTheme(theme = 'system') {
+  const query = mediaQuery()
+  const resolved = theme === 'system' ? (query?.matches ? 'dark' : 'light') : theme
+  window.document.documentElement.dataset.theme = resolved
+  localStorage.setItem('tiny-note-theme', resolved)
+  localStorage.setItem('tiny-note-theme-setting', theme)
+
+  if (stopSystemThemeListener) {
+    stopSystemThemeListener()
+    stopSystemThemeListener = null
+  }
+  if (theme === 'system' && query) {
+    const sync = event => {
+      const next = event.matches ? 'dark' : 'light'
+      window.document.documentElement.dataset.theme = next
+      localStorage.setItem('tiny-note-theme', next)
+    }
+    query.addEventListener?.('change', sync)
+    stopSystemThemeListener = () => query.removeEventListener?.('change', sync)
+  }
+  return resolved
+}
+
+export function applyCachedTheme() {
+  const cached = localStorage.getItem('tiny-note-theme')
+  if (cached === 'dark' || cached === 'light') window.document.documentElement.dataset.theme = cached
+}
+
+export const useAppStore = defineStore('app', {
+  state: () => ({
+    settings: { ...DEFAULT_SETTINGS },
+    models: [],
+    initialized: false,
+    settingsError: null,
+    modelsError: null
+  }),
+  getters: {
+    defaultModel: state => state.models.find(model => model.isDefault) || state.models[0] || null
+  },
+  actions: {
+    async initialize({ force = false } = {}) {
+      if (this.initialized && !force) return
+      if (initialization && !force) return initialization
+      initialization = (async () => {
+        const [settingsResult, modelsResult] = await Promise.allSettled([
+          invoke('settings_get'),
+          invoke('model_list')
+        ])
+        if (settingsResult.status === 'fulfilled') {
+          this.settings = { ...DEFAULT_SETTINGS, ...settingsResult.value }
+          this.settingsError = null
+        } else {
+          this.settingsError = settingsResult.reason
+        }
+        applyTheme(this.settings.theme)
+        if (modelsResult.status === 'fulfilled') {
+          this.models = modelsResult.value || []
+          this.modelsError = null
+        } else {
+          this.modelsError = modelsResult.reason
+        }
+        this.initialized = true
+      })()
+      try {
+        await initialization
+      } finally {
+        initialization = null
+      }
+    },
+    async saveSettings(settings) {
+      this.settings = { ...DEFAULT_SETTINGS, ...(await invoke('settings_update', { settings })) }
+      applyTheme(this.settings.theme)
+      return this.settings
+    },
+    async refreshModels() {
+      this.models = (await invoke('model_list')) || []
+      this.modelsError = null
+      return this.models
+    }
+  }
+})

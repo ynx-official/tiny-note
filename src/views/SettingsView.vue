@@ -1,8 +1,10 @@
 <script setup>
 import { computed, onMounted, ref, watch } from 'vue'
+import { storeToRefs } from 'pinia'
 import { useI18n } from 'vue-i18n'
 import { Check, ChevronDown, ChevronRight, Cpu, Globe2, Info, Languages, Moon, Monitor, Palette, Plus, RefreshCw, Search, Sparkles, Sun, Trash2, X } from 'lucide-vue-next'
 import { invoke } from '../services/tauri'
+import { useAppStore } from '../stores/app'
 import doubaoIcon from '../assets/providers/doubao.png'
 import qwenIcon from '../assets/providers/qwen.png'
 import zhipuIcon from '../assets/providers/zhipu.png'
@@ -12,8 +14,8 @@ import minimaxIcon from '../assets/providers/minimax.png'
 import otherIcon from '../assets/providers/other.png'
 
 const { t, locale } = useI18n()
-const settings = ref({ theme: 'system', language: locale.value, fimEnabled: false })
-const models = ref([])
+const appStore = useAppStore()
+const { settings, models } = storeToRefs(appStore)
 const draft = ref(null)
 const showLanguageDropdown = ref(false)
 const providerMenuOpen = ref(false)
@@ -28,6 +30,8 @@ const modelFetchBusy = ref(false)
 const modelFetchError = ref('')
 const balanceStates = ref({})
 const balanceRefreshingAll = ref(false)
+const indexStatus = ref(null)
+const indexBusy = ref(false)
 
 const providerOptions = [
   { key: 'doubao', label: '豆包', mark: '豆', icon: doubaoIcon, baseUrl: 'https://ark.cn-beijing.volces.com/api/v3' },
@@ -79,17 +83,10 @@ function emptyDraft() {
   return { id: '', name: '', providerKey: provider.key, provider: provider.label, baseUrl: provider.baseUrl, model: '', isDefault: models.value.length === 0, apiKey: '' }
 }
 
-function applyTheme(theme) {
-  const resolved = theme === 'system' ? (matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light') : theme
-  document.documentElement.dataset.theme = resolved
-  localStorage.setItem('tiny-note-theme', resolved)
-}
-
 async function save() {
   saving.value = true
   try {
-    settings.value = await invoke('settings_update', { settings: settings.value })
-    applyTheme(settings.value.theme)
+    await appStore.saveSettings({ ...settings.value })
   } finally {
     saving.value = false
   }
@@ -193,7 +190,7 @@ async function saveModel() {
         apiKey: draft.value.apiKey
       })
     }
-    models.value = await invoke('model_list')
+    await appStore.refreshModels()
     cancelModel()
   } finally {
     modelSaving.value = false
@@ -210,7 +207,7 @@ async function setPrimaryModel(model) {
     for (const item of models.value) {
       await invoke('model_upsert', { profile: { ...item, isDefault: item.id === model.id }, apiKey: null })
     }
-    models.value = await invoke('model_list')
+    await appStore.refreshModels()
   } finally {
     modelSaving.value = false
     primaryModelMenuOpen.value = false
@@ -220,7 +217,8 @@ async function setPrimaryModel(model) {
 async function removeModel(id) {
   if (!window.confirm(t('confirmDelete'))) return
   await invoke('model_delete', { id })
-  models.value = await invoke('model_list')
+  localStorage.removeItem(`tiny-note-context-consent:${id}`)
+  await appStore.refreshModels()
   const next = { ...balanceStates.value }
   delete next[id]
   balanceStates.value = next
@@ -274,12 +272,16 @@ async function queryAllBalances() {
     balanceRefreshingAll.value = false
   }
 }
+async function refreshIndexStatus() { try { indexStatus.value = await invoke('search_index_status') } catch { indexStatus.value = null } }
+async function rebuildSearchIndex() {
+  indexBusy.value = true
+  try { indexStatus.value = await invoke('search_index_rebuild') } finally { indexBusy.value = false }
+}
 
 onMounted(async () => {
-  settings.value = await invoke('settings_get')
+  await appStore.initialize()
   locale.value = settings.value.language
-  applyTheme(settings.value.theme)
-  models.value = await invoke('model_list')
+  await refreshIndexStatus()
 })
 
 watch(() => settings.value.language, value => { if (value) locale.value = value })
@@ -330,6 +332,9 @@ watch(filteredSections, sections => {
               <label class="settings-switch"><input v-model="settings.fimEnabled" type="checkbox" :disabled="saving" @change="save" /><span class="settings-switch-track"></span></label>
             </div>
             <p class="settings-inline-note">{{ t('fimCostHint') }}</p>
+            <div class="settings-subheading">本地知识索引</div>
+            <div class="settings-setting-row"><div class="settings-setting-copy"><strong>自动全文检索</strong><span>为笔记和文本类知识库文件建立本地索引，不需要 Embedding。</span></div><button type="button" class="settings-fetch-button" :disabled="indexBusy" @click="rebuildSearchIndex"><RefreshCw :size="14" :class="{ spinning: indexBusy }" />{{ indexBusy ? '重建中…' : '重建索引' }}</button></div>
+            <p v-if="indexStatus" class="settings-inline-note">已索引 {{ indexStatus.indexed }} 个文档、{{ indexStatus.chunks }} 个片段；失败 {{ indexStatus.failed }}，不支持 {{ indexStatus.unsupported }}。</p>
           </section>
 
           <section v-else-if="activeSectionId === 'models'" class="settings-detail-section">

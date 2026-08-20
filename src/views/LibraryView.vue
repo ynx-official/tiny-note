@@ -147,7 +147,7 @@ function selectBase(id) { store.selectBase(id) }
       <div v-else :class="['file-grid', view]">
         <article v-for="entry in entries" :key="entry.relativePath" class="file-card" tabindex="0" @dblclick="openEntry(entry)" @keydown.enter="openEntry(entry)">
           <div class="file-icon" :class="entry.kind"><FolderOpen v-if="entry.kind === 'folder'" :size="23" /><File v-else :size="23" /></div>
-          <div class="file-info"><strong>{{ entry.name }}</strong><small>{{ entry.kind === 'folder' ? '文件夹' : `${Math.max(1, Math.round(entry.size / 1024))} KB` }}</small><em v-if="query && entry.relativePath !== entry.name">{{ entry.relativePath }}</em></div>
+          <div class="file-info"><strong>{{ entry.name }}</strong><small>{{ entry.kind === 'folder' ? '文件夹' : `${Math.max(1, Math.round(entry.size / 1024))} KB` }}<span v-if="entry.kind === 'file'" class="file-index-status" :class="`is-${entry.indexStatus || 'pending'}`"> · {{ ({ indexed: '已索引', failed: '索引失败', unsupported: '不支持', pending: '待索引' })[entry.indexStatus || 'pending'] }}</span></small><em v-if="query && entry.relativePath !== entry.name">{{ entry.relativePath }}</em></div>
           <div class="file-card-actions"><button v-if="entry.kind === 'file'" class="file-menu" title="预览" @click.stop="store.openPreview(entry.relativePath)"><Eye :size="15" /></button><button class="file-action" title="重命名" @click.stop="rename(entry)"><Pencil :size="14" /></button><button class="file-trash" :title="t('trash')" @click.stop="remove(entry)"><Trash2 :size="14" /></button></div>
         </article>
       </div>

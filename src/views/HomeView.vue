@@ -1,11 +1,12 @@
 <script setup>
 import { computed, onMounted, ref } from 'vue'
+import { storeToRefs } from 'pinia'
 import { useRouter } from 'vue-router'
 import { useI18n } from 'vue-i18n'
 import { BookOpen, ChevronDown, ChevronLeft, ChevronRight, File, FileSearch2, FileText, Folder, Globe2, LibraryBig, MessageSquare, NotebookPen, Paperclip, PenLine, Send, Settings2, Sparkles, X } from 'lucide-vue-next'
 import { useNotesStore } from '../stores/notes'
 import { useLibraryStore } from '../stores/library'
-import { invoke } from '../services/tauri'
+import { useAppStore } from '../stores/app'
 import doubaoIcon from '../assets/providers/doubao.png'
 import qwenIcon from '../assets/providers/qwen.png'
 import zhipuIcon from '../assets/providers/zhipu.png'
@@ -18,12 +19,13 @@ const router = useRouter()
 const { locale, t } = useI18n()
 const notes = useNotesStore()
 const library = useLibraryStore()
+const appStore = useAppStore()
+const { models } = storeToRefs(appStore)
 const draft = ref('')
 const referenceMenuOpen = ref(false)
 const referencePicker = ref(null)
 const referenceFileBaseId = ref(null)
 const references = ref([])
-const models = ref([])
 const selectedModelId = ref('')
 const thinkingMode = ref('fast')
 const modelMenuOpen = ref(false)
@@ -138,10 +140,12 @@ function restoreAssistantDraft() {
 }
 onMounted(async () => {
   restoreAssistantDraft()
-  if (!notes.notes.length) await notes.load()
-  if (!library.bases.length) await library.load()
-  models.value = await invoke('model_list')
+  await appStore.initialize()
   selectedModelId.value = models.value.find(model => model.isDefault)?.id || models.value[0]?.id || ''
+  await Promise.allSettled([
+    notes.notes.length ? Promise.resolve() : notes.load(),
+    library.bases.length ? Promise.resolve() : library.load()
+  ])
 })
 </script>
 

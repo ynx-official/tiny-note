@@ -8,7 +8,7 @@ import AppShell from './components/AppShell.vue'
 
 const route = useRoute(); const { locale } = useI18n(); const notes = useNotesStore(); const library = useLibraryStore()
 const active = computed(() => route.path === '/' || route.path.startsWith('/home') || route.path.startsWith('/chat') ? 'home' : route.path.startsWith('/library') ? 'library' : route.path.startsWith('/settings') ? 'settings' : 'notes')
-onMounted(async () => { await notes.load(); await library.load(); const saved = localStorage.getItem('tiny-note-theme'); if (saved) document.documentElement.dataset.theme = saved })
+onMounted(async () => { await Promise.allSettled([notes.load(), library.load()]) })
 watch(locale, value => localStorage.setItem('tiny-note-language', value))
 </script>
 <template><AppShell :active="active"><router-view /></AppShell></template>

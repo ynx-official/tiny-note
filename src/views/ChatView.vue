@@ -1,16 +1,23 @@
 <script setup>
 import { computed, nextTick, onMounted, onUnmounted, ref, watch } from 'vue'
+import { storeToRefs } from 'pinia'
 import { useRoute, useRouter } from 'vue-router'
 import { Channel } from '@tauri-apps/api/core'
-import { ArrowLeft, Copy, Plus, Send, Sparkles, Square } from 'lucide-vue-next'
+import { ArrowLeft, BookOpen, Copy, File, FileText, Paperclip, Plus, Send, Sparkles, Square, X } from 'lucide-vue-next'
 import { invoke } from '../services/tauri'
+import { useNotesStore } from '../stores/notes'
+import { useLibraryStore } from '../stores/library'
+import { useAppStore } from '../stores/app'
 
 const route = useRoute()
 const router = useRouter()
+const notesStore = useNotesStore()
+const library = useLibraryStore()
+const appStore = useAppStore()
+const { models } = storeToRefs(appStore)
 const messages = ref([])
 const draft = ref('')
 const references = ref([])
-const models = ref([])
 const selectedModelId = ref('')
 const thinkingMode = ref('fast')
 const busy = ref(false)
@@ -20,6 +27,9 @@ const requestId = ref('')
 const messagesRef = ref(null)
 const conversationId = ref('')
 const conversationTitle = ref('新对话')
+const referenceMenuOpen = ref(false)
+const responseSources = ref([])
+const responseProposal = ref(null)
 const titlesGenerating = new Set()
 const fromHome = computed(() => route.query.from === 'home')
 const selectedModel = computed(() => models.value.find(model => model.id === selectedModelId.value) || models.value.find(model => model.isDefault) || models.value[0] || null)
@@ -43,9 +53,9 @@ async function ensureConversation() {
   window.dispatchEvent(new CustomEvent('tiny-note-chat-updated'))
   return conversation.id
 }
-async function saveMessage(role, content, messageReferences = []) {
+async function saveMessage(role, content, messageReferences = [], sources = [], proposalId = null) {
   const id = await ensureConversation()
-  const saved = await invoke('chat_add_message', { conversationId: id, role, content, references: messageReferences })
+  const saved = await invoke('chat_add_message', { conversationId: id, role, content, references: messageReferences, sources, proposalId })
   window.dispatchEvent(new CustomEvent('tiny-note-chat-updated'))
   return saved
 }
@@ -62,7 +72,7 @@ async function generateTitle() {
 async function pushResponse(content) {
   const text = content?.trim()
   if (!text) return
-  const saved = await saveMessage('assistant', text)
+  const saved = await saveMessage('assistant', text, [], responseSources.value, responseProposal.value?.id || null)
   messages.value.push(saved)
 }
 async function completeResponse() {
@@ -71,8 +81,18 @@ async function completeResponse() {
   try {
     await pushResponse(content)
     if (messages.value.filter(message => message.role === 'assistant').length === 1) generateTitle()
-  } catch (cause) { error.value = cause?.message || '回复保存失败' } finally { busy.value = false }
+  } catch (cause) { error.value = cause?.message || '回复保存失败' } finally { busy.value = false; responseSources.value = []; responseProposal.value = null }
 }
+function ensureContextConsent() {
+  const modelId = selectedModel.value?.id
+  if (!modelId) return false
+  const consentKey = `tiny-note-context-consent:${modelId}`
+  if (localStorage.getItem(consentKey) === 'granted') return true
+  const allowed = window.confirm('Tiny Note 会把本轮命中的本地笔记或知识库片段发送给当前模型。只发送相关片段，并在回答下方展示来源。是否允许？')
+  if (allowed) localStorage.setItem(consentKey, 'granted')
+  return allowed
+}
+function isEditIntent(message) { return /(扩写|改写|修改|润色|精炼|替换|翻译|续写|修正|重写|rewrite|translate|polish|edit)/i.test(message) }
 async function sendMessage(value, messageReferences = references.value) {
   const message = String(value || '').trim()
   if (!message || busy.value) return
@@ -91,6 +111,9 @@ async function sendMessage(value, messageReferences = references.value) {
   busy.value = true
   streamingText.value = '正在思考…'
   requestId.value = crypto.randomUUID()
+  responseSources.value = []
+  responseProposal.value = null
+  const contextAllowed = ensureContextConsent()
   if (!window.__TAURI_INTERNALS__) {
     window.setTimeout(async () => { streamingText.value = `这是浏览器预览回复：${message}`; await completeResponse() }, 500)
     return
@@ -98,12 +121,16 @@ async function sendMessage(value, messageReferences = references.value) {
   const channel = new Channel()
   channel.onmessage = async event => {
     if (event.type === 'delta') { if (streamingText.value === '正在思考…') streamingText.value = ''; streamingText.value += event.text }
+    if (event.type === 'sources') responseSources.value = event.sources || []
+    if (event.type === 'editProposal') responseProposal.value = event.proposal
     if (event.type === 'error') { error.value = event.message || '模型请求失败'; streamingText.value = ''; busy.value = false }
     if (event.type === 'cancelled') { streamingText.value = ''; busy.value = false }
     if (event.type === 'completed') await completeResponse()
   }
   try {
-    await invoke('note_ai_stream', { request: { requestId: requestId.value, action: 'custom', text: assistantContext(), instruction: message, modelProfileId: selectedModel.value?.id || null, thinkingMode: thinkingMode.value, source: 'chat', conversationId: conversationId.value }, onEvent: channel })
+    const targetNotes = messageReferenceCopies.filter(item => item.type === 'note')
+    const editMode = targetNotes.length === 1 && isEditIntent(message)
+    await invoke('note_ai_stream', { request: { requestId: requestId.value, action: 'custom', mode: editMode ? 'edit' : 'chat', text: assistantContext(), instruction: message, references: contextAllowed ? messageReferenceCopies : [], autoRetrieve: contextAllowed, targetNoteId: targetNotes.length === 1 ? targetNotes[0].noteId : null, modelProfileId: selectedModel.value?.id || null, thinkingMode: thinkingMode.value, source: 'chat', conversationId: conversationId.value }, onEvent: channel })
   } catch (cause) { error.value = cause?.message || cause?.code || '模型请求失败'; streamingText.value = ''; busy.value = false }
 }
 function submit() { if (!busy.value) sendMessage(draft.value) }
@@ -123,6 +150,27 @@ function newChat() {
   conversationId.value = ''
   conversationTitle.value = '新对话'
   router.replace({ path: '/chat', query: fromHome.value ? { from: 'home' } : {} })
+}
+async function toggleReferenceMenu() {
+  referenceMenuOpen.value = !referenceMenuOpen.value
+  if (!referenceMenuOpen.value) return
+  if (!notesStore.notes.length) await notesStore.load()
+  if (!library.bases.length) await library.load()
+}
+function addNoteReference(note) {
+  const value = { key: `note:${note.id}`, type: 'note', name: note.title || '未命名笔记', noteId: note.id }
+  if (!references.value.some(item => item.key === value.key)) references.value.push(value)
+  referenceMenuOpen.value = false
+}
+function addFileReference(entry) {
+  const value = { key: `file:${library.activeId}:${entry.relativePath}`, type: 'file', name: entry.name, knowledgeBaseId: library.activeId, baseId: library.activeId, baseName: library.active?.name || '', relativePath: entry.relativePath }
+  if (!references.value.some(item => item.key === value.key)) references.value.push(value)
+  referenceMenuOpen.value = false
+}
+function removeReference(key) { references.value = references.value.filter(item => item.key !== key) }
+async function reviewProposal(proposalId) {
+  const proposal = await invoke('note_edit_get', { proposalId })
+  router.push({ path: '/notes', query: { note: proposal.noteId, proposal: proposal.id } })
 }
 async function copyMessage(content) { if (content) await navigator.clipboard?.writeText(content) }
 
@@ -150,7 +198,11 @@ function handleDeleted(event) { if (event.detail?.id === conversationId.value) n
 watch(() => [messages.value.length, streamingText.value, busy.value], scrollToBottom, { flush: 'post' })
 watch(() => route.query.id, id => { if (id) loadConversation(String(id)); else if (conversationId.value && !busy.value) { conversationId.value = ''; conversationTitle.value = '新对话'; messages.value = [] } })
 onMounted(async () => {
-  models.value = await invoke('model_list')
+  await appStore.initialize()
+  await Promise.allSettled([
+    notesStore.notes.length ? Promise.resolve() : notesStore.load(),
+    library.bases.length ? Promise.resolve() : library.load()
+  ])
   window.addEventListener('tiny-note-chat-deleted', handleDeleted)
   if (route.query.id) {
     selectedModelId.value = models.value.find(model => model.isDefault)?.id || models.value[0]?.id || ''
@@ -182,14 +234,17 @@ onUnmounted(() => window.removeEventListener('tiny-note-chat-deleted', handleDel
       <article v-for="(message, index) in messages" :key="`${index}-${message.role}`" class="chat-page-message" :class="`is-${message.role}`">
         <div v-if="message.role === 'assistant'" class="chat-page-assistant-head"><span class="chat-page-avatar"><Sparkles :size="13" /></span><strong>周五</strong></div>
         <div class="chat-page-bubble">{{ message.content }}</div>
+        <div v-if="message.sources?.length" class="chat-source-list"><span v-for="(source, sourceIndex) in message.sources" :key="source.id" class="chat-source-chip" :title="source.snippet">[{{ sourceIndex + 1 }}] {{ source.title }}<small v-if="source.truncated">已截取</small></span></div>
+        <button v-if="message.proposalId" type="button" class="chat-review-proposal" @click="reviewProposal(message.proposalId)">在文章中审阅修改</button>
         <div v-if="message.role === 'assistant'" class="chat-page-message-actions"><button type="button" title="复制" @click="copyMessage(message.content)"><Copy :size="14" /></button></div>
       </article>
       <article v-if="busy" class="chat-page-message is-assistant"><div class="chat-page-assistant-head"><span class="chat-page-avatar"><Sparkles :size="13" /></span><strong>周五</strong></div><div class="chat-page-bubble">{{ streamingText || '正在思考…' }}</div></article>
       <div v-if="error" class="chat-page-error">{{ error }} <button type="button" @click="router.push('/settings')">打开模型设置</button></div>
     </main>
     <form class="chat-page-composer" @submit.prevent="submit">
+      <div v-if="references.length" class="chat-reference-tags"><span v-for="reference in references" :key="reference.key"><FileText v-if="reference.type === 'note'" :size="13" /><File v-else :size="13" />{{ reference.name }}<button type="button" @click="removeReference(reference.key)"><X :size="12" /></button></span></div>
       <textarea v-model="draft" rows="2" placeholder="输入消息..." @keydown.enter.exact.prevent="submit"></textarea>
-      <div class="chat-page-composer-footer"><small>内容保存在你的设备上</small><button v-if="busy" type="button" class="chat-page-send is-stop" title="停止生成" @click="stop"><Square :size="15" /></button><button v-else type="submit" class="chat-page-send" :class="{ active: draft.trim() }" title="发送"><Send :size="16" /></button></div>
+      <div class="chat-page-composer-footer"><div class="chat-reference-anchor"><button type="button" class="chat-attach-button" title="引用笔记或文件" @click="toggleReferenceMenu"><Paperclip :size="15" /></button><div v-if="referenceMenuOpen" class="chat-reference-menu"><strong>引用内容</strong><small>笔记</small><button v-for="note in notesStore.notes" :key="note.id" type="button" @click="addNoteReference(note)"><FileText :size="13" />{{ note.title || '未命名笔记' }}</button><small v-if="library.entries.some(item => item.kind === 'file')">{{ library.active?.name || '知识库文件' }}</small><button v-for="entry in library.entries.filter(item => item.kind === 'file')" :key="entry.relativePath" type="button" @click="addFileReference(entry)"><BookOpen :size="13" />{{ entry.name }}</button></div><small>内容保存在你的设备上</small></div><button v-if="busy" type="button" class="chat-page-send is-stop" title="停止生成" @click="stop"><Square :size="15" /></button><button v-else type="submit" class="chat-page-send" :class="{ active: draft.trim() }" title="发送"><Send :size="16" /></button></div>
     </form>
   </div>
 </template>

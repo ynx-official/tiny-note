@@ -65,6 +65,8 @@ watch(() => [props.messages.length, props.streamingText, props.busy], scrollToBo
           <span class="tiny-note-response-avatar"><Sparkles :size="14" /></span>
           <div class="tiny-note-response-content">
             <div class="tiny-note-response-text">{{ message.content }}</div>
+            <div v-if="message.sources?.length" class="tiny-note-assistant-sources"><span v-for="(source, sourceIndex) in message.sources" :key="source.id" :title="source.snippet">[{{ sourceIndex + 1 }}] {{ source.title }}<small v-if="source.truncated">已截取</small></span></div>
+            <div v-if="message.proposal" class="tiny-note-assistant-proposal-state">修改建议已在文章中打开，请审阅后应用。</div>
             <button v-if="message.content" class="tiny-note-copy-response" type="button" title="复制" @click="emit('copy', message.content)"><Copy :size="13" /></button>
           </div>
         </div>
