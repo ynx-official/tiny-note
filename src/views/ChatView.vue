@@ -10,6 +10,7 @@ import { invoke } from '../services/tauri'
 import { useNotesStore } from '../stores/notes'
 import { useLibraryStore } from '../stores/library'
 import { useAppStore } from '../stores/app'
+import MarkdownMessage from '../components/MarkdownMessage.vue'
 import { isConversationSummaryIntent, isNoteEditIntent, parseNoteCommand } from '../utils/noteChatCommands'
 
 const route = useRoute()
@@ -405,12 +406,13 @@ function formatToolDetail(value) {
             <div><strong>参数</strong><pre>{{ formatToolDetail(segment.arguments) }}</pre><strong>结果</strong><pre>{{ formatToolDetail(segment.output) }}</pre></div>
           </details>
         </div>
-        <div class="chat-page-bubble">{{ message.content }}</div>
+        <div v-if="message.role === 'user'" class="chat-page-bubble">{{ message.content }}</div>
+        <MarkdownMessage v-else :content="message.content" />
         <div v-if="message.sources?.length" class="chat-source-list"><span v-for="(source, sourceIndex) in message.sources" :key="source.id" class="chat-source-chip" :title="source.snippet">[{{ sourceIndex + 1 }}] {{ source.title }}<small v-if="source.truncated">已截取</small></span></div>
         <button v-if="message.proposalId" type="button" class="chat-review-proposal" @click="reviewProposal(message.proposalId)">在文章中审阅修改</button>
         <div v-if="message.role === 'assistant'" class="chat-page-message-actions"><button type="button" title="复制" @click="copyMessage(message.content)"><Copy :size="14" /></button><button type="button" title="保存这条回复为笔记" @click="saveAssistantAsNote(message)"><Save :size="14" /></button></div>
       </article>
-      <article v-if="busy" class="chat-page-message is-assistant"><div class="chat-page-assistant-head"><span class="chat-page-avatar"><Sparkles :size="13" /></span><strong>周五</strong><small v-if="currentMode === 'agent'" class="agent-mode-badge">Agent</small></div><div v-if="agentSegments.length" class="agent-timeline"><details v-for="segment in agentSegments" :key="segment.id" class="agent-tool-step"><summary><span class="agent-tool-icon"><CheckCircle2 v-if="segment.status === 'completed'" :size="14" /><X v-else-if="segment.status === 'error' || segment.status === 'rejected' || segment.status === 'cancelled'" :size="14" /><Wrench v-else-if="segment.status === 'awaiting_approval'" :size="14" /><LoaderCircle v-else class="is-spinning" :size="14" /></span><span>{{ toolLabel(segment.toolName) }}</span><small v-if="segment.status === 'awaiting_approval'">待确认</small><ChevronDown :size="13" /></summary><div><strong>参数</strong><pre>{{ formatToolDetail(segment.arguments) }}</pre><strong v-if="segment.output">结果</strong><pre v-if="segment.output">{{ formatToolDetail(segment.output) }}</pre></div></details></div><div class="chat-page-bubble">{{ streamingText || (pendingApproval ? '等待你确认操作…' : agentSegments.length ? '正在分析工具结果…' : '正在思考…') }}</div></article>
+      <article v-if="busy" class="chat-page-message is-assistant"><div class="chat-page-assistant-head"><span class="chat-page-avatar"><Sparkles :size="13" /></span><strong>周五</strong><small v-if="currentMode === 'agent'" class="agent-mode-badge">Agent</small></div><div v-if="agentSegments.length" class="agent-timeline"><details v-for="segment in agentSegments" :key="segment.id" class="agent-tool-step"><summary><span class="agent-tool-icon"><CheckCircle2 v-if="segment.status === 'completed'" :size="14" /><X v-else-if="segment.status === 'error' || segment.status === 'rejected' || segment.status === 'cancelled'" :size="14" /><Wrench v-else-if="segment.status === 'awaiting_approval'" :size="14" /><LoaderCircle v-else class="is-spinning" :size="14" /></span><span>{{ toolLabel(segment.toolName) }}</span><small v-if="segment.status === 'awaiting_approval'">待确认</small><ChevronDown :size="13" /></summary><div><strong>参数</strong><pre>{{ formatToolDetail(segment.arguments) }}</pre><strong v-if="segment.output">结果</strong><pre v-if="segment.output">{{ formatToolDetail(segment.output) }}</pre></div></details></div><MarkdownMessage :content="streamingText || (pendingApproval ? '等待你确认操作…' : agentSegments.length ? '正在分析工具结果…' : '正在思考…')" streaming /></article>
       <div v-if="error" class="chat-page-error">{{ error }} <button type="button" @click="router.push('/settings')">打开模型设置</button></div>
       <div v-if="savedNote" class="chat-page-saved"><FileText :size="15" /><span>已保存为「{{ savedNote.title }}」</span><button type="button" @click="openSavedNote">打开笔记</button><button type="button" class="is-close" title="关闭" @click="savedNote = null"><X :size="13" /></button></div>
     </main>
