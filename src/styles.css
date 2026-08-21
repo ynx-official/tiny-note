@@ -7,7 +7,6 @@
 .settings-page { height:100%; overflow:auto; max-width:800px; margin:0 auto; padding:48px 70px 80px }.page-title { border-bottom:1px solid var(--line); padding-bottom:28px }.page-title p { color:var(--muted); font-size:12px }.settings-section { padding:25px 0; border-bottom:1px solid var(--line) }.settings-section h2 { margin:0 0 7px; font-size:14px }.settings-section p { margin:0; color:var(--muted); font-size:11px; line-height:1.6 }.theme-options { gap:8px; margin-top:16px }.theme-options button { display:flex; align-items:center; gap:8px; padding:10px 14px; border:1px solid var(--line); border-radius:8px; color:var(--muted); font-size:11px }.theme-options button.selected { border-color:var(--accent); color:var(--accent); background:var(--accent-soft) }.settings-section>select { margin-top:10px; padding:8px 12px; border:1px solid var(--line); border-radius:7px; color:var(--text); background:var(--surface); font-size:12px }.setting-heading { justify-content:space-between; gap:20px }.switch input { display:none }.switch span { display:block; width:36px; height:20px; border-radius:12px; background:var(--line); position:relative }.switch span:after { content:""; position:absolute; width:16px; height:16px; left:2px; top:2px; border-radius:50%; background:#fff; transition:.2s }.switch input:checked+span { background:var(--accent) }.switch input:checked+span:after { transform:translateX(16px) }.model-row { gap:10px; margin-top:14px; padding:10px; border:1px solid var(--line); border-radius:8px }.model-avatar { width:29px; height:29px; display:grid; place-items:center; border-radius:7px; color:var(--accent); background:var(--accent-soft) }.model-row>div:nth-child(2) { display:flex; flex-direction:column; gap:3px; flex:1 }.model-row strong { font-size:12px }.model-row small,.model-status { color:var(--muted); font-size:10px }.model-status { margin-left:auto }.model-form { display:grid; gap:8px; margin-top:14px; padding:14px; border:1px solid var(--line); border-radius:8px; background:var(--surface-2) }.model-form input { padding:9px; border:1px solid var(--line); border-radius:6px; background:var(--surface); color:var(--text); font-size:11px }.model-form>div { justify-content:flex-end; gap:7px }
 @media (max-width:1100px) { .editor-panel { padding:35px 40px 60px }.settings-page { padding:35px 45px 60px } }
 .header-actions { display:flex; align-items:center; gap:4px }
-.stop-button { color:#c4665b !important; padding:0 8px !important }
 .ai-actions { display:flex; gap:8px; margin-left:auto }.ai-actions button { color:var(--accent); font-size:10px }
 .ai-result { margin:18px 0 0; padding:14px 18px 16px; border:1px solid #9bb8f4; border-radius:9px; background:#edf3ff; color:#172033; box-shadow:0 2px 8px rgba(59,96,170,.08); font-size:13px; line-height:1.65; white-space:normal; }
 .ai-result-label { display:flex; align-items:center; justify-content:space-between; gap:12px; margin-bottom:10px; color:#2563eb; font-size:12px; font-weight:600; }
@@ -522,12 +521,10 @@ body, button, input, select, textarea { font-family: -apple-system, BlinkMacSyst
 /* The right-side actions stay pinned to the toolbar's top row even when the
    formatting controls need a second row in a narrow editor or beside the AI sidebar. */
 .friday-editor-toolbar { position:relative; padding-right:330px; align-items:flex-start; }
-.friday-editor-toolbar.has-stop:not(.is-compact) { padding-right:385px; }
 .friday-editor-toolbar .toolbar-left-group { width:100%; flex:1 1 auto; align-items:center; }
 .friday-editor-toolbar .toolbar-right-group { position:absolute; top:6px; right:16px; height:32px; margin-left:0; align-items:center; }
 .friday-editor-toolbar .toolbar-right-group > .toolbar-menu-anchor,
-.friday-editor-toolbar .toolbar-right-group > .ai-button,
-.friday-editor-toolbar .toolbar-right-group > .stop-button { flex:0 0 auto; align-self:center; }
+.friday-editor-toolbar .toolbar-right-group > .ai-button { flex:0 0 auto; align-self:center; }
 .friday-editor-toolbar.is-compact { min-height:48px; padding:6px 16px; }
 .friday-editor-toolbar.is-compact .toolbar-right-group { position:static; height:32px; margin-left:auto; }
 @media (max-width:1120px) {

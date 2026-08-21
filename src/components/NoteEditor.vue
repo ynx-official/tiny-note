@@ -32,7 +32,7 @@ import { DEFAULT_NOTE_MODE, NOTE_MODES, applyMarkdownSourceToEditor, clampSplitR
 
 const lowlight = createLowlight()
 lowlight.register('javascript', javascript); lowlight.register('typescript', typescript); lowlight.register('python', python); lowlight.register('json', json); lowlight.register('html', xml); lowlight.register('xml', xml); lowlight.register('css', css); lowlight.register('bash', bash); lowlight.register('sql', sql); lowlight.register('markdown', markdown); lowlight.register('yaml', yaml); lowlight.register('rust', rust)
-const props = defineProps({ note: Object, tocVisible: { type: Boolean, default: false }, proposalId: { type: String, default: '' } }); const emit = defineEmits(['deleted', 'toggle-toc', 'proposal-reviewed']); const store = useNotesStore(); const library = useLibraryStore(); const appStore = useAppStore(); const { t } = useI18n(); const aiBusy = ref(false); const aiText = ref(''); const aiRequestId = ref(''); const aiAction = ref('summarize'); const aiResultAction = ref(''); const aiProposal = ref(null); const aiSources = ref([]); const aiConsentOpen = ref(false); const assistantOpen = ref(false); const assistantBusy = ref(false); const assistantRequestId = ref(''); const assistantStreamingText = ref(''); const assistantMessages = ref([]); const assistantSelection = ref(null); const assistantResponseSources = ref([]); const assistantResponseProposal = ref(null); const aiPanelOpen = ref(false); const aiPanelSelectionText = ref(''); const commandMenuOpen = ref(false); const aiPrompt = ref(''); const aiInputRef = ref(null); const commandMenuDirection = ref('down'); const moreOpen = ref(false); const revisionsOpen = ref(false); const revisions = ref([]); const revisionsBusy = ref(false); const insertOpen = ref(false); const tablePickerOpen = ref(false); const textColorOpen = ref(false); const highlightOpen = ref(false); const headingOpen = ref(false); const knowledgeMenuOpen = ref(false); const imageDialogOpen = ref(false); const imageUrl = ref(''); const imageAlt = ref(''); const imageInput = ref(null); const tableRows = ref(0); const tableCols = ref(0); const fimEnabled = computed(() => appStore.settings.fimEnabled === true); const fimSuggestion = ref(''); const editorStateTick = ref(0); let fimTimer; let savedSelection = null; let pendingAiRequest = null; let pendingAiChange = null
+const props = defineProps({ note: Object, tocVisible: { type: Boolean, default: false }, proposalId: { type: String, default: '' } }); const emit = defineEmits(['deleted', 'toggle-toc', 'proposal-reviewed']); const store = useNotesStore(); const library = useLibraryStore(); const appStore = useAppStore(); const { t } = useI18n(); const aiBusy = ref(false); const aiText = ref(''); const aiRequestId = ref(''); const aiAction = ref('summarize'); const aiResultAction = ref(''); const aiProposal = ref(null); const aiSources = ref([]); const aiConsentOpen = ref(false); const assistantOpen = ref(false); const assistantTriggerVisible = ref(true); const assistantBusy = ref(false); const assistantRequestId = ref(''); const assistantStreamingText = ref(''); const assistantMessages = ref([]); const assistantSelection = ref(null); const assistantResponseSources = ref([]); const assistantResponseProposal = ref(null); const aiPanelOpen = ref(false); const aiPanelSelectionText = ref(''); const commandMenuOpen = ref(false); const aiPrompt = ref(''); const aiInputRef = ref(null); const commandMenuDirection = ref('down'); const moreOpen = ref(false); const revisionsOpen = ref(false); const revisions = ref([]); const revisionsBusy = ref(false); const insertOpen = ref(false); const tablePickerOpen = ref(false); const textColorOpen = ref(false); const highlightOpen = ref(false); const headingOpen = ref(false); const knowledgeMenuOpen = ref(false); const imageDialogOpen = ref(false); const imageUrl = ref(''); const imageAlt = ref(''); const imageInput = ref(null); const tableRows = ref(0); const tableCols = ref(0); const fimEnabled = computed(() => appStore.settings.fimEnabled === true); const fimSuggestion = ref(''); const editorStateTick = ref(0); let fimTimer; let assistantTriggerTimer; let savedSelection = null; let pendingAiRequest = null; let pendingAiChange = null
 const modeIcons = { rich: PenLine, markdown: FileCode2, read: Eye }
 const editorModes = NOTE_MODES.map(mode => ({ ...mode, icon: modeIcons[mode.id] }))
 const editorMode = ref(DEFAULT_NOTE_MODE)
@@ -426,7 +426,9 @@ function resetTransientEditorState() {
   aiChangePending.value = false
   pendingAiChange = null
   aiDialogPosition.value = null
+  clearTimeout(assistantTriggerTimer)
   assistantOpen.value = false
+  assistantTriggerVisible.value = true
   assistantBusy.value = false
   assistantStreamingText.value = ''
   assistantMessages.value = []
@@ -451,6 +453,7 @@ watch(assistantOpen, () => nextTick(setupSplitObserver))
 
 onBeforeUnmount(() => {
   clearTimeout(fimTimer)
+  clearTimeout(assistantTriggerTimer)
   clearTimeout(markdownParseTimer)
   clearTimeout(markdownPasteTimer)
   stopAiDrag()
@@ -559,11 +562,21 @@ function captureAssistantSelection() {
   return text ? { from, to, text } : null
 }
 function openAssistant(selection = captureAssistantSelection()) {
+  clearTimeout(assistantTriggerTimer)
   if (selection) assistantSelection.value = selection
+  assistantTriggerVisible.value = false
   assistantOpen.value = true
 }
+function closeAssistant() {
+  assistantOpen.value = false
+  assistantTriggerVisible.value = false
+  clearTimeout(assistantTriggerTimer)
+  assistantTriggerTimer = setTimeout(() => {
+    if (!assistantOpen.value) assistantTriggerVisible.value = true
+  }, 250)
+}
 function toggleAssistant() {
-  if (assistantOpen.value) assistantOpen.value = false
+  if (assistantOpen.value) closeAssistant()
   else openAssistant()
 }
 function assistantContext() {
@@ -1005,7 +1018,7 @@ const title = computed({
 <template>
   <div v-if="note" class="note-editor-shell">
     <section class="editor-panel" :class="{ 'is-code-mode': codeMode, 'is-read-mode': editorMode === 'read' }">
-    <div class="toolbar friday-editor-toolbar" :class="{ 'is-compact': !richMode, 'has-stop': aiBusy }">
+    <div class="toolbar friday-editor-toolbar" :class="{ 'is-compact': !richMode }">
       <div v-show="richMode" key="toolbar-rich-controls" class="toolbar-left-group">
         <button :title="t('undo')" :disabled="!canUndo" @click="editor?.chain().focus().undo().run()"><Undo2 :size="19" /></button>
         <button :title="t('redo')" :disabled="!canRedo" @click="editor?.chain().focus().redo().run()"><Redo2 :size="19" /></button>
@@ -1068,8 +1081,7 @@ const title = computed({
           </div>
         </span>
         <span class="toolbar-menu-anchor"><button title="更多" @click="knowledgeMenuOpen = false; moreOpen = !moreOpen"><MoreHorizontal :size="20" /></button><div v-if="moreOpen" class="toolbar-more-menu"><button @click="openRevisions"><RotateCcw :size="15" /> AI 版本历史</button><button @click="exportMarkdown(); moreOpen = false"><Download :size="15" /> 导出 Markdown</button><button @click="printNote(); moreOpen = false"><Printer :size="15" /> 打印 / 保存 PDF</button><button class="danger" @click="emit('deleted', note.id); moreOpen = false"><Trash2 :size="15" /> 删除笔记</button></div></span>
-        <button class="ai-button" :class="{ pressed: assistantOpen }" @click="toggleAssistant"><Layers :size="17" /> Tiny Note 助理</button>
-        <button v-if="aiBusy" class="stop-button" @click="stopAi">{{ t('stop') }}</button>
+        <button v-if="assistantTriggerVisible" class="ai-button" @click="toggleAssistant"><Layers :size="17" /> Tiny Note 助理</button>
       </div>
     </div>
     <div class="editor-head"><input v-model="title" class="title-input" :readonly="editorMode === 'read'" :aria-readonly="editorMode === 'read'" :placeholder="t('untitled')" /><div class="editor-meta"><span :class="{ saving: store.saving }">{{ store.saving ? t('saving') : t('save') }}</span></div></div>
@@ -1160,7 +1172,7 @@ const title = computed({
     <div v-if="revisionsOpen" class="editor-dialog-overlay" @click.self="revisionsOpen = false"><div class="editor-dialog revision-dialog" role="dialog" aria-modal="true" aria-label="AI 版本历史"><div class="editor-dialog-header"><strong>AI 版本历史</strong><button class="editor-dialog-close" title="关闭" @click="revisionsOpen = false">×</button></div><div class="revision-list"><p v-if="revisionsBusy">正在读取…</p><p v-else-if="!revisions.length">还没有 AI 修改前的版本</p><button v-for="revision in revisions" :key="revision.id" type="button" @click="restoreRevision(revision)"><span><strong>{{ revision.title || '未命名笔记' }}</strong><small>{{ formatRevisionTime(revision.createdAt) }} · {{ revision.reason === 'ai_edit' ? 'AI 修改前' : '恢复前' }}</small></span><RotateCcw :size="14" /></button></div></div></div>
     </section>
     <Transition name="tiny-note-assistant-slide">
-      <NoteAssistantSidebar v-if="assistantOpen" :note="note" :selection="assistantSelection" :messages="assistantMessages" :busy="assistantBusy" :streaming-text="assistantStreamingText" @close="assistantOpen = false" @send="sendAssistantMessage" @stop="stopAssistant" @copy="copyAssistantMessage" />
+      <NoteAssistantSidebar v-if="assistantOpen" :note="note" :selection="assistantSelection" :messages="assistantMessages" :busy="assistantBusy" :streaming-text="assistantStreamingText" @close="closeAssistant" @send="sendAssistantMessage" @stop="stopAssistant" @copy="copyAssistantMessage" />
     </Transition>
   </div>
   <div v-else class="empty-state"><div class="empty-icon">✦</div><h2>{{ t('emptyNotes') }}</h2><p>{{ t('emptyHint') }}</p></div>

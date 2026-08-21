@@ -7,6 +7,7 @@ import { messages } from '../i18n'
 import { useNotesStore } from '../stores/notes'
 import NoteEditor from './NoteEditor.vue'
 import MarkdownSourceEditor from './MarkdownSourceEditor.vue'
+import NoteAssistantSidebar from './NoteAssistantSidebar.vue'
 
 const tauriMocks = vi.hoisted(() => ({ invoke: vi.fn() }))
 vi.mock('@tauri-apps/api/core', () => ({
@@ -66,6 +67,26 @@ afterEach(() => {
 })
 
 describe('NoteEditor article modes', () => {
+  it('hides the assistant trigger while the sidebar is open and restores it after closing', async () => {
+    vi.useFakeTimers()
+    const wrapper = await mountEditor()
+
+    expect(wrapper.get('.ai-button').text()).toContain('Tiny Note 助理')
+    await wrapper.get('.ai-button').trigger('click')
+    await flushPromises()
+
+    expect(wrapper.find('.ai-button').exists()).toBe(false)
+    const sidebar = wrapper.getComponent(NoteAssistantSidebar)
+    await sidebar.vm.$emit('close')
+    await flushPromises()
+
+    expect(wrapper.find('.ai-button').exists()).toBe(false)
+    await vi.advanceTimersByTimeAsync(250)
+    await flushPromises()
+    expect(wrapper.get('.ai-button').text()).toContain('Tiny Note 助理')
+    wrapper.unmount()
+  })
+
   it('opens in instant editing and exposes Markdown and reading as the other primary modes', async () => {
     const wrapper = await mountEditor()
     expect(wrapper.get('.editor-mode-trigger').text()).toContain('即时编辑')
@@ -407,6 +428,7 @@ describe('NoteEditor article modes', () => {
     expect(payload.request.text).toBe('标题')
     expect(payload.request.selection).toMatchObject({ from: 1, to: 3, text: '标题' })
     expect(payload.request.autoRetrieve).toBe(false)
+    expect(wrapper.find('.stop-button').exists()).toBe(false)
     wrapper.unmount()
   })
 
