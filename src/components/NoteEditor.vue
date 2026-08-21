@@ -84,6 +84,10 @@ function looksLikeMarkdown(text) {
   return /(^|\n)\s{0,3}(#{1,6}\s|[-*+]\s|\d+\.\s|>\s|```|~~~)/m.test(text) ||
     /(?:\*\*[^*]+\*\*|__[^_]+__|`[^`]+`|!?\[[^\]]+\]\([^)]+\)|^\s*\|.+\|\s*$)/m.test(text)
 }
+function isPlainInlineAiReplacement(text) {
+  if (!text || text.includes('\n') || looksLikeMarkdown(text)) return false
+  return !/(?:\*[^*]+\*|_[^_]+_|~~[^~]+~~|<\/?[a-z][^>]*>)/i.test(text)
+}
 function handleMarkdownPaste(view, event) {
   if (!richMode.value || !event.clipboardData) return false
 
@@ -651,7 +655,15 @@ async function applyAiResult(mode) {
     const selectionTo = aiProposal.value.selectionTo
     const hasProposalSelection = Number.isInteger(selectionFrom) && Number.isInteger(selectionTo) && selectionFrom < selectionTo
     if (hasProposalSelection) {
-      editor.value.chain().focus().setTextSelection({ from: selectionFrom, to: selectionTo }).insertContent(aiText.value, { contentType: 'markdown' }).run()
+      const { doc, tr } = editor.value.state
+      const $from = doc.resolve(selectionFrom)
+      const $to = doc.resolve(selectionTo)
+      if ($from.parent === $to.parent && $from.parent.isTextblock && isPlainInlineAiReplacement(aiText.value)) {
+        editor.value.view.dispatch(tr.insertText(aiText.value, selectionFrom, selectionTo).scrollIntoView())
+        editor.value.commands.focus()
+      } else {
+        editor.value.chain().focus().setTextSelection({ from: selectionFrom, to: selectionTo }).insertContent(aiText.value, { contentType: 'markdown' }).run()
+      }
     } else {
       markdownDraft.value = aiText.value
       sourceDirty.value = true

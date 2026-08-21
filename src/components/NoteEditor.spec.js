@@ -273,6 +273,38 @@ describe('NoteEditor article modes', () => {
     wrapper.unmount()
   })
 
+  it('preserves existing inline Markdown formatting for a plain-text AI replacement', async () => {
+    const active = {
+      ...note('note-ai-formatting'),
+      contentHtml: '<p><strong>重点内容</strong> 保留段落</p>',
+      contentText: '重点内容 保留段落',
+      contentMarkdown: '**重点内容** 保留段落'
+    }
+    localStorage.setItem('tiny-note-browser-state', JSON.stringify({
+      notes: [active],
+      editProposals: [{
+        id: 'proposal-ai-formatting',
+        noteId: active.id,
+        action: 'polish',
+        originalText: '重点内容',
+        replacementMarkdown: '核心内容',
+        selectionFrom: 1,
+        selectionTo: 5,
+        baseUpdatedAt: active.updatedAt,
+        status: 'draft',
+        sources: []
+      }]
+    }))
+    const wrapper = await mountEditor(active, { proposalId: 'proposal-ai-formatting' })
+
+    await wrapper.get('.ai-output-action.replace').trigger('click')
+    await flushPromises()
+
+    expect(active.contentMarkdown).toBe('**核心内容** 保留段落')
+    expect(active.contentHtml).toContain('<strong>核心内容</strong>')
+    wrapper.unmount()
+  })
+
   it('shows and preserves the selected text in the AI writing panel', async () => {
     window.__TAURI_INTERNALS__ = {}
     localStorage.setItem('tiny-note-context-consent:default', 'granted')
