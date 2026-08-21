@@ -634,6 +634,7 @@ body, button, input, select, textarea { font-family: -apple-system, BlinkMacSyst
 .tiny-note-assistant-response { display:flex; align-items:flex-start; gap:8px; max-width:100%; }
 .tiny-note-response-avatar { width:25px; height:25px; border-radius:8px; }
 .tiny-note-response-content { position:relative; min-width:0; flex:1; padding:3px 1px 0; }
+.tiny-note-assistant-response .tiny-note-response-content .tiny-note-response-markdown { width:100%; max-width:100%; color:var(--text-primary); font-size:12px; line-height:1.7; }
 .tiny-note-response-text { color:var(--text-primary); font-size:12px; line-height:1.7; white-space:pre-wrap; word-break:break-word; }
 .tiny-note-copy-response { margin-top:6px; padding:4px; border-radius:5px; color:var(--text-tertiary); }
 .tiny-note-copy-response:hover { color:var(--text-primary); background:var(--bg-hover); }
