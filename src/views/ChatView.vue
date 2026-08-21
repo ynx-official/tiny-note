@@ -43,7 +43,6 @@ const currentAgentRunId = ref('')
 const pendingApproval = ref(null)
 const approvalBusy = ref(false)
 const approvalError = ref('')
-let activeAgentChannel = null
 const titlesGenerating = new Set()
 const fromHome = computed(() => route.query.from === 'home')
 const selectedModel = computed(() => models.value.find(model => model.id === selectedModelId.value) || models.value.find(model => model.isDefault) || models.value[0] || null)
@@ -99,7 +98,7 @@ async function completeResponse() {
     await pushResponse(content)
     if (pendingSummary.value && content.trim()) await createNoteFromText(content, `${conversationTitle.value === '新对话' ? '对话总结' : conversationTitle.value} · 总结`)
     if (messages.value.filter(message => message.role === 'assistant').length === 1) generateTitle()
-  } catch (cause) { error.value = cause?.message || '回复保存失败' } finally { busy.value = false; responseSources.value = []; responseProposal.value = null; pendingSummary.value = false; agentSegments.value = []; currentAgentRunId.value = ''; pendingApproval.value = null; approvalBusy.value = false; approvalError.value = ''; activeAgentChannel = null }
+  } catch (cause) { error.value = cause?.message || '回复保存失败' } finally { busy.value = false; responseSources.value = []; responseProposal.value = null; pendingSummary.value = false; agentSegments.value = []; currentAgentRunId.value = ''; pendingApproval.value = null; approvalBusy.value = false; approvalError.value = '' }
 }
 function ensureContextConsent() {
   const modelId = selectedModel.value?.id
@@ -184,8 +183,8 @@ function createResponseChannel() {
     }
     if (event.type === 'sources') responseSources.value = event.sources || []
     if (event.type === 'editProposal') responseProposal.value = event.proposal
-    if (event.type === 'error') { error.value = event.message || '模型请求失败'; streamingText.value = ''; busy.value = false; pendingApproval.value = null; activeAgentChannel = null }
-    if (event.type === 'cancelled') { streamingText.value = ''; busy.value = false; pendingApproval.value = null; activeAgentChannel = null }
+    if (event.type === 'error') { error.value = event.message || '模型请求失败'; streamingText.value = ''; busy.value = false; pendingApproval.value = null }
+    if (event.type === 'cancelled') { streamingText.value = ''; busy.value = false; pendingApproval.value = null }
     if (event.type === 'completed') { if (!streamingText.value && event.content) streamingText.value = event.content; await completeResponse() }
   }
   return channel
@@ -197,15 +196,16 @@ async function decideApproval(decision) {
   error.value = ''
   approvalError.value = ''
   approvalBusy.value = true
-  const channel = activeAgentChannel || createResponseChannel()
-  activeAgentChannel = channel
+  // A Tauri Channel is closed when the worker that emitted ApprovalRequired
+  // returns. Every resume starts a new worker and therefore needs a new channel.
+  const channel = createResponseChannel()
   const segment = agentSegments.value.find(item => item.id === approval.toolCallId)
   if (segment) segment.status = decision === 'approve' ? 'running' : 'rejected'
   try {
     await invoke('agent_resume', { request: { runId: approval.runId, toolCallId: approval.toolCallId, approvalHash: approval.approvalHash, decision, reason: decision === 'reject' ? '用户拒绝执行此操作' : null }, onEvent: channel })
     if (pendingApproval.value?.toolCallId === approval.toolCallId) pendingApproval.value = null
   } catch (cause) {
-    approvalError.value = cause?.message || cause?.code || '审批回传失败'
+    approvalError.value = (typeof cause === 'string' && cause.trim()) ? cause : cause?.message || cause?.code || '审批回传失败'
     error.value = approvalError.value
     pendingApproval.value = approval
     if (segment) segment.status = 'awaiting_approval'
@@ -247,7 +247,6 @@ async function sendMessage(value, messageReferences = references.value) {
     return
   }
   const channel = createResponseChannel()
-  if (currentMode.value === 'agent') activeAgentChannel = channel
   try {
     if (currentMode.value === 'agent') {
       await invoke('agent_invoke', { request: { requestId: requestId.value, conversationId: conversationId.value, message, references: contextAllowed ? messageReferenceCopies : [], modelProfileId: selectedModel.value?.id || null, thinkingMode: thinkingMode.value }, onEvent: channel })
@@ -269,7 +268,6 @@ async function stop() {
   busy.value = false
   streamingText.value = ''
   pendingApproval.value = null
-  activeAgentChannel = null
 }
 function goBack() { router.push('/') }
 function newChat() {
@@ -284,7 +282,6 @@ function newChat() {
   agentSegments.value = []
   currentAgentRunId.value = ''
   pendingApproval.value = null
-  activeAgentChannel = null
   router.replace({ path: '/chat', query: fromHome.value ? { from: 'home' } : {} })
 }
 async function toggleReferenceMenu() {
@@ -355,7 +352,6 @@ async function loadConversation(id) {
           streamingText.value = (pendingRun.steps || []).filter(step => step.kind === 'text').map(step => step.output || '').join('')
           if (pendingStep) pendingApproval.value = { runId: pendingRun.id, toolCallId: pendingStep.toolCallId, toolName: pendingStep.toolName, arguments: pendingStep.arguments || {}, approvalHash: pendingStep.approvalHash, description: `${toolLabel(pendingStep.toolName)}需要你的确认` }
           busy.value = Boolean(pendingStep)
-          activeAgentChannel = createResponseChannel()
         }
       } catch {}
     }

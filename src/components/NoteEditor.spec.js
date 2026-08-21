@@ -7,6 +7,14 @@ import { useNotesStore } from '../stores/notes'
 import NoteEditor from './NoteEditor.vue'
 import MarkdownSourceEditor from './MarkdownSourceEditor.vue'
 
+const tauriMocks = vi.hoisted(() => ({ invoke: vi.fn() }))
+vi.mock('@tauri-apps/api/core', () => ({
+  Channel: class Channel {
+    onmessage = null
+  },
+  invoke: tauriMocks.invoke
+}))
+
 if (!window.Range.prototype.getClientRects) window.Range.prototype.getClientRects = () => []
 if (!window.Range.prototype.getBoundingClientRect) window.Range.prototype.getBoundingClientRect = () => ({ left: 0, right: 0, top: 0, bottom: 0, width: 0, height: 0 })
 
@@ -49,7 +57,12 @@ async function mountEditor(activeNote = note(), extraProps = {}) {
   return wrapper
 }
 
-afterEach(() => { vi.useRealTimers(); localStorage.clear() })
+afterEach(() => {
+  vi.useRealTimers()
+  localStorage.clear()
+  tauriMocks.invoke.mockReset()
+  delete window.__TAURI_INTERNALS__
+})
 
 describe('NoteEditor article modes', () => {
   it('opens in instant editing and exposes Markdown and reading as the other primary modes', async () => {
@@ -230,6 +243,90 @@ describe('NoteEditor article modes', () => {
     expect(active.contentHtml).toContain('<h1>AI 新版</h1>')
     expect(wrapper.get('.editor-mode-trigger').text()).toContain('Markdown')
     expect(wrapper.findComponent(MarkdownSourceEditor).text()).toContain('# AI 新版')
+    wrapper.unmount()
+  })
+
+  it('replaces only the proposal selection in instant editing mode', async () => {
+    const active = note('note-ai-selection')
+    localStorage.setItem('tiny-note-browser-state', JSON.stringify({
+      notes: [active],
+      editProposals: [{
+        id: 'proposal-ai-selection',
+        noteId: active.id,
+        action: 'polish',
+        originalText: '正文',
+        replacementMarkdown: '新的正文',
+        selectionFrom: 5,
+        selectionTo: 7,
+        baseUpdatedAt: active.updatedAt,
+        status: 'draft',
+        sources: []
+      }]
+    }))
+    const wrapper = await mountEditor(active, { proposalId: 'proposal-ai-selection' })
+
+    await wrapper.get('.ai-output-action.replace').trigger('click')
+    await flushPromises()
+
+    expect(active.contentText.replace(/\s+/g, ' ')).toBe('标题 新的正文')
+    expect(active.contentMarkdown).toBe('# 标题\n\n新的正文')
+    wrapper.unmount()
+  })
+
+  it('shows and preserves the selected text in the AI writing panel', async () => {
+    window.__TAURI_INTERNALS__ = {}
+    localStorage.setItem('tiny-note-context-consent:default', 'granted')
+    tauriMocks.invoke.mockImplementation(async (command, args) => {
+      if (command === 'settings_get') return { theme: 'system', language: 'zh-CN', fimEnabled: false }
+      if (command === 'model_list' || command === 'knowledge_base_list') return []
+      if (command === 'note_update') return { ...note(), id: args.id, ...args.input }
+      return null
+    })
+    const wrapper = await mountEditor()
+    wrapper.vm.editor.commands.setTextSelection({ from: 1, to: 3 })
+    await flushPromises()
+
+    await wrapper.get('button[title="AI 写作"]').trigger('mousedown')
+    await flushPromises()
+
+    expect(wrapper.get('.tiny-note-ai-selection-text').text()).toBe('标题')
+    expect(wrapper.get('.tiny-note-ai-textarea').attributes('placeholder')).toBe('告诉 AI 如何处理这段文字…')
+
+    await wrapper.get('.editor-mode-trigger').trigger('click')
+    await wrapper.findAll('[role="menuitemradio"]')[1].trigger('click')
+    await flushPromises()
+    await wrapper.get('.tiny-note-ai-textarea').setValue('精炼这段内容')
+    await wrapper.get('.tiny-note-send-btn').trigger('click')
+    await flushPromises()
+
+    const [, payload] = tauriMocks.invoke.mock.calls.find(([command]) => command === 'note_ai_stream')
+    expect(payload.request.thinkingMode).toBe('disabled')
+    expect(payload.request.text).toBe('标题')
+    expect(payload.request.selection).toMatchObject({ from: 1, to: 3, text: '标题' })
+    expect(payload.request.autoRetrieve).toBe(false)
+    wrapper.unmount()
+  })
+
+  it('shows the backend AI error detail instead of a generic connection failure', async () => {
+    window.__TAURI_INTERNALS__ = {}
+    localStorage.setItem('tiny-note-context-consent:default', 'granted')
+    tauriMocks.invoke.mockImplementation(async (command, args) => {
+      if (command === 'settings_get') return { theme: 'system', language: 'zh-CN', fimEnabled: false }
+      if (command === 'model_list' || command === 'knowledge_base_list') return []
+      if (command === 'note_update') return { ...note(), id: args.id, ...args.input }
+      if (command === 'note_ai_stream') {
+        args.onEvent.onmessage({ type: 'error', code: 'ai_request_failed', message: 'api_key_not_configured' })
+      }
+      return null
+    })
+    const wrapper = await mountEditor()
+    wrapper.vm.editor.commands.setTextSelection({ from: 1, to: 3 })
+    await flushPromises()
+
+    await wrapper.get('button[title="润色"]').trigger('mousedown')
+    await flushPromises()
+
+    expect(wrapper.get('.ai-output-content').text()).toContain('当前模型还没有配置 API Key')
     wrapper.unmount()
   })
 

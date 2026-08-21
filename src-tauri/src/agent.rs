@@ -577,6 +577,27 @@ fn clear_cancel_if_current(state: &AppState, request_id: &str, cancel: &Arc<Atom
     }
 }
 
+fn reserve_cancel_slot(
+    state: &AppState,
+    request_id: &str,
+    cancel: Arc<AtomicBool>,
+) -> Result<(), AppError> {
+    let mut values = state
+        .cancels
+        .lock()
+        .map_err(|_| AppError::db("cancel lock poisoned"))?;
+    match values.entry(request_id.to_string()) {
+        std::collections::hash_map::Entry::Vacant(slot) => {
+            slot.insert(cancel);
+            Ok(())
+        }
+        std::collections::hash_map::Entry::Occupied(_) => Err(AppError::invalid(
+            "duplicate_request_id",
+            "Request is already active",
+        )),
+    }
+}
+
 #[tauri::command]
 pub fn agent_invoke(
     state: State<'_, AppState>,
@@ -593,17 +614,7 @@ pub fn agent_invoke(
         ));
     }
     let cancel = Arc::new(AtomicBool::new(false));
-    let previous = state
-        .cancels
-        .lock()
-        .map_err(|_| AppError::db("cancel lock poisoned"))?
-        .insert(request.request_id.clone(), cancel.clone());
-    if previous.is_some() {
-        return Err(AppError::invalid(
-            "duplicate_request_id",
-            "Request is already active",
-        ));
-    }
+    reserve_cancel_slot(state.inner(), &request.request_id, cancel.clone())?;
     let state_for_task = state.inner().clone();
     thread::spawn(move || {
         let request_id = request.request_id.clone();
@@ -674,17 +685,7 @@ pub fn agent_resume(
     }
     let (descriptor, continuation) = load_continuation_for_resume(&state, &request)?;
     let cancel = Arc::new(AtomicBool::new(false));
-    let previous = state
-        .cancels
-        .lock()
-        .map_err(|_| AppError::db("cancel lock poisoned"))?
-        .insert(descriptor.request_id.clone(), cancel.clone());
-    if previous.is_some() {
-        return Err(AppError::invalid(
-            "duplicate_request_id",
-            "Request is already active",
-        ));
-    }
+    reserve_cancel_slot(state.inner(), &descriptor.request_id, cancel.clone())?;
     let state_for_task = state.inner().clone();
     thread::spawn(move || {
         let request_id = descriptor.request_id.clone();
@@ -828,7 +829,7 @@ async fn drive_agent(
     };
     let current_iteration = load_iteration(state, &descriptor.run_id)
         .map_err(|_| fail("agent_store_failed", "无法读取 Agent 状态"))?;
-    if process_pending_calls(state, &descriptor, &mut continuation, on_event)
+    if process_pending_calls(state, &descriptor, &mut continuation, on_event, &cancel)
         .map_err(|message| fail("tool_execution_failed", &message))?
     {
         return Ok(());
@@ -940,7 +941,7 @@ async fn drive_agent(
         continuation.pending_calls = pending_calls;
         save_continuation(state, &descriptor.run_id, &continuation)
             .map_err(|_| fail("agent_store_failed", "无法保存 Agent 状态"))?;
-        if process_pending_calls(state, &descriptor, &mut continuation, on_event)
+        if process_pending_calls(state, &descriptor, &mut continuation, on_event, &cancel)
             .map_err(|message| fail("tool_execution_failed", &message))?
         {
             return Ok(());
@@ -1027,6 +1028,7 @@ fn process_pending_calls(
     descriptor: &RunDescriptor,
     continuation: &mut ContinuationState,
     on_event: &Channel<AgentEvent>,
+    cancel: &Arc<AtomicBool>,
 ) -> Result<bool, String> {
     while let Some(call) = continuation.pending_calls.first().cloned() {
         let arguments = parse_tool_arguments(&call);
@@ -1060,11 +1062,17 @@ fn process_pending_calls(
             // The current worker stops after emitting ApprovalRequired. Release its
             // request slot before the UI can call agent_resume, otherwise a fast
             // approval races the worker cleanup and is rejected as a duplicate.
-            state
+            let mut cancels = state
                 .cancels
                 .lock()
-                .map_err(|_| "无法释放待审批请求".to_string())?
-                .remove(&descriptor.request_id);
+                .map_err(|_| "无法释放待审批请求".to_string())?;
+            let is_current = cancels
+                .get(&descriptor.request_id)
+                .is_some_and(|current| Arc::ptr_eq(current, cancel));
+            if is_current {
+                cancels.remove(&descriptor.request_id);
+            }
+            drop(cancels);
             let _ = on_event.send(AgentEvent::ApprovalRequired {
                 request_id: descriptor.request_id.clone(),
                 run_id: descriptor.run_id.clone(),
@@ -2138,6 +2146,26 @@ mod tests {
 
         clear_cancel_if_current(&state, "request-1", &resumed);
         assert!(!state.cancels.lock().unwrap().contains_key("request-1"));
+    }
+
+    #[test]
+    fn duplicate_request_does_not_replace_active_cancel_token() {
+        let state = test_state();
+        let active = Arc::new(AtomicBool::new(false));
+        let duplicate = Arc::new(AtomicBool::new(false));
+
+        reserve_cancel_slot(&state, "request-1", active.clone()).unwrap();
+        let error = reserve_cancel_slot(&state, "request-1", duplicate).unwrap_err();
+        let code = match error {
+            AppError::InvalidInput { code, .. } => code,
+            other => panic!("unexpected error: {other:?}"),
+        };
+        assert_eq!(code, "duplicate_request_id");
+
+        let stored = state.cancels.lock().unwrap().get("request-1").cloned();
+        assert!(stored
+            .as_ref()
+            .is_some_and(|current| Arc::ptr_eq(current, &active)));
     }
 
     #[test]

@@ -2272,13 +2272,25 @@ pub mod commands {
             if let Err(message) = result {
                 let _ = on_event.send(AiEvent::Error {
                     request_id: id.clone(),
-                    code: "ai_request_failed".into(),
+                    code: ai_error_code(&message).into(),
                     message,
                 });
             }
             let _ = cancels.lock().map(|mut m| m.remove(&id));
         });
         Ok(())
+    }
+
+    pub(super) fn ai_error_code(error: &str) -> &str {
+        if !error.is_empty()
+            && error
+                .bytes()
+                .all(|byte| byte.is_ascii_lowercase() || byte.is_ascii_digit() || byte == b'_')
+        {
+            error
+        } else {
+            "ai_request_failed"
+        }
     }
 
     fn usage_i64(value: Option<&serde_json::Value>) -> i64 {
@@ -2306,6 +2318,72 @@ pub mod commands {
             "generate_table" => "Organize the selected text into a concise Markdown table. Do not add unsupported facts.",
             _ => "Perform the requested writing action while preserving the source meaning and factual content.",
         }
+    }
+
+    pub(super) fn build_ai_request_body(
+        model: &str,
+        provider: &str,
+        prompt: &str,
+        thinking_mode: Option<&str>,
+    ) -> serde_json::Value {
+        let mut body = serde_json::json!({
+            "model": model,
+            "stream": true,
+            "stream_options": { "include_usage": true },
+            "messages": [
+                { "role": "system", "content": "You are Tiny Note writing assistant." },
+                { "role": "user", "content": prompt }
+            ]
+        });
+        let thinking_type = match thinking_mode {
+            Some("deep") => Some("enabled"),
+            Some("fast" | "disabled") => Some("disabled"),
+            _ => None,
+        };
+        let provider = provider.to_lowercase();
+        if let Some(thinking_type) = thinking_type {
+            if provider.contains("qwen") || provider.contains("千问") {
+                body["enable_thinking"] = serde_json::json!(thinking_type == "enabled");
+            } else if ["deepseek", "zhipu", "智谱", "kimi", "doubao", "豆包"]
+                .iter()
+                .any(|name| provider.contains(name))
+            {
+                body["thinking"] = serde_json::json!({ "type": thinking_type });
+            }
+        }
+        body
+    }
+
+    pub(super) fn build_ai_context(
+        note_context: &str,
+        request_text: &str,
+        selected_text: Option<&str>,
+        retrieved_context: &str,
+    ) -> String {
+        let mut sections = Vec::new();
+        if let Some(selection) = selected_text.filter(|text| !text.trim().is_empty()) {
+            sections.push(format!(
+                "Selected text to process (the only rewrite target):\n{}",
+                selection.trim()
+            ));
+        } else {
+            if !request_text.trim().is_empty() {
+                sections.push(format!("Text to process:\n{}", request_text.trim()));
+            }
+            if !note_context.trim().is_empty() {
+                sections.push(format!(
+                    "Current note (reference only; do not rewrite the whole note):\n{}",
+                    note_context.trim()
+                ));
+            }
+            if !retrieved_context.trim().is_empty() {
+                sections.push(format!(
+                    "Retrieved context (reference only):\n{}",
+                    retrieved_context.trim()
+                ));
+            }
+        }
+        sections.join("\n\n---\n\n")
     }
 
     fn record_usage(
@@ -2466,15 +2544,19 @@ pub mod commands {
         } else {
             String::new()
         };
-        let bounded_context = [target_context, request.text.clone(), source_context]
-            .into_iter()
-            .filter(|value| !value.trim().is_empty())
-            .collect::<Vec<_>>()
-            .join("\n\n---\n\n");
+        let bounded_context = build_ai_context(
+            &target_context,
+            &request.text,
+            request
+                .selection
+                .as_ref()
+                .map(|selection| selection.text.as_str()),
+            &source_context,
+        );
         let action_instruction = writing_action_instruction(&request.action);
         let prompt = if request.mode.as_deref() == Some("edit") {
             format!(
-                "User instruction: {}\nWriting action: {}\n{}\nReturn only the complete proposed replacement in Markdown, without commentary.\n\n{}",
+                "User instruction: {}\nWriting action: {}\n{}\nRewrite only the explicitly marked text to process. Treat the current note and retrieved context as reference only. Return only the complete proposed replacement in Markdown, without commentary.\n\n{}",
                 request.instruction.clone().unwrap_or_default(), action_instruction, thinking_hint, bounded_context
             )
         } else if request.action == "custom" {
@@ -2486,11 +2568,12 @@ pub mod commands {
             )
         } else {
             format!(
-                "{}\n{}\nReturn only the proposed replacement in Markdown, without commentary.\n\n{}",
+                "{}\n{}\nApply the instruction only to the explicitly marked text to process. Treat the current note and retrieved context as reference only. Return only the result in Markdown, without commentary.\n\n{}",
                 thinking_hint, action_instruction, bounded_context
             )
         };
-        let body = serde_json::json!({ "model": model, "stream": true, "stream_options": { "include_usage": true }, "messages": [{"role":"system","content":"You are Tiny Note writing assistant."},{"role":"user","content":prompt}] });
+        let body =
+            build_ai_request_body(&model, &provider, &prompt, request.thinking_mode.as_deref());
         let response = reqwest::Client::new()
             .post(endpoint)
             .bearer_auth(key)
@@ -3131,6 +3214,51 @@ mod tests {
         assert!(expand.contains("do not invent facts"));
         assert!(polish.contains("clarity, flow, wording"));
         assert_ne!(expand, polish);
+    }
+    #[test]
+    fn quick_note_ai_disables_provider_thinking() {
+        let deepseek = commands::build_ai_request_body(
+            "deepseek-v4-flash",
+            "DeepSeek",
+            "prompt",
+            Some("disabled"),
+        );
+        assert_eq!(deepseek["thinking"]["type"], "disabled");
+
+        let qwen = commands::build_ai_request_body("qwen-plus", "Qwen", "prompt", Some("disabled"));
+        assert_eq!(qwen["enable_thinking"], false);
+    }
+    #[test]
+    fn writing_context_sends_only_the_selection_when_present() {
+        let context = commands::build_ai_context(
+            "整篇笔记包含选中文字和其他段落",
+            "旧的请求文本",
+            Some("具体选中文字"),
+            "[1] 检索参考",
+        );
+        assert_eq!(
+            context,
+            "Selected text to process (the only rewrite target):\n具体选中文字"
+        );
+    }
+    #[test]
+    fn writing_context_keeps_note_context_without_a_selection() {
+        let context = commands::build_ai_context("整篇笔记", "整篇笔记", None, "[1] 检索参考");
+        assert!(context.contains("Text to process:\n整篇笔记"));
+        assert!(context
+            .contains("Current note (reference only; do not rewrite the whole note):\n整篇笔记"));
+        assert!(context.contains("Retrieved context (reference only):\n[1] 检索参考"));
+    }
+    #[test]
+    fn ai_error_codes_preserve_known_failures() {
+        assert_eq!(
+            commands::ai_error_code("api_key_not_configured"),
+            "api_key_not_configured"
+        );
+        assert_eq!(
+            commands::ai_error_code("unexpected provider response"),
+            "ai_request_failed"
+        );
     }
     #[test]
     fn memory_files_are_allowlisted() {

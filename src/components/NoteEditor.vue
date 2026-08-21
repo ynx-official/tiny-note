@@ -30,7 +30,7 @@ import { DEFAULT_NOTE_MODE, NOTE_MODES, applyMarkdownSourceToEditor, clampSplitR
 
 const lowlight = createLowlight()
 lowlight.register('javascript', javascript); lowlight.register('typescript', typescript); lowlight.register('python', python); lowlight.register('json', json); lowlight.register('html', xml); lowlight.register('xml', xml); lowlight.register('css', css); lowlight.register('bash', bash); lowlight.register('sql', sql); lowlight.register('markdown', markdown); lowlight.register('yaml', yaml); lowlight.register('rust', rust)
-const props = defineProps({ note: Object, tocVisible: { type: Boolean, default: false }, proposalId: { type: String, default: '' } }); const emit = defineEmits(['deleted', 'toggle-toc', 'proposal-reviewed']); const store = useNotesStore(); const library = useLibraryStore(); const appStore = useAppStore(); const { t } = useI18n(); const aiBusy = ref(false); const aiText = ref(''); const aiRequestId = ref(''); const aiAction = ref('summarize'); const aiResultAction = ref(''); const aiProposal = ref(null); const aiSources = ref([]); const aiConsentOpen = ref(false); const assistantOpen = ref(false); const assistantBusy = ref(false); const assistantRequestId = ref(''); const assistantStreamingText = ref(''); const assistantMessages = ref([]); const assistantSelection = ref(null); const assistantResponseSources = ref([]); const assistantResponseProposal = ref(null); const aiPanelOpen = ref(false); const commandMenuOpen = ref(false); const aiPrompt = ref(''); const aiInputRef = ref(null); const commandMenuDirection = ref('down'); const moreOpen = ref(false); const revisionsOpen = ref(false); const revisions = ref([]); const revisionsBusy = ref(false); const insertOpen = ref(false); const tablePickerOpen = ref(false); const textColorOpen = ref(false); const highlightOpen = ref(false); const headingOpen = ref(false); const knowledgeMenuOpen = ref(false); const imageDialogOpen = ref(false); const imageUrl = ref(''); const imageAlt = ref(''); const imageInput = ref(null); const tableRows = ref(0); const tableCols = ref(0); const fimEnabled = computed(() => appStore.settings.fimEnabled === true); const fimSuggestion = ref(''); const editorStateTick = ref(0); let fimTimer; let savedSelection = null; let pendingAiRequest = null
+const props = defineProps({ note: Object, tocVisible: { type: Boolean, default: false }, proposalId: { type: String, default: '' } }); const emit = defineEmits(['deleted', 'toggle-toc', 'proposal-reviewed']); const store = useNotesStore(); const library = useLibraryStore(); const appStore = useAppStore(); const { t } = useI18n(); const aiBusy = ref(false); const aiText = ref(''); const aiRequestId = ref(''); const aiAction = ref('summarize'); const aiResultAction = ref(''); const aiProposal = ref(null); const aiSources = ref([]); const aiConsentOpen = ref(false); const assistantOpen = ref(false); const assistantBusy = ref(false); const assistantRequestId = ref(''); const assistantStreamingText = ref(''); const assistantMessages = ref([]); const assistantSelection = ref(null); const assistantResponseSources = ref([]); const assistantResponseProposal = ref(null); const aiPanelOpen = ref(false); const aiPanelSelectionText = ref(''); const commandMenuOpen = ref(false); const aiPrompt = ref(''); const aiInputRef = ref(null); const commandMenuDirection = ref('down'); const moreOpen = ref(false); const revisionsOpen = ref(false); const revisions = ref([]); const revisionsBusy = ref(false); const insertOpen = ref(false); const tablePickerOpen = ref(false); const textColorOpen = ref(false); const highlightOpen = ref(false); const headingOpen = ref(false); const knowledgeMenuOpen = ref(false); const imageDialogOpen = ref(false); const imageUrl = ref(''); const imageAlt = ref(''); const imageInput = ref(null); const tableRows = ref(0); const tableCols = ref(0); const fimEnabled = computed(() => appStore.settings.fimEnabled === true); const fimSuggestion = ref(''); const editorStateTick = ref(0); let fimTimer; let savedSelection = null; let pendingAiRequest = null
 const modeIcons = { rich: PenLine, markdown: FileCode2, read: Eye }
 const editorModes = NOTE_MODES.map(mode => ({ ...mode, icon: modeIcons[mode.id] }))
 const editorMode = ref(DEFAULT_NOTE_MODE)
@@ -63,6 +63,9 @@ const splitMode = computed(() => codeMode.value && markdownPreview.value)
 const splitPaneStyle = computed(() => splitVertical.value ? { height: `${splitRatio.value}%` } : { width: `${splitRatio.value}%` })
 const aiActionLabels = { interpret: '解读', refine: '精炼', polish: '润色', expand: '扩写', translate: '翻译', summarize: '总结', continue_write: '续写', fix_grammar: '语法修正', generate_plan: '生成任务计划', generate_table: '生成表格', custom: 'AI 写作' }
 const aiErrorMessages = { model_profile_unavailable: '还没有配置可用模型，请先打开设置完成配置。', api_key_not_configured: '当前模型还没有配置 API Key，请先打开设置完成配置。', credential_store_unavailable: '系统凭据存储不可用，暂时无法调用 AI。', provider_request_failed: '模型服务请求失败，请检查模型地址和网络连接。', provider_stream_failed: '模型服务连接中断，请稍后重试。' }
+function aiEventErrorMessage(event) {
+  return aiErrorMessages[event?.code] || aiErrorMessages[event?.message] || event?.message || '请求未完成，请稍后重试。'
+}
 const contextConsentModelId = computed(() => appStore.defaultModel?.id || 'default')
 const aiFeedback = ref('')
 const aiCharCount = computed(() => aiText.value.replace(/\s/g, '').length)
@@ -490,7 +493,7 @@ async function runAi(action = aiAction.value, requestText = null, instruction = 
     return
   }
   if (!await flushLatestContent()) return
-  if (requestText == null || editorMode.value !== 'rich') requestText = props.note.contentText || ''
+  if (requestText == null) requestText = props.note.contentText || ''
   const actionLabel = aiActionLabels[action] || 'AI 写作'
   aiBusy.value = true
   aiText.value = `正在生成${actionLabel}…`
@@ -517,14 +520,14 @@ async function runAi(action = aiAction.value, requestText = null, instruction = 
     if (event.type === 'sources') aiSources.value = event.sources || []
     if (event.type === 'editProposal') aiProposal.value = event.proposal
     if (event.type === 'error') {
-      aiText.value = `${actionLabel}失败：${aiErrorMessages[event.code] || '请求未完成，请稍后重试。'}`
+      aiText.value = `${actionLabel}失败：${aiEventErrorMessage(event)}`
       aiBusy.value = false
     }
     if (event.type === 'cancelled') { aiText.value = '已停止生成。'; aiBusy.value = false }
     if (event.type === 'completed') aiBusy.value = false
   }
   const selection = savedSelection ? { ...savedSelection, text: editor.value?.state.doc.textBetween(savedSelection.from, savedSelection.to, '\n') || requestText } : null
-  try { await (await import('../services/tauri')).invoke('note_ai_stream', { request: { requestId: aiRequestId.value, action, mode: action === 'interpret' ? 'chat' : 'edit', text: requestText, instruction, targetNoteId: props.note.id, selection, autoRetrieve: true, modelProfileId: null }, onEvent: channel }) } catch { aiText.value = 'AI 请求失败，请检查模型设置。'; aiBusy.value = false }
+  try { await (await import('../services/tauri')).invoke('note_ai_stream', { request: { requestId: aiRequestId.value, action, mode: action === 'interpret' ? 'chat' : 'edit', text: requestText, instruction, targetNoteId: props.note.id, selection, autoRetrieve: !selection, modelProfileId: null, thinkingMode: 'disabled' }, onEvent: channel }) } catch { aiText.value = 'AI 请求失败，请检查模型设置。'; aiBusy.value = false }
 }
 function captureAssistantSelection() {
   const instance = editor.value
@@ -592,7 +595,7 @@ async function sendAssistantMessage(prompt) {
     if (event.type === 'sources') assistantResponseSources.value = event.sources || []
     if (event.type === 'editProposal') assistantResponseProposal.value = event.proposal
     if (event.type === 'error') {
-      pushAssistantResponse(`请求失败：${aiErrorMessages[event.code] || '请求未完成，请稍后重试。'}`)
+      pushAssistantResponse(`请求失败：${aiEventErrorMessage(event)}`)
       assistantStreamingText.value = ''
       assistantBusy.value = false
     }
@@ -644,9 +647,16 @@ async function applyAiResult(mode) {
   const beforeMarkdown = props.note.contentMarkdown || getEditorMarkdown()
   const beforeDraft = markdownDraft.value
   if (mode === 'replace') {
-    markdownDraft.value = aiText.value
-    sourceDirty.value = true
-    if (!commitMarkdown(props.note, { schedule: false })) return
+    const selectionFrom = aiProposal.value.selectionFrom
+    const selectionTo = aiProposal.value.selectionTo
+    const hasProposalSelection = Number.isInteger(selectionFrom) && Number.isInteger(selectionTo) && selectionFrom < selectionTo
+    if (hasProposalSelection) {
+      editor.value.chain().focus().setTextSelection({ from: selectionFrom, to: selectionTo }).insertContent(aiText.value, { contentType: 'markdown' }).run()
+    } else {
+      markdownDraft.value = aiText.value
+      sourceDirty.value = true
+      if (!commitMarkdown(props.note, { schedule: false })) return
+    }
   } else {
     const chain = editor.value.chain().focus()
     if (savedSelection) chain.setTextSelection(savedSelection.to)
@@ -723,7 +733,7 @@ function rewriteAi() {
 }
 async function copySelection() { if (selectedText.value) await navigator.clipboard?.writeText(selectedText.value) }
 function saveCurrentSelection() { const selection = editor.value?.state.selection; if (selection && !selection.empty) savedSelection = { from: selection.from, to: selection.to } }
-function closeAiPanel() { aiPanelOpen.value = false; commandMenuOpen.value = false; aiPrompt.value = '' }
+function closeAiPanel() { aiPanelOpen.value = false; aiPanelSelectionText.value = ''; commandMenuOpen.value = false; aiPrompt.value = '' }
 function positionCommandMenu() {
   const button = document.querySelector('.tiny-note-ai-input-wrapper .tiny-note-command-btn')
   if (!button) return
@@ -732,12 +742,12 @@ function positionCommandMenu() {
   commandMenuDirection.value = window.innerHeight - rect.bottom < menuHeight && rect.top > window.innerHeight - rect.bottom ? 'up' : 'down'
 }
 async function openAiPanel() {
-  saveCurrentSelection(); aiPanelOpen.value = true; aiPrompt.value = ''
+  saveCurrentSelection(); aiPanelSelectionText.value = selectedText.value; aiPanelOpen.value = true; aiPrompt.value = ''
   await nextTick(); aiInputRef.value?.focus(); positionCommandMenu(); commandMenuOpen.value = true
 }
 function toggleCommandMenu(event) { event.stopPropagation(); if (!commandMenuOpen.value) positionCommandMenu(); commandMenuOpen.value = !commandMenuOpen.value }
-function selectAiCommand(action) { saveCurrentSelection(); const text = selectedText.value || props.note?.contentText || ''; let instruction = null; if (action === 'translate') { const previous = localStorage.getItem('tiny-note-translation-language') || '英文'; const language = window.prompt('请输入目标语言', previous); if (!language?.trim()) return; localStorage.setItem('tiny-note-translation-language', language.trim()); instruction = `翻译为${language.trim()}` }; closeAiPanel(); runAi(action, text, instruction) }
-function sendCustomAi() { const instruction = aiPrompt.value.trim(); if (!instruction || aiBusy.value) return; saveCurrentSelection(); const text = selectedText.value || props.note?.contentText || ''; closeAiPanel(); runAi('custom', text, instruction) }
+function selectAiCommand(action) { saveCurrentSelection(); const text = aiPanelSelectionText.value || selectedText.value || props.note?.contentText || ''; let instruction = null; if (action === 'translate') { const previous = localStorage.getItem('tiny-note-translation-language') || '英文'; const language = window.prompt('请输入目标语言', previous); if (!language?.trim()) return; localStorage.setItem('tiny-note-translation-language', language.trim()); instruction = `翻译为${language.trim()}` }; closeAiPanel(); runAi(action, text, instruction) }
+function sendCustomAi() { const instruction = aiPrompt.value.trim(); if (!instruction || aiBusy.value) return; saveCurrentSelection(); const text = aiPanelSelectionText.value || selectedText.value || props.note?.contentText || ''; closeAiPanel(); runAi('custom', text, instruction) }
 function runSelectedAi(action) { const text = selectedText.value; if (!text || aiBusy.value) return; saveCurrentSelection(); runAi(action, text) }
 function openInConversation() {
   const text = selectedText.value
@@ -921,7 +931,11 @@ const title = computed({
     </div>
     <BubbleMenu v-if="editor" v-show="!aiText && richMode" :editor="editor" :options="{ duration: 120, placement: 'top', maxWidth: 'none' }" :should-show="shouldShowBubbleMenu" class="tiny-note-bubble-menu">
       <div v-if="aiPanelOpen" class="tiny-note-ai-input-wrapper" @mousedown.stop>
-        <textarea ref="aiInputRef" v-model="aiPrompt" class="tiny-note-ai-textarea" rows="1" placeholder="基于选中文本：或许你还不知道从何开始，别担心，一切都是慢慢…" @keydown.enter.exact.prevent="sendCustomAi" @keydown.esc.prevent="closeAiPanel"></textarea>
+        <div v-if="aiPanelSelectionText" class="tiny-note-ai-selection-context" role="group" aria-label="选中文本">
+          <span class="tiny-note-ai-selection-label">基于选中文本</span>
+          <p class="tiny-note-ai-selection-text">{{ aiPanelSelectionText }}</p>
+        </div>
+        <textarea ref="aiInputRef" v-model="aiPrompt" class="tiny-note-ai-textarea" rows="1" placeholder="告诉 AI 如何处理这段文字…" @keydown.enter.exact.prevent="sendCustomAi" @keydown.esc.prevent="closeAiPanel"></textarea>
         <div class="tiny-note-ai-input-actions">
           <div class="tiny-note-ai-action-left">
             <div class="tiny-note-command-dropdown">
