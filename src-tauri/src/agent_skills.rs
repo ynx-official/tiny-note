@@ -7,6 +7,7 @@ use std::{
 use tauri::State;
 
 const MAX_SKILL_CHARS: usize = 200_000;
+const LEGACY_KNOWLEDGE_RESEARCH_SKILL: &str = "---\nname: knowledge-research\ndescription: 检索并汇总 Tiny Note 本地知识，保留来源和不确定性。\n---\n\n# 知识调研\n\n当任务需要本地事实时：\n\n1. 先用 `retrieve_knowledge` 做宽检索。\n2. 必要时用 `search_notes` 和 `get_note` 补充完整上下文。\n3. 只引用工具实际返回的来源。\n4. 区分资料事实、合理推断和未知信息。\n";
 const BUILTIN_SKILLS: [(&str, &str); 2] = [
     (
         "knowledge-research",
@@ -44,7 +45,13 @@ pub fn ensure_skill_dir(state: &AppState) -> Result<PathBuf, AppError> {
         let file = dir.join("SKILL.md");
         if !file.exists() {
             fs::create_dir_all(&dir).map_err(AppError::fs)?;
-            fs::write(file, content).map_err(AppError::fs)?;
+            fs::write(&file, content).map_err(AppError::fs)?;
+        } else if name == "knowledge-research"
+            && fs::read_to_string(&file).map_err(AppError::fs)? == LEGACY_KNOWLEDGE_RESEARCH_SKILL
+        {
+            // Upgrade only the untouched built-in template. User edits made in the
+            // Agent Skills editor remain authoritative and are never overwritten.
+            fs::write(&file, content).map_err(AppError::fs)?;
         }
     }
     Ok(root)
@@ -284,6 +291,31 @@ mod tests {
             .content
             .unwrap()
             .contains("已建立索引的知识库文件"));
+    }
+
+    #[test]
+    fn upgrades_untouched_legacy_knowledge_research_skill() {
+        let state = state();
+        let skill_dir = state.data_dir.join("agent/SKILL/knowledge-research");
+        fs::create_dir_all(&skill_dir).unwrap();
+        fs::write(skill_dir.join("SKILL.md"), LEGACY_KNOWLEDGE_RESEARCH_SKILL).unwrap();
+
+        let skill = read_skill(&state, "knowledge-research").unwrap();
+
+        assert!(skill.content.unwrap().contains("已建立索引的知识库文件"));
+    }
+
+    #[test]
+    fn preserves_user_edited_builtin_skill() {
+        let state = state();
+        let skill_dir = state.data_dir.join("agent/SKILL/knowledge-research");
+        fs::create_dir_all(&skill_dir).unwrap();
+        let custom = "---\nname: knowledge-research\ndescription: 我的技能\n---\n\n# 自定义内容\n";
+        fs::write(skill_dir.join("SKILL.md"), custom).unwrap();
+
+        let skill = read_skill(&state, "knowledge-research").unwrap();
+
+        assert_eq!(skill.content.as_deref(), Some(custom));
     }
 
     #[test]

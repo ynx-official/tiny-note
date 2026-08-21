@@ -308,7 +308,24 @@ async function reviewProposal(proposalId) {
   const proposal = await invoke('note_edit_get', { proposalId })
   router.push({ path: '/notes', query: { note: proposal.noteId, proposal: proposal.id } })
 }
-async function copyMessage(content) { if (content) await navigator.clipboard?.writeText(content) }
+async function copyMessage(content) {
+  if (!content || !navigator.clipboard) return
+  const source = String(content)
+  const html = DOMPurify.sanitize(marked.parse(source, { breaks: true, gfm: true }))
+  try {
+    if (typeof ClipboardItem !== 'undefined' && navigator.clipboard.write) {
+      const clipboardItem = new ClipboardItem({
+        'text/html': new Blob([html], { type: 'text/html' }),
+        'text/plain': new Blob([source], { type: 'text/plain' })
+      })
+      await navigator.clipboard.write([clipboardItem])
+    } else {
+      await navigator.clipboard.writeText(source)
+    }
+  } catch {
+    await navigator.clipboard.writeText(source)
+  }
+}
 
 async function loadConversation(id) {
   if (!id || id === conversationId.value) return

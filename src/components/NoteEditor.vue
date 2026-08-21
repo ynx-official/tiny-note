@@ -73,6 +73,17 @@ const aiDialogStyle = computed(() => {
 })
 let aiDragState = null
 const refreshEditorState = () => { editorStateTick.value += 1 }
+function looksLikeMarkdown(text) {
+  return /(^|\n)\s{0,3}(#{1,6}\s|[-*+]\s|\d+\.\s|>\s|```|~~~)/m.test(text) ||
+    /(?:\*\*[^*]+\*\*|__[^_]+__|`[^`]+`|!?\[[^\]]+\]\([^)]+\)|^\s*\|.+\|\s*$)/m.test(text)
+}
+function handleMarkdownPaste(view, event) {
+  if (!richMode.value || !event.clipboardData) return false
+  const text = event.clipboardData.getData('text/plain')
+  if (!text || !looksLikeMarkdown(text) || !editor.value) return false
+  event.preventDefault()
+  return editor.value.commands.insertContent(text, { contentType: 'markdown' })
+}
 const editor = useEditor({
   content: props.note?.contentHtml || '<p></p>',
   extensions: createNoteExtensions({
@@ -80,7 +91,7 @@ const editor = useEditor({
     codeBlockNodeView: VueNodeViewRenderer(CodeBlockComponent),
     placeholder: '写下此刻的想法…'
   }),
-  editorProps: { attributes: { class: 'note-prose' } },
+  editorProps: { attributes: { class: 'note-prose' }, handlePaste: handleMarkdownPaste },
   onTransaction: refreshEditorState,
   onSelectionUpdate: refreshEditorState,
   onUpdate: ({ editor: instance }) => handleRichEditorUpdate(instance)

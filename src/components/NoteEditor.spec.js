@@ -207,4 +207,31 @@ describe('NoteEditor article modes', () => {
     expect(legacy.contentMarkdown).toContain('补充')
     wrapper.unmount()
   })
+
+  it('renders Markdown pasted into the rich editor', async () => {
+    const wrapper = await mountEditor()
+    await wrapper.get('.note-prose').trigger('paste', {
+      clipboardData: {
+        getData: type => type === 'text/plain' ? '# 粘贴标题\n\n**加粗内容**' : ''
+      },
+    })
+    await flushPromises()
+    expect(wrapper.get('.note-prose').element.innerHTML).toContain('<h1>粘贴标题</h1>')
+    expect(wrapper.get('.note-prose').element.innerHTML).toContain('<strong>加粗内容</strong>')
+    wrapper.unmount()
+  })
+
+  it('prefers Markdown from a clipboard that also contains HTML', async () => {
+    const wrapper = await mountEditor()
+    await wrapper.get('.note-prose').trigger('paste', {
+      clipboardData: {
+        getData: type => type === 'text/plain' ? '## 剪贴板标题\n\n- 第一项\n- 第二项' : '<p>## 剪贴板标题</p>'
+      }
+    })
+    await flushPromises()
+    const html = wrapper.get('.note-prose').element.innerHTML
+    expect(html).toContain('<h2>剪贴板标题</h2>')
+    expect(html).toContain('<li><p>第一项</p></li>')
+    wrapper.unmount()
+  })
 })
