@@ -72,6 +72,37 @@ export function markdownToEditorHtml(text = '') {
   return fixEmptyTableCells(marked.parse(preprocessMarkdownTables(text), editorMarkedOptions))
 }
 
+/**
+ * Renders a Markdown draft without treating normal editing intermediates as fatal.
+ * TipTap's strict Markdown parser rejects empty documents and empty containers
+ * such as `1. ` or `> `. The sanitized HTML fallback keeps the preview usable
+ * while the untouched Markdown string remains the source of truth.
+ */
+export function applyMarkdownSourceToEditor(editor, source = '') {
+  if (!editor?.commands?.setContent) return false
+
+  try {
+    const applied = editor.commands.setContent(String(source), {
+      contentType: 'markdown',
+      emitUpdate: false,
+      errorOnInvalidContent: true
+    })
+    if (applied) return true
+  } catch {
+    // Continue with the forgiving preview parser below.
+  }
+
+  try {
+    const safeHtml = sanitizeEditorHtml(markdownToEditorHtml(source))
+    return editor.commands.setContent(safeHtml || '<p></p>', {
+      emitUpdate: false,
+      errorOnInvalidContent: false
+    }) !== false
+  } catch {
+    return false
+  }
+}
+
 export function safeColorValue(value) {
   const normalized = String(value || '').trim()
   return colorValuePattern.test(normalized) ? normalized : ''

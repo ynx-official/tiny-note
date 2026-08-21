@@ -26,7 +26,7 @@ import { useLibraryStore } from '../stores/library'
 import { useAppStore } from '../stores/app'
 import { useI18n } from 'vue-i18n'
 import { createNoteExtensions } from '../editor/noteExtensions'
-import { DEFAULT_NOTE_MODE, NOTE_MODES, clampSplitRatio, isRichClipboardHtml, markdownToEditorHtml, sanitizeEditorHtml, scrollOffset, scrollProgress } from '../utils/noteMarkdown'
+import { DEFAULT_NOTE_MODE, NOTE_MODES, applyMarkdownSourceToEditor, clampSplitRatio, isRichClipboardHtml, markdownToEditorHtml, sanitizeEditorHtml, scrollOffset, scrollProgress } from '../utils/noteMarkdown'
 
 const lowlight = createLowlight()
 lowlight.register('javascript', javascript); lowlight.register('typescript', typescript); lowlight.register('python', python); lowlight.register('json', json); lowlight.register('html', xml); lowlight.register('xml', xml); lowlight.register('css', css); lowlight.register('bash', bash); lowlight.register('sql', sql); lowlight.register('markdown', markdown); lowlight.register('yaml', yaml); lowlight.register('rust', rust)
@@ -200,34 +200,38 @@ function deriveMarkdown(note = props.note) {
 }
 
 function commitMarkdown(note = props.note, { schedule = true } = {}) {
-  if (!note || !editor.value || !sourceDirty.value) return !markdownParseError.value
+  if (!note || !editor.value || !sourceDirty.value) return true
   const source = markdownDraft.value
   const fallbackHtml = note.contentHtml || '<p></p>'
   applyingEditorContent = true
+  let previewApplied = false
   try {
-    const applied = editor.value.commands.setContent(source, {
-      contentType: 'markdown',
-      emitUpdate: false,
-      errorOnInvalidContent: true
-    })
-    if (!applied) throw new Error('Markdown content was rejected')
-    const safeHtml = sanitizeEditorHtml(editor.value.getHTML())
-    if (safeHtml !== editor.value.getHTML()) {
-      editor.value.commands.setContent(safeHtml || '<p></p>', { emitUpdate: false, errorOnInvalidContent: true })
+    previewApplied = applyMarkdownSourceToEditor(editor.value, source)
+    if (previewApplied) {
+      const editorHtml = editor.value.getHTML()
+      const safeHtml = sanitizeEditorHtml(editorHtml)
+      if (safeHtml !== editorHtml) {
+        editor.value.commands.setContent(safeHtml || '<p></p>', { emitUpdate: false })
+      }
+      note.contentHtml = sanitizeEditorHtml(editor.value.getHTML())
+      note.contentText = editor.value.getText()
+    } else {
+      editor.value.commands.setContent(fallbackHtml, { emitUpdate: false })
     }
     note.contentMarkdown = source
-    note.contentHtml = sanitizeEditorHtml(editor.value.getHTML())
-    note.contentText = editor.value.getText()
     sourceDirty.value = false
-    markdownParseError.value = ''
+    markdownParseError.value = previewApplied ? '' : '预览暂未更新，源码已保存'
     pendingSourceDrafts.delete(note.id)
     if (schedule) scheduleNoteSave(note)
     return true
   } catch {
-    pendingSourceDrafts.set(note.id, source)
-    markdownParseError.value = '源码解析失败，尚未保存'
+    note.contentMarkdown = source
+    sourceDirty.value = false
+    pendingSourceDrafts.delete(note.id)
+    markdownParseError.value = '预览暂未更新，源码已保存'
     try { editor.value.commands.setContent(fallbackHtml, { emitUpdate: false }) } catch {}
-    return false
+    if (schedule) scheduleNoteSave(note)
+    return true
   } finally {
     applyingEditorContent = false
   }
@@ -264,7 +268,7 @@ function resetEditorSession(note) {
   applyingEditorContent = false
   editor.value?.setEditable(editorMode.value === 'rich', false)
   markdownDraft.value = deriveMarkdown(note)
-  if (sourceDirty.value) markdownParseError.value = '源码解析失败，尚未保存'
+  if (sourceDirty.value) markdownParseError.value = '预览正在等待刷新，源码草稿仍保留'
   if (note) persistedSignatures.set(note.id, noteContentSignature(note))
 }
 

@@ -1,5 +1,6 @@
 import { Editor } from '@tiptap/core'
 import { afterEach, describe, expect, it } from 'vitest'
+import { applyMarkdownSourceToEditor } from '../utils/noteMarkdown'
 import { createNoteExtensions } from './noteExtensions'
 
 const editors = []
@@ -109,7 +110,11 @@ describe('Tiny Note Markdown conversion', () => {
       '| 名称 | 状态 |\n| --- | --- |\n| Tiny Note | 可用 |'
     ]
     const editor = createEditor()
-    const drafts = ['', ' ', '\n', '\n\n', '\t']
+    const drafts = [
+      '', ' ', '\n', '\n\n', '\t',
+      '#', '# ', '## ', '-', '- ', '*', '* ', '+', '+ ', '1.', '1. ',
+      '>', '> ', '```', '```js', '[', '[文字](', '![', '|', '| '
+    ]
 
     for (const source of sources) {
       for (let length = 0; length <= source.length; length += 1) {
@@ -118,18 +123,7 @@ describe('Tiny Note Markdown conversion', () => {
       for (let index = 0; index < source.length; index += 1) drafts.push(source.slice(0, index) + source.slice(index + 1))
     }
 
-    const failures = drafts.filter(draft => {
-      try {
-        editor.commands.setContent(draft, {
-          contentType: 'markdown',
-          emitUpdate: false,
-          errorOnInvalidContent: true
-        })
-        return false
-      } catch {
-        return true
-      }
-    })
+    const failures = drafts.filter(draft => !applyMarkdownSourceToEditor(editor, draft))
 
     expect([...new Set(failures.map(JSON.stringify))]).toEqual([])
   })

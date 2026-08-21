@@ -12,6 +12,7 @@
 - Given 首次打开文章编辑器，When 未主动选择模式，Then 文章处于即时编辑；选择 Markdown 后切换文章仍保持 Markdown 和当前预览布局。
 - Given 使用即时编辑，When 输入 `# ` 等 Markdown 快捷语法或粘贴 Markdown，Then 内容立即以对应格式呈现；粘贴后可通过“查看源码”进入 Markdown。
 - Given 进入 Markdown，When 修改源码，Then 150ms 后实时预览、HTML 和纯文本同步，并在 800ms 自动保存中原样保留源码换行；切回即时编辑后呈现同一内容。
+- Given 正在 Markdown 源码中输入，When 内容短暂为空、只有 `1. ` 或只有 `> `，Then 不提示解析失败，源码仍按原文保存，后续继续输入时预览正常恢复。
 - Given Markdown 实时预览已打开，When 拖动分隔条或滚动任一栏，Then 比例始终处于 30%–70%，另一栏按滚动百分比联动；窄宽度使用上下布局；关闭预览后只显示源码。
 - Given 进入阅读模式，When 查看标题和正文，Then 两者不可修改但可选择复制，格式工具、Bubble Menu 和 FIM 不显示。
 - Given 源码包含脚本、事件属性、危险 URL 或非白名单样式，When 生成预览，Then 原始源码可保留，但持久化 HTML 不包含可执行内容。

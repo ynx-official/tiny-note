@@ -185,7 +185,7 @@ describe('NoteEditor article modes', () => {
     wrapper.unmount()
   })
 
-  it('keeps an incomplete Markdown HTML fragment editable and saved', async () => {
+  it('keeps transient Markdown structures editable and saves the exact source', async () => {
     const active = note('note-incomplete-markdown')
     localStorage.setItem('tiny-note-browser-state', JSON.stringify({ notes: [active] }))
     const wrapper = await mountEditor(active)
@@ -195,16 +195,18 @@ describe('NoteEditor article modes', () => {
     vi.useFakeTimers()
 
     const source = wrapper.findComponent(MarkdownSourceEditor)
-    const draft = '<span style="color: #dc2626">尚未闭合'
-    source.vm.view.dispatch({ changes: { from: 0, to: source.vm.view.state.doc.length, insert: draft } })
-    await vi.advanceTimersByTimeAsync(150)
+    const drafts = ['', '> ', '1. ', '最终内容']
+    for (const draft of drafts) {
+      source.vm.view.dispatch({ changes: { from: 0, to: source.vm.view.state.doc.length, insert: draft } })
+      await vi.advanceTimersByTimeAsync(150)
+      expect(active.contentMarkdown).toBe(draft)
+      expect(wrapper.find('.markdown-parse-error').exists()).toBe(false)
+    }
 
-    expect(active.contentMarkdown).toBe(draft)
-    expect(wrapper.find('.markdown-parse-error').exists()).toBe(false)
-    expect(wrapper.get('.split-preview-pane').text()).toContain('尚未闭合')
+    expect(wrapper.get('.split-preview-pane').text()).toContain('最终内容')
 
     await vi.advanceTimersByTimeAsync(800)
-    expect(JSON.parse(localStorage.getItem('tiny-note-browser-state')).notes[0].contentMarkdown).toBe(draft)
+    expect(JSON.parse(localStorage.getItem('tiny-note-browser-state')).notes[0].contentMarkdown).toBe('最终内容')
 
     vi.useRealTimers()
     wrapper.unmount()
