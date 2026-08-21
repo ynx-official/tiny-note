@@ -14,6 +14,8 @@ const toolMeta = {
   search_notes: { label: '搜索笔记', group: 'notes', permission: '只读' },
   get_note: { label: '读取笔记', group: 'notes', permission: '只读' },
   create_note: { label: '创建笔记', group: 'notes', permission: '写入' },
+  create_note_in_knowledge_base: { label: '在知识库中新建笔记', group: 'knowledge', permission: '写入' },
+  move_note_to_knowledge_base: { label: '移动笔记到其他知识库', group: 'knowledge', permission: '写入' },
   update_note: { label: '生成笔记修改提案', group: 'notes', permission: '写入' },
   delete_note: { label: '将笔记移入最近删除', group: 'notes', permission: '写入' },
   create_knowledge_base: { label: '创建知识库', group: 'knowledge', permission: '写入' },

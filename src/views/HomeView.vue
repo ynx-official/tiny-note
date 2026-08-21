@@ -181,9 +181,9 @@ onMounted(async () => {
         <div class="home-composer-actions">
           <div class="home-composer-left">
             <div class="home-mode-anchor" @click.stop>
-              <button class="home-select-button" type="button" :class="{ active: modeMenuOpen }" title="选择对话模式" @click="modeMenuOpen = !modeMenuOpen; modelMenuOpen = false; referenceMenuOpen = false"><Wrench v-if="chatMode === 'agent'" :size="16" /><MessageSquare v-else :size="16" /><span>{{ chatMode === 'agent' ? 'Agent 模式' : copy.noteMode }}</span><ChevronDown :size="13" :class="{ expanded: modeMenuOpen }" /></button>
+              <button class="home-select-button" type="button" :class="{ active: modeMenuOpen }" title="选择对话模式" @click="modeMenuOpen = !modeMenuOpen; modelMenuOpen = false; referenceMenuOpen = false"><Wrench v-if="chatMode === 'agent'" :size="16" /><MessageSquare v-else :size="16" /><span>{{ chatMode === 'agent' ? 'Tiny Agent' : copy.noteMode }}</span><ChevronDown :size="13" :class="{ expanded: modeMenuOpen }" /></button>
               <div v-if="modeMenuOpen" class="home-mode-menu">
-                <button type="button" class="home-mode-option" :class="{ active: chatMode === 'agent' }" @click="selectChatMode('agent')"><Wrench :size="15" /><span><b>Agent 模式</b><small>可自主调用工具完成任务</small></span><span v-if="chatMode === 'agent'" class="home-mode-check">✓</span></button>
+                <button type="button" class="home-mode-option" :class="{ active: chatMode === 'agent' }" @click="selectChatMode('agent')"><Wrench :size="15" /><span><b>Tiny Agent</b><small>可自主调用工具完成任务</small></span><span v-if="chatMode === 'agent'" class="home-mode-check">✓</span></button>
                 <button type="button" class="home-mode-option" :class="{ active: chatMode === 'chat' }" @click="selectChatMode('chat')"><MessageSquare :size="15" /><span><b>{{ copy.noteMode }}</b><small>进行普通对话</small></span><span v-if="chatMode === 'chat'" class="home-mode-check">✓</span></button>
               </div>
             </div>

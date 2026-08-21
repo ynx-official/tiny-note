@@ -9,4 +9,4 @@
 - 浏览器：1280×800 与 1024×700、亮/暗主题、笔记侧栏展开/折叠、全文助理开/关；检查溢出、遮挡、焦点和可读性。
 - E2E：首次启动、重启恢复、导入预览、删除恢复、模型配置和拖放。
 
-在 Windows 开发机运行 `npm run test:unit`、`npm run lint`、`npm run build`、`cargo fmt --check`、`cargo test`、`cargo clippy --all-targets --all-features -- -D warnings` 和 `npm run tauri:build`；macOS 安装包需 CI runner 证据。
+在 Windows 开发机运行 `npm run test:unit`、`npm run lint`、`npm run build`、`cargo fmt --check`、`cargo test`、`cargo clippy --all-targets --all-features -- -D warnings` 和 `npm run tauri:build`；Windows、Linux、macOS 双架构安装包需 CI runner 证据，在线升级还需从上一正式版本完成一次真实检查、下载、安装和重启验收。

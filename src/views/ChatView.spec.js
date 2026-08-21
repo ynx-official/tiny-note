@@ -149,6 +149,8 @@ describe('ChatView Agent approval', () => {
 
     expect(wrapper.get('[data-testid="agent-tool-summary"]').text()).toContain('3 个工具可用')
     expect(wrapper.get('[data-testid="agent-tool-summary"]').text()).toContain('1 个操作需审批')
+    expect(wrapper.text()).toContain('Tiny Agent')
+    expect(wrapper.find('.tiny-agent-avatar-image').exists()).toBe(true)
     wrapper.unmount()
   })
 
@@ -162,7 +164,7 @@ describe('ChatView Agent approval', () => {
       command === 'chat_add_message' && args.role === 'assistant'
     )
     expect(assistantSave?.[1]).toMatchObject({
-      content: '已停止 Agent 执行。',
+      content: '已停止 Tiny Agent 执行。',
       agentRunId: 'run-1'
     })
     expect(wrapper.text()).toContain('创建笔记')
@@ -179,7 +181,7 @@ describe('ChatView Agent approval', () => {
       command === 'chat_add_message' && args.role === 'assistant'
     )
     expect(assistantSave?.[1]).toMatchObject({
-      content: 'Agent 执行失败：工具连接中断',
+      content: 'Tiny Agent 执行失败：工具连接中断',
       agentRunId: 'run-1'
     })
     expect(wrapper.text()).toContain('创建笔记')
@@ -199,7 +201,11 @@ describe('ChatView Agent approval', () => {
       }
       if (command === 'agent_get_run') return {
         id: args.runId,
-        steps: [{ id: 'step-1', kind: 'tool', toolCallId: 'call-history', toolName: 'get_note', arguments: { noteId: 'note-1' }, output: '{"title":"项目"}', status: 'completed' }]
+        steps: [
+          { id: 'step-1', kind: 'text', arguments: {}, output: '我先读取项目笔记。', status: 'completed' },
+          { id: 'step-2', kind: 'tool', toolCallId: 'call-history', toolName: 'call_mcp_tool', arguments: { serverId: 'notes-mcp', toolName: 'read_note', arguments: { noteId: 'note-1' } }, output: '{"title":"项目"}', status: 'completed' },
+          { id: 'step-3', kind: 'text', arguments: {}, output: '读取完成，这是结果。', status: 'completed' }
+        ]
       }
       if (command === 'agent_get_pending_run') return null
       return fallbackInvoke(command, args)
@@ -211,9 +217,44 @@ describe('ChatView Agent approval', () => {
     })
     await flushPromises()
 
-    expect(wrapper.text()).toContain('读取笔记')
-    expect(wrapper.text()).toContain('已完成')
+    const events = wrapper.findAll('[data-agent-event]')
+    expect(events).toHaveLength(3)
+    expect(events.map(event => event.attributes('data-agent-event'))).toEqual(['text', 'tool', 'text'])
+    expect(events[0].get('markdown-message-stub').attributes('content')).toBe('我先读取项目笔记。')
+    expect(events[1].text()).toContain('已调用 MCP · notes-mcp / read_note')
+    expect(events[2].get('markdown-message-stub').attributes('content')).toBe('读取完成，这是结果。')
+    expect(wrapper.text()).toContain('已调用 MCP')
     expect(wrapper.text()).toContain('note-1')
+    wrapper.unmount()
+  })
+
+  it('interleaves live model text with real tool call events', async () => {
+    const fallbackInvoke = testState.invoke.getMockImplementation()
+    testState.invoke.mockImplementation(async (command, args = {}) => {
+      if (command !== 'agent_invoke') return fallbackInvoke(command, args)
+      await args.onEvent.onmessage({ type: 'started', runId: 'run-live' })
+      await args.onEvent.onmessage({ type: 'textDelta', text: '我先查询外部服务。' })
+      await args.onEvent.onmessage({ type: 'toolCall', toolCallId: 'call-live', toolName: 'call_mcp_tool', arguments: { serverId: 'calendar', toolName: 'list_events', arguments: {} } })
+      await args.onEvent.onmessage({ type: 'toolResult', toolCallId: 'call-live', toolName: 'call_mcp_tool', status: 'completed', output: '{"events":[]}' })
+      await args.onEvent.onmessage({ type: 'textDelta', text: '查询完成，目前没有日程。' })
+      await args.onEvent.onmessage({ type: 'completed', runId: 'run-live', content: '我先查询外部服务。查询完成，目前没有日程。' })
+      return null
+    })
+    const wrapper = mount(ChatView, {
+      attachTo: window.document.body,
+      global: { plugins: [createPinia()], stubs: { MarkdownMessage: true } }
+    })
+    await flushPromises()
+
+    await wrapper.findAll('.chat-mode-switch button')[1].trigger('click')
+    await wrapper.find('textarea').setValue('查询我的日程')
+    await wrapper.find('form').trigger('submit')
+    await flushPromises()
+
+    const events = wrapper.findAll('[data-agent-event]')
+    expect(events.map(event => event.attributes('data-agent-event'))).toEqual(['text', 'tool', 'text'])
+    expect(events[1].text()).toContain('MCP · calendar / list_events')
+    expect(events[1].text()).toContain('真实返回')
     wrapper.unmount()
   })
 })

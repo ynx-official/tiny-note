@@ -2927,6 +2927,8 @@ pub mod commands {
 
 pub fn run() {
     tauri::Builder::default()
+        .plugin(tauri_plugin_process::init())
+        .plugin(tauri_plugin_updater::Builder::new().build())
         .setup(|app| {
             let state =
                 app_state(app.handle()).map_err(|e| Box::new(e) as Box<dyn std::error::Error>)?;

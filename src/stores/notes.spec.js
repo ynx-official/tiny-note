@@ -28,8 +28,10 @@ describe('notes store', () => {
   it('creates a populated note from a conversation', async () => {
     const store = useNotesStore()
     await store.load()
+    store.selectedNotebook = 'all'
     const note = await store.createFromContent({ title: '对话总结', contentHtml: '<h1>结论</h1>', contentText: '结论', contentMarkdown: '# 结论' })
     expect(note).toMatchObject({ title: '对话总结', contentHtml: '<h1>结论</h1>', contentText: '结论', contentMarkdown: '# 结论' })
+    expect(store.notebooks.find(book => book.id === note.notebookId)?.name).toBe('未分类')
     expect(store.activeId).toBe(note.id)
   })
 

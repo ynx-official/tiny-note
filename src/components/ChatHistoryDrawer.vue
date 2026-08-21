@@ -16,7 +16,7 @@ async function load() {
   try { conversations.value = await invoke('chat_list') } catch (cause) { error.value = cause?.message || '历史记录读取失败' } finally { loading.value = false }
 }
 function openConversation(id) { emit('open', id); visible.value = false }
-function modeLabel(mode) { return mode === 'agent' ? 'Agent' : '对话' }
+function modeLabel(mode) { return mode === 'agent' ? 'Tiny Agent' : '对话' }
 async function remove(event, id) {
   event.stopPropagation()
   if (!window.confirm('确定删除这条对话及全部消息吗？')) return

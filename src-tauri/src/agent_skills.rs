@@ -8,7 +8,7 @@ use tauri::State;
 
 const MAX_SKILL_CHARS: usize = 200_000;
 const LEGACY_KNOWLEDGE_RESEARCH_SKILL: &str = "---\nname: knowledge-research\ndescription: 检索并汇总 Tiny Note 本地知识，保留来源和不确定性。\n---\n\n# 知识调研\n\n当任务需要本地事实时：\n\n1. 先用 `retrieve_knowledge` 做宽检索。\n2. 必要时用 `search_notes` 和 `get_note` 补充完整上下文。\n3. 只引用工具实际返回的来源。\n4. 区分资料事实、合理推断和未知信息。\n";
-const PREVIOUS_BUILTIN_SKILLS: [(&str, &str); 2] = [
+const PREVIOUS_BUILTIN_SKILLS: [(&str, &str); 4] = [
     (
         "knowledge-research",
         "---\nname: knowledge-research\ndescription: 在 Tiny Note 的笔记与已建立索引的知识库中搜索并汇总信息，保留可追溯来源、冲突和不确定性。\n---\n\n# 知识调研\n\n当任务需要查找本地事实、项目资料、知识库文档或已有笔记时，使用本技能。\n\n## 检索流程\n\n1. 先提取主题、专有名词、别名和限定条件；不要把无关背景词全部塞进查询。\n2. 优先调用 `retrieve_knowledge` 做宽检索。它会搜索 Tiny Note 笔记和已建立索引的知识库文件，并返回相关片段与来源。\n3. 需要精确核对某篇笔记时，再用 `search_notes` 找到候选，使用 `get_note` 读取完整正文。\n4. 如果用户指定了某个知识库或引用文件，优先使用工具返回的 `knowledgeBaseId`、`relativePath` 和 `id` 判断来源，不要把相似标题当成同一文件。\n5. 首轮结果不足时，尝试术语变体、缩写、中文/英文名称或更具体的错误信息；不要凭常识补写私有资料。\n\n## 来源与答案规则\n\n- 只引用工具实际返回的来源，并在答案中保留标题、来源类型以及可用的笔记 ID、知识库 ID、相对路径。\n- 区分“资料明确说明”“基于资料的推断”和“没有找到证据”。\n- 来源冲突时，指出冲突并优先采用更新、更正式或更直接的来源，同时说明判断依据。\n- 搜索结果为空时，明确说明已搜索的范围；这通常意味着知识库尚未索引、术语不同或资料不存在。\n- 不输出密码、Token、私钥或不必要的个人敏感信息。\n\n## 输出结构\n\n除非用户指定其他格式，按以下顺序回答：\n\n1. 直接结论；\n2. 按主题归纳的关键证据；\n3. 冲突、时效性和信息缺口；\n4. 来源列表。\n",
@@ -17,8 +17,10 @@ const PREVIOUS_BUILTIN_SKILLS: [(&str, &str); 2] = [
         "note-organizer",
         "---\nname: note-organizer\ndescription: 将零散材料整理为结构清晰、便于后续维护的笔记。\n---\n\n# 笔记整理\n\n创建或修改笔记时：\n\n- 标题简洁明确。\n- 正文使用 Markdown 标题、列表和必要的待办项。\n- 不添加材料中没有的事实。\n- 修改现有笔记使用 `update_note` 生成提案，提醒用户仍需审阅应用。\n",
     ),
+    ("knowledge-research", PREVIOUS_KNOWLEDGE_RESEARCH_SKILL_V2),
+    ("note-organizer", PREVIOUS_NOTE_ORGANIZER_SKILL_V2),
 ];
-const KNOWLEDGE_RESEARCH_SKILL: &str = r#"---
+const PREVIOUS_KNOWLEDGE_RESEARCH_SKILL_V2: &str = r#"---
 name: knowledge-research
 description: 检索、创建、更新或删除 Tiny Note 知识库，并基于已索引资料生成可追溯答案。
 ---
@@ -59,7 +61,7 @@ description: 检索、创建、更新或删除 Tiny Note 知识库，并基于�
 - 当前 Agent 工具管理的是知识库元数据与检索，不支持直接新增、改写、重命名或删除知识库内的单个文件。不要声称已完成不存在的文件操作。
 - 不输出密码、Token、私钥或不必要的个人敏感信息。
 "#;
-const NOTE_ORGANIZER_SKILL: &str = r#"---
+const PREVIOUS_NOTE_ORGANIZER_SKILL_V2: &str = r#"---
 name: note-organizer
 description: 使用 Tiny Note 工具创建、查找、读取、修改或删除笔记，并保持内容结构清晰。
 ---
@@ -93,6 +95,71 @@ description: 使用 Tiny Note 工具创建、查找、读取、修改或删除�
 - 批量创建、修改或删除时，逐项保留标题与 ID 的对应关系，避免把相似标题串错。
 - 任一项失败时，分别报告成功与失败项目，不把部分成功描述成全部完成。
 - 是否需要暂停审批由用户的 Agent 工具设置决定，技能本身不得绕过工具执行层。
+"#;
+const KNOWLEDGE_RESEARCH_SKILL: &str = r#"---
+name: knowledge-research
+description: 检索和管理 Tiny Note 知识库，并在知识库中新建或移动笔记引用。
+---
+
+# 知识库管理与调研
+
+知识库保存文件和 `.note` 引用；笔记本负责“全部笔记 / 未分类”等笔记归类。两者不是同一个实体。
+
+## 工具对应关系
+
+| 用户意图 | 必须使用的工具 | 关键规则 |
+| --- | --- | --- |
+| 新建知识库 | `create_knowledge_base` | 提供 `name`、`category`；`personal` 为个人知识，`local` 为本地资料 |
+| 查看知识库 | `list_knowledge_bases` | 先取得唯一知识库 ID，不要用正文检索代替目录查询 |
+| 在知识库新建笔记 | `create_note_in_knowledge_base` | 提供目标 `knowledgeBaseId`、标题和完整 Markdown；笔记本归属默认是“未分类” |
+| 移动笔记到其他知识库 | `move_note_to_knowledge_base` | 提供笔记 ID、来源和目标知识库 ID；移动的是 `.note` 引用，笔记正文与笔记本归属不变 |
+| 检索知识库内容 | `retrieve_knowledge` | 使用精炼关键词，保留来源 ID 和相对路径 |
+| 修改知识库信息 | `update_knowledge_base` | 先确认唯一 ID；只修改名称或说明 |
+| 删除知识库 | `delete_knowledge_base` | 删除记录和索引，并把受管目录移入系统回收站 |
+
+## 操作规则
+
+1. 用户只给知识库名称时，先调用 `list_knowledge_bases`；重名时必须请用户确认。
+2. 在知识库新建文章时优先调用 `create_note_in_knowledge_base`，不要先创建普通笔记再假装已经加入知识库。
+3. 移动前先用 `search_notes` 找到唯一笔记 ID，再确认来源与目标知识库不同。
+4. `move_note_to_knowledge_base` 只移动唯一的 `.note` 引用；来源中没有引用或存在多个引用时，报告工具错误，不猜测文件。
+5. 只有写工具成功后才能报告完成；需要时再次列出知识库或检索验证结果。
+
+## 检索与回答
+
+- 只引用工具实际返回的来源，区分资料事实、合理推断和未知信息。
+- 首轮不足时尝试术语变体；搜索为空时说明检索范围。
+- 不输出密码、Token、私钥或不必要的个人敏感信息。
+"#;
+const NOTE_ORGANIZER_SKILL: &str = r#"---
+name: note-organizer
+description: 创建、查找、读取、修改、移动或删除 Tiny Note 笔记，并保持归类清晰。
+---
+
+# 笔记管理与整理
+
+笔记本负责笔记归类；知识库通过 `.note` 文件引用笔记。AI 生成文章未指定笔记本时必须默认归入“未分类”，并自然显示在“全部笔记”中。
+
+## 工具对应关系
+
+| 用户意图 | 必须使用的工具 | 关键规则 |
+| --- | --- | --- |
+| 新建普通笔记 | `create_note` | 提供标题与完整 Markdown；不传 `notebookId` 时归入“未分类” |
+| 在知识库新建笔记 | `create_note_in_knowledge_base` | 同时创建笔记和目标知识库引用，仍默认归入“未分类”笔记本 |
+| 移动到其他知识库 | `move_note_to_knowledge_base` | 移动 `.note` 引用，不改变笔记本归属 |
+| 搜索笔记 | `search_notes` | 返回候选标题、ID 和摘要；相似名称不能直接选定 |
+| 读取笔记 | `get_note` | 使用精确笔记 ID 读取完整正文 |
+| 修改笔记 | `update_note` | 只生成待审阅提案，不代表已经应用 |
+| 删除笔记 | `delete_note` | 移入最近删除，可在保留期内恢复 |
+
+## 操作流程
+
+1. 先区分用户说的是笔记本归类还是知识库引用；不要混用 ID。
+2. 创建时标题简洁、正文结构清晰，不添加材料中没有的事实。
+3. 用户只提供标题时先搜索；多个候选必须展示标题和 ID 让用户确认。
+4. 修改前读取完整正文，保留未要求改变的内容；返回后明确说明仍需审阅应用。
+5. 移动知识库引用前确认来源库、目标库和唯一笔记 ID。
+6. 只有工具返回成功后才能报告完成；批量操作分别报告成功与失败项。
 "#;
 const BUILTIN_SKILLS: [(&str, &str); 2] = [
     ("knowledge-research", KNOWLEDGE_RESEARCH_SKILL),
@@ -381,6 +448,8 @@ mod tests {
             .unwrap();
         for tool in [
             "create_knowledge_base",
+            "create_note_in_knowledge_base",
+            "move_note_to_knowledge_base",
             "list_knowledge_bases",
             "retrieve_knowledge",
             "update_knowledge_base",
@@ -394,6 +463,8 @@ mod tests {
             .unwrap();
         for tool in [
             "create_note",
+            "create_note_in_knowledge_base",
+            "move_note_to_knowledge_base",
             "search_notes",
             "get_note",
             "update_note",

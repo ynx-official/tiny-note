@@ -871,6 +871,8 @@ body, button, input, select, textarea { font-family: -apple-system, BlinkMacSyst
 .chat-page-title strong { color:var(--text-primary); font-size:14px; }
 .chat-page-title small { color:var(--text-tertiary); font-size:10px; }
 .chat-page-avatar,.chat-page-empty-avatar { width:30px; height:30px; display:grid; place-items:center; flex:0 0 auto; border-radius:9px; color:#fff; background:linear-gradient(145deg,#30d5a4,#14b87e); }
+.tiny-agent-avatar { overflow:hidden; border:1px solid #f0d7b8; background:#fff6e8; }
+.tiny-agent-avatar-image { display:block; width:100%; height:100%; object-fit:contain; transform:scale(1.08); }
 .chat-page-messages { width:min(760px,100%); min-height:0; flex:1; overflow:auto; margin:0 auto; padding:28px 20px 18px; }
 .chat-page-empty { display:flex; flex-direction:column; align-items:center; justify-content:center; min-height:100%; color:var(--text-primary); text-align:center; }
 .chat-page-empty-avatar { width:44px; height:44px; margin-bottom:12px; border-radius:13px; }
@@ -958,20 +960,34 @@ body, button, input, select, textarea { font-family: -apple-system, BlinkMacSyst
   .agent-tool-badges { margin-left:37px; }
 }
 .agent-mode-badge { padding:1px 5px; border:1px solid #bad8ff; border-radius:5px; color:#2463a6; background:#eef6ff; font-size:10px; }
-.agent-timeline { display:flex; flex-direction:column; gap:6px; width:min(620px,100%); margin:0 0 9px; padding-left:8px; border-left:2px solid var(--line); }
-.agent-tool-step { overflow:hidden; border:1px solid var(--line); border-radius:8px; background:var(--bg-secondary); }
-.agent-tool-step summary { display:flex; align-items:center; gap:7px; min-height:34px; padding:0 9px; color:var(--text-secondary); font-size:12px; cursor:pointer; list-style:none; }
+.agent-timeline { display:flex; flex-direction:column; gap:8px; width:min(620px,100%); margin:0 0 9px; }
+.agent-text-event { color:var(--text-primary); }
+.agent-text-event .markdown-message > :first-child { margin-top:0; }
+.agent-text-event .markdown-message > :last-child { margin-bottom:0; }
+.agent-event-progress { margin:0 0 8px; color:var(--text-tertiary); font-size:11px; }
+.agent-tool-step { display:flex; flex-direction:column; gap:4px; }
+.agent-tool-step summary { display:inline-flex; align-items:center; gap:5px; width:fit-content; padding:2px 0; color:var(--text-tertiary); font-size:13px; font-weight:500; line-height:1; cursor:pointer; list-style:none; user-select:none; }
+.agent-tool-step summary:hover { color:var(--text-secondary); }
 .agent-tool-step summary::-webkit-details-marker { display:none; }
-.agent-tool-step summary > span:nth-child(2) { flex:1; }
-.agent-tool-step summary > svg { transition:transform .15s ease; }
-.agent-tool-step[open] summary > svg { transform:rotate(180deg); }
-.agent-tool-icon { display:grid; place-items:center; color:#34866a; }
-.agent-tool-step > div { padding:8px 10px 10px; border-top:1px solid var(--line); }
+.agent-tool-step summary > svg:last-child { opacity:.6; transition:transform .15s ease; }
+.agent-tool-step[open] summary > svg:last-child { transform:rotate(180deg); }
+.agent-tool-status-dot { position:relative; display:inline-flex; width:6px; height:6px; flex:0 0 6px; border-radius:50%; background:#10b981; }
+.agent-tool-step.status-running .agent-tool-status-dot { background:#1560f7; }
+.agent-tool-step.status-awaiting_approval .agent-tool-status-dot { background:#f59e0b; }
+.agent-tool-step.status-error .agent-tool-status-dot,
+.agent-tool-step.status-rejected .agent-tool-status-dot,
+.agent-tool-step.status-cancelled .agent-tool-status-dot { background:#ef4444; }
+.agent-tool-dot-pulse { position:absolute; inset:0; border-radius:50%; background:#1560f7; animation:agent-dot-pulse 1.4s ease-in-out infinite; }
+.agent-tool-glyph { flex:0 0 auto; opacity:.7; }
+.agent-tool-step.status-running summary { color:#1560f7; }
+.agent-tool-step.status-awaiting_approval summary { color:#b7791f; }
+.agent-tool-step > div { display:flex; flex-direction:column; gap:8px; margin-top:6px; padding-left:12px; border-left:2px solid var(--line); }
 .agent-tool-step strong { display:block; margin:0 0 4px; color:var(--text-tertiary); font-size:10px; text-transform:uppercase; }
 .agent-tool-step pre { overflow:auto; max-height:150px; margin:0 0 8px; color:var(--text-secondary); font:11px/1.5 ui-monospace,SFMono-Regular,Menlo,monospace; white-space:pre-wrap; word-break:break-word; }
 .agent-tool-step pre:last-child { margin-bottom:0; }
 .is-spinning { animation:agent-spin .9s linear infinite; }
 @keyframes agent-spin { to { transform:rotate(360deg); } }
+@keyframes agent-dot-pulse { 0% { transform:scale(1); opacity:.7; } 50% { transform:scale(2); opacity:0; } 100% { transform:scale(1); opacity:0; } }
 .agent-approval-overlay { position:fixed; inset:0; z-index:4000; display:grid; place-items:center; padding:24px; pointer-events:auto; background:rgba(0,0,0,.46); backdrop-filter:blur(2px); -webkit-app-region:no-drag; }
 .agent-approval-dialog { width:min(460px,100%); padding:20px; border:1px solid var(--line); border-radius:14px; background:var(--surface); box-shadow:0 18px 55px rgba(0,0,0,.28); }
 .agent-approval-heading { display:flex; align-items:center; gap:11px; }
@@ -1265,6 +1281,11 @@ body, button, input, select, textarea { font-family: -apple-system, BlinkMacSyst
 .settings-text-button { min-height:30px; display:inline-flex; align-items:center; gap:5px; padding:5px 8px; border-radius:6px; color:var(--text-secondary); font-size:12px; }
 .settings-text-button:hover { color:var(--text-primary); background:var(--bg-hover); }
 .settings-about-section .settings-setting-row { min-height:68px; }
+.settings-update-row { align-items:center; gap:20px; }
+.settings-update-row .settings-setting-copy { min-width:0; }
+.settings-update-row .settings-setting-copy small { color:var(--text-tertiary); font-size:11px; line-height:1.5; }
+.settings-update-row .settings-setting-copy small.error { color:#dc2626; }
+.settings-update-notes { display:-webkit-box; overflow:hidden; max-width:560px; white-space:pre-line; -webkit-box-orient:vertical; -webkit-line-clamp:3; }
 .settings-value { margin-left:auto; color:var(--text-secondary); font-size:12px; }
 .settings-value-icon { margin-left:auto; color:var(--text-tertiary); }
 @media (max-width:760px) {
@@ -1275,6 +1296,7 @@ body, button, input, select, textarea { font-family: -apple-system, BlinkMacSyst
   .settings-theme-options { margin-left:0; justify-content:flex-start; }
   .settings-model-grid { grid-template-columns:1fr; }
   .settings-model-grid label.settings-model-wide { grid-column:auto; }
+  .settings-update-row { align-items:flex-start; flex-direction:column; }
 }
 .home-mode-anchor,.home-model-anchor { position:relative; }
 .home-select-button.active { color:var(--text-primary); background:var(--bg-hover); }

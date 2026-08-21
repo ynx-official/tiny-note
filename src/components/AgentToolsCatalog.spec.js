@@ -17,6 +17,8 @@ describe('AgentToolsCatalog', () => {
       { name: 'update_knowledge_base', description: '更新知识库', requireApproval: true },
       { name: 'delete_knowledge_base', description: '删除知识库', requireApproval: true },
       { name: 'create_note', description: '创建笔记', requireApproval: true },
+      { name: 'create_note_in_knowledge_base', description: '在知识库中新建笔记引用', requireApproval: true },
+      { name: 'move_note_to_knowledge_base', description: '移动笔记到其他知识库', requireApproval: true },
       { name: 'delete_note', description: '删除笔记', requireApproval: true },
       { name: 'read_skill', description: '读取 Agent 技能', requireApproval: false },
       { name: 'call_mcp_tool', description: '调用外部 MCP 工具', requireApproval: true }
@@ -26,12 +28,14 @@ describe('AgentToolsCatalog', () => {
     await flushPromises()
 
     expect(invoke).toHaveBeenCalledWith('agent_list_tools')
-    expect(wrapper.get('[data-testid="tool-summary"]').text()).toContain('9 个工具可用')
+    expect(wrapper.get('[data-testid="tool-summary"]').text()).toContain('11 个工具可用')
     expect(wrapper.text()).toContain('读取知识库目录')
     expect(wrapper.text()).toContain('创建知识库')
     expect(wrapper.text()).toContain('更新知识库信息')
     expect(wrapper.text()).toContain('删除知识库')
     expect(wrapper.text()).toContain('将笔记移入最近删除')
+    expect(wrapper.text()).toContain('在知识库中新建笔记')
+    expect(wrapper.text()).toContain('移动笔记到其他知识库')
     expect(wrapper.findAll('.agent-tool-group > header strong').map(node => node.text())).toEqual(['系统', '笔记', '知识库', 'Agent 技能', 'MCP 服务'])
     expect(wrapper.text()).not.toContain('本地只读')
     expect(wrapper.text()).not.toContain('本地写入')

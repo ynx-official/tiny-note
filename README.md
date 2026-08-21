@@ -29,8 +29,7 @@ cargo test
 cargo clippy --all-targets --all-features -- -D warnings
 ```
 
-Windows x64 NSIS 安装包由 `npm run tauri:build` 生成在：
-`src-tauri/target/release/bundle/nsis/Tiny Note_0.1.0_x64-setup.exe`。
+本地 `npm run tauri:build` 会生成当前系统支持的安装包。CI 覆盖 Windows x64 NSIS、Linux x64 AppImage/DEB，以及 macOS Intel/Apple Silicon DMG；完整发布和在线升级流程见 [构建说明](docs/05-operations/build.md)。
 
 ## 当前实现
 
@@ -50,4 +49,4 @@ AI 未配置模型时使用离线演示流；配置模型后请求只从 Rust �
 
 笔记与知识库页面采用 Friday 前端的页面骨架、间距、状态和样式变量迁移，数据与桌面能力仍由 Tiny Note 自己的 Tauri/Rust 层提供。
 
-正式 macOS 分发仍需代码签名与公证；首版构建产物用于开发和内部测试。
+设置页“关于”已接入 Tauri 2 签名在线升级。正式发布前仍需配置 updater 私钥；公开 macOS 分发还需 Developer ID 签名与公证，Windows 公开分发建议配置 Authenticode。
