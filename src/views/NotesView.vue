@@ -266,14 +266,15 @@ function toggleToc() {
 function closeToc() { tocVisible.value = false }
 function scrollToHeading(index) {
   const scrollContainer = document.querySelector('.note-editor-area')
-  const editorContent = scrollContainer?.querySelector('.editor-content')
+  const editorContent = scrollContainer?.querySelector('.split-preview-pane .editor-content') || scrollContainer?.querySelector('.editor-content')
   if (!scrollContainer || !editorContent) return
   const headings = editorContent.querySelectorAll('h1, h2, h3')
   const target = headings[index]
   if (!target) return
-  const containerRect = scrollContainer.getBoundingClientRect()
+  const activeScroller = editorContent.closest('.split-preview-pane') || scrollContainer
+  const containerRect = activeScroller.getBoundingClientRect()
   const targetRect = target.getBoundingClientRect()
-  scrollContainer.scrollTo({ top: targetRect.top - containerRect.top + scrollContainer.scrollTop - containerRect.height / 3, behavior: 'smooth' })
+  activeScroller.scrollTo({ top: targetRect.top - containerRect.top + activeScroller.scrollTop - containerRect.height / 3, behavior: 'smooth' })
   closeToc()
 }
 function onResizeStart(event) {

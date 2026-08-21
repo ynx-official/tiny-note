@@ -27,6 +27,7 @@ reqwest = { version = "0.12", default-features = false, features = ["json", "str
 futures-util = "0.3"
 tokio = { version = "1", features = ["rt-multi-thread"] }
 rhai = { version = "1", default-features = false, features = ["serde", "sync"] }
+pulldown-cmark = "0.13.4"
 
 [features]
 custom-protocol = ["tauri/custom-protocol"]

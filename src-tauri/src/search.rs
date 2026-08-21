@@ -99,6 +99,7 @@ pub struct NoteRevisionDto {
     pub title: String,
     pub content_html: String,
     pub content_text: String,
+    pub content_markdown: String,
     pub reason: String,
     pub created_at: String,
 }
@@ -146,6 +147,7 @@ pub fn init_schema(conn: &Connection) -> Result<(), AppError> {
         CREATE TABLE IF NOT EXISTS note_revisions (
           id TEXT PRIMARY KEY, note_id TEXT NOT NULL REFERENCES notes(id) ON DELETE CASCADE,
           title TEXT NOT NULL, content_html TEXT NOT NULL, content_text TEXT NOT NULL,
+          content_markdown TEXT NOT NULL DEFAULT '',
           reason TEXT NOT NULL DEFAULT 'ai_edit', created_at TEXT NOT NULL
         );
         CREATE INDEX IF NOT EXISTS idx_note_revisions_note ON note_revisions(note_id,created_at DESC);",
@@ -773,7 +775,8 @@ pub fn revision_from_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<NoteRevisi
         title: row.get(2)?,
         content_html: row.get(3)?,
         content_text: row.get(4)?,
-        reason: row.get(5)?,
-        created_at: row.get(6)?,
+        content_markdown: row.get(5)?,
+        reason: row.get(6)?,
+        created_at: row.get(7)?,
     })
 }

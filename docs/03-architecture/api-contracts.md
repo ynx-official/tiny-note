@@ -1,5 +1,7 @@
 # 命令契约（Draft）
 
+最后更新：2026-08-21
+
 所有 DTO 使用 camelCase。成功返回结构化 JSON，失败返回 `{ code, message }`；`message` 不包含系统路径、密钥或原始网络响应。
 
 命令组：`note_*`、`notebook_*`、`knowledge_base_*`、`library_*`、`model_*`、`settings_*`、`note_ai_stream/cancel`、`note_fim_stream/cancel`。路径命令只接受 `knowledgeBaseId + relativePath`。
@@ -14,4 +16,6 @@ MCP 命令：`agent_mcp_list`、`agent_mcp_upsert`、`agent_mcp_delete`、`agent
 
 上下文与索引：`context_search`、`search_index_status/rebuild/retry_failed`。AI 请求可携带 `mode`、结构化 `references`、`scope`、`targetNoteId`、`selection` 和 `autoRetrieve`；流事件增加 `sources` 与 `editProposal`，旧事件保持兼容。
 
-安全编辑：`note_edit_get/apply/discard`、`note_revision_list/get/restore`。`note_edit_apply` 只接受提案 ID、期望更新时间及编辑器生成的最终 HTML/纯文本；Rust 校验提案、版本和内容哈希后事务化写入。
+笔记 DTO：`NoteDto.contentMarkdown` 始终存在。`note_create` 可接收 `contentMarkdown`，`note_update` 必须同时接收 `contentMarkdown`、`contentHtml` 和 `contentText`。复制、Markdown/TXT 导入、浏览器适配层和 Agent `create_note` 维持相同三表示契约。
+
+安全编辑：`note_edit_get/apply/discard`、`note_revision_list/get/restore`。`note_edit_apply` 接受提案 ID、期望更新时间及编辑器生成的最终 Markdown/HTML/纯文本；Rust 校验提案、版本和内容哈希后，在同一事务写入带三种表示的旧版本并更新笔记。版本列表与恢复 DTO 也始终返回 `contentMarkdown`。

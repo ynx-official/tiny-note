@@ -10,7 +10,7 @@ const MAX_SKILL_CHARS: usize = 200_000;
 const BUILTIN_SKILLS: [(&str, &str); 2] = [
     (
         "knowledge-research",
-        "---\nname: knowledge-research\ndescription: 检索并汇总 Tiny Note 本地知识，保留来源和不确定性。\n---\n\n# 知识调研\n\n当任务需要本地事实时：\n\n1. 先用 `retrieve_knowledge` 做宽检索。\n2. 必要时用 `search_notes` 和 `get_note` 补充完整上下文。\n3. 只引用工具实际返回的来源。\n4. 区分资料事实、合理推断和未知信息。\n",
+        "---\nname: knowledge-research\ndescription: 在 Tiny Note 的笔记与已建立索引的知识库中搜索并汇总信息，保留可追溯来源、冲突和不确定性。\n---\n\n# 知识调研\n\n当任务需要查找本地事实、项目资料、知识库文档或已有笔记时，使用本技能。\n\n## 检索流程\n\n1. 先提取主题、专有名词、别名和限定条件；不要把无关背景词全部塞进查询。\n2. 优先调用 `retrieve_knowledge` 做宽检索。它会搜索 Tiny Note 笔记和已建立索引的知识库文件，并返回相关片段与来源。\n3. 需要精确核对某篇笔记时，再用 `search_notes` 找到候选，使用 `get_note` 读取完整正文。\n4. 如果用户指定了某个知识库或引用文件，优先使用工具返回的 `knowledgeBaseId`、`relativePath` 和 `id` 判断来源，不要把相似标题当成同一文件。\n5. 首轮结果不足时，尝试术语变体、缩写、中文/英文名称或更具体的错误信息；不要凭常识补写私有资料。\n\n## 来源与答案规则\n\n- 只引用工具实际返回的来源，并在答案中保留标题、来源类型以及可用的笔记 ID、知识库 ID、相对路径。\n- 区分“资料明确说明”“基于资料的推断”和“没有找到证据”。\n- 来源冲突时，指出冲突并优先采用更新、更正式或更直接的来源，同时说明判断依据。\n- 搜索结果为空时，明确说明已搜索的范围；这通常意味着知识库尚未索引、术语不同或资料不存在。\n- 不输出密码、Token、私钥或不必要的个人敏感信息。\n\n## 输出结构\n\n除非用户指定其他格式，按以下顺序回答：\n\n1. 直接结论；\n2. 按主题归纳的关键证据；\n3. 冲突、时效性和信息缺口；\n4. 来源列表。\n",
     ),
     (
         "note-organizer",
@@ -283,7 +283,7 @@ mod tests {
             .unwrap()
             .content
             .unwrap()
-            .contains("retrieve_knowledge"));
+            .contains("已建立索引的知识库文件"));
     }
 
     #[test]

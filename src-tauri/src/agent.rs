@@ -4,6 +4,7 @@ use crate::{
 };
 use chrono::{Local, Utc};
 use futures_util::StreamExt;
+use pulldown_cmark::{html, Event as MarkdownEvent, Options as MarkdownOptions, Parser, TagEnd};
 use rusqlite::{params, Connection, OptionalExtension};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
@@ -1409,9 +1410,15 @@ fn execute_tool(
             let output = json!({
                 "sources": bundle.sources.iter().enumerate().map(|(index, source)| json!({
                     "citation": index + 1,
+                    "id": source.id,
                     "title": source.title,
                     "sourceType": source.source_type,
+                    "noteId": source.note_id,
+                    "knowledgeBaseId": source.knowledge_base_id,
+                    "relativePath": source.relative_path,
+                    "snippet": source.snippet,
                     "content": source.content,
+                    "score": source.score,
                     "truncated": source.truncated
                 })).collect::<Vec<_>>()
             })
@@ -1471,9 +1478,9 @@ fn execute_tool(
             let notebook_id = arguments.get("notebookId").and_then(Value::as_str).map(str::trim).filter(|value| !value.is_empty());
             let id = Uuid::new_v4().to_string();
             let timestamp = now();
-            let html = markdown_to_safe_html(&content);
+            let (html, text) = markdown_representations(&content);
             let conn = state.db.lock().map_err(|_| "数据库暂时不可用".to_string())?;
-            conn.execute("INSERT INTO notes(id,notebook_id,title,content_html,content_text,created_at,updated_at) VALUES(?1,?2,?3,?4,?5,?6,?6)", params![id,notebook_id,title,html,content,timestamp]).map_err(|_| "创建笔记失败，请确认笔记本仍然存在".to_string())?;
+            conn.execute("INSERT INTO notes(id,notebook_id,title,content_html,content_text,content_markdown,created_at,updated_at) VALUES(?1,?2,?3,?4,?5,?6,?7,?7)", params![id,notebook_id,title,html,text,content,timestamp]).map_err(|_| "创建笔记失败，请确认笔记本仍然存在".to_string())?;
             search::index_note(&conn, &id).map_err(|_| "笔记已创建，但建立搜索索引失败".to_string())?;
             Ok(ToolExecution { output: json!({"id":id,"title":title,"created":true}).to_string(), sources: Vec::new(), truncated: false, proposal: None })
         }
@@ -1507,16 +1514,54 @@ fn execute_tool(
     }
 }
 
-fn markdown_to_safe_html(markdown: &str) -> String {
-    let escaped = markdown
-        .replace('&', "&amp;")
-        .replace('<', "&lt;")
-        .replace('>', "&gt;");
-    escaped
-        .split("\n\n")
-        .map(|paragraph| format!("<p>{}</p>", paragraph.replace('\n', "<br>")))
-        .collect::<Vec<_>>()
-        .join("")
+fn markdown_representations(markdown: &str) -> (String, String) {
+    let options = MarkdownOptions::ENABLE_TABLES
+        | MarkdownOptions::ENABLE_TASKLISTS
+        | MarkdownOptions::ENABLE_STRIKETHROUGH;
+    let safe_events = Parser::new_ext(markdown, options).map(|event| match event {
+        MarkdownEvent::Html(value) | MarkdownEvent::InlineHtml(value) => MarkdownEvent::Text(value),
+        other => other,
+    });
+    let mut rendered_html = String::new();
+    html::push_html(&mut rendered_html, safe_events);
+
+    let mut text = String::new();
+    let push_break = |output: &mut String| {
+        if !output.ends_with('\n') {
+            output.push('\n');
+        }
+    };
+    for event in Parser::new_ext(markdown, options) {
+        match event {
+            MarkdownEvent::Text(value) | MarkdownEvent::Code(value) => text.push_str(&value),
+            MarkdownEvent::Html(value) | MarkdownEvent::InlineHtml(value) => {
+                let mut in_tag = false;
+                for character in value.chars() {
+                    match character {
+                        '<' => in_tag = true,
+                        '>' => in_tag = false,
+                        _ if !in_tag => text.push(character),
+                        _ => {}
+                    }
+                }
+            }
+            MarkdownEvent::SoftBreak | MarkdownEvent::HardBreak | MarkdownEvent::Rule => {
+                push_break(&mut text)
+            }
+            MarkdownEvent::TaskListMarker(checked) => {
+                text.push_str(if checked { "[x] " } else { "[ ] " })
+            }
+            MarkdownEvent::End(
+                TagEnd::Paragraph
+                | TagEnd::Heading(_)
+                | TagEnd::Item
+                | TagEnd::CodeBlock
+                | TagEnd::TableRow,
+            ) => push_break(&mut text),
+            _ => {}
+        }
+    }
+    (rendered_html, text.trim().to_string())
 }
 
 fn run_subagent(
@@ -2112,9 +2157,11 @@ mod tests {
             .unwrap()
             .to_string();
         let conn = state.db.lock().unwrap();
-        let (html, indexed): (String, i64) = conn.query_row("SELECT n.content_html,(SELECT COUNT(*) FROM search_documents d WHERE d.source_id=n.id) FROM notes n WHERE n.id=?1", params![id], |row| Ok((row.get(0)?,row.get(1)?))).unwrap();
+        let (html, text, markdown, indexed): (String, String, String, i64) = conn.query_row("SELECT n.content_html,n.content_text,n.content_markdown,(SELECT COUNT(*) FROM search_documents d WHERE d.source_id=n.id) FROM notes n WHERE n.id=?1", params![id], |row| Ok((row.get(0)?,row.get(1)?,row.get(2)?,row.get(3)?))).unwrap();
         assert!(html.contains("&lt;script&gt;"));
         assert!(!html.contains("<script>"));
+        assert_eq!(text, "alert(1)");
+        assert_eq!(markdown, "<script>alert(1)</script>");
         assert_eq!(indexed, 1);
     }
 

@@ -3,14 +3,7 @@ import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { EditorContent, useEditor } from '@tiptap/vue-3'
 import { BubbleMenu } from '@tiptap/vue-3/menus'
 import { Channel } from '@tauri-apps/api/core'
-import StarterKit from '@tiptap/starter-kit'
-import Underline from '@tiptap/extension-underline'
-import Link from '@tiptap/extension-link'
-import Highlight from '@tiptap/extension-highlight'
-import TextAlign from '@tiptap/extension-text-align'
-import Placeholder from '@tiptap/extension-placeholder'
-import Image from '@tiptap/extension-image'
-import CodeBlockLowlight from '@tiptap/extension-code-block-lowlight'
+import { openUrl } from '@tauri-apps/plugin-opener'
 import { createLowlight } from 'lowlight'
 import javascript from 'highlight.js/lib/languages/javascript'
 import typescript from 'highlight.js/lib/languages/typescript'
@@ -24,30 +17,46 @@ import markdown from 'highlight.js/lib/languages/markdown'
 import yaml from 'highlight.js/lib/languages/yaml'
 import rust from 'highlight.js/lib/languages/rust'
 import { VueNodeViewRenderer } from '@tiptap/vue-3'
-import { Table } from '@tiptap/extension-table'
-import TableRow from '@tiptap/extension-table-row'
-import TableCell from '@tiptap/extension-table-cell'
-import TableHeader from '@tiptap/extension-table-header'
-import TaskList from '@tiptap/extension-task-list'
-import TaskItem from '@tiptap/extension-task-item'
-import Subscript from '@tiptap/extension-subscript'
-import Superscript from '@tiptap/extension-superscript'
-import { TextStyle } from '@tiptap/extension-text-style'
-import Color from '@tiptap/extension-color'
 import CodeBlockComponent from './CodeBlockComponent.vue'
+import MarkdownSourceEditor from './MarkdownSourceEditor.vue'
 import NoteAssistantSidebar from './NoteAssistantSidebar.vue'
-import TurndownService from 'turndown'
-import DOMPurify from 'dompurify'
-import { marked } from 'marked'
-import { BookOpen, Bold, CalendarDays, ChevronDown, CircleHelp, Copy, FileText, Italic, Languages, Maximize2, MessageSquare, RotateCcw, Send, ShieldCheck, Table2, ThumbsDown, ThumbsUp, Underline as UnderlineIcon, Strikethrough, List, ListOrdered, ListChecks, Quote, Code2, Undo2, Redo2, Eraser, Link2, Highlighter, PenLine, AlignLeft, AlignCenter, AlignRight, Plus, PlusCircle, MoreHorizontal, Layers, Sparkles, Trash2, Download, Printer, X, Zap } from 'lucide-vue-next'
+import { BookOpen, Bold, CalendarDays, Check, ChevronDown, CircleHelp, Columns2, Copy, Eye, FileCode2, FileText, Italic, Languages, Maximize2, MessageSquare, RotateCcw, Send, ShieldCheck, Table2, ThumbsDown, ThumbsUp, Underline as UnderlineIcon, Strikethrough, List, ListOrdered, ListChecks, Quote, Code2, Undo2, Redo2, Eraser, Link2, Highlighter, PenLine, AlignLeft, AlignCenter, AlignRight, Plus, PlusCircle, MoreHorizontal, Layers, Sparkles, Trash2, Download, Printer, X, Zap } from 'lucide-vue-next'
 import { useNotesStore } from '../stores/notes'
 import { useLibraryStore } from '../stores/library'
 import { useAppStore } from '../stores/app'
 import { useI18n } from 'vue-i18n'
+import { createNoteExtensions } from '../editor/noteExtensions'
+import { DEFAULT_NOTE_MODE, NOTE_MODES, clampSplitRatio, sanitizeEditorHtml, scrollOffset, scrollProgress } from '../utils/noteMarkdown'
 
 const lowlight = createLowlight()
 lowlight.register('javascript', javascript); lowlight.register('typescript', typescript); lowlight.register('python', python); lowlight.register('json', json); lowlight.register('html', xml); lowlight.register('xml', xml); lowlight.register('css', css); lowlight.register('bash', bash); lowlight.register('sql', sql); lowlight.register('markdown', markdown); lowlight.register('yaml', yaml); lowlight.register('rust', rust)
 const props = defineProps({ note: Object, tocVisible: { type: Boolean, default: false }, proposalId: { type: String, default: '' } }); const emit = defineEmits(['deleted', 'toggle-toc', 'proposal-reviewed']); const store = useNotesStore(); const library = useLibraryStore(); const appStore = useAppStore(); const { t } = useI18n(); const aiBusy = ref(false); const aiText = ref(''); const aiRequestId = ref(''); const aiAction = ref('summarize'); const aiResultAction = ref(''); const aiProposal = ref(null); const aiSources = ref([]); const aiConsentOpen = ref(false); const assistantOpen = ref(false); const assistantBusy = ref(false); const assistantRequestId = ref(''); const assistantStreamingText = ref(''); const assistantMessages = ref([]); const assistantSelection = ref(null); const assistantResponseSources = ref([]); const assistantResponseProposal = ref(null); const aiPanelOpen = ref(false); const commandMenuOpen = ref(false); const aiPrompt = ref(''); const aiInputRef = ref(null); const commandMenuDirection = ref('down'); const moreOpen = ref(false); const revisionsOpen = ref(false); const revisions = ref([]); const revisionsBusy = ref(false); const insertOpen = ref(false); const tablePickerOpen = ref(false); const textColorOpen = ref(false); const highlightOpen = ref(false); const headingOpen = ref(false); const knowledgeMenuOpen = ref(false); const imageDialogOpen = ref(false); const imageUrl = ref(''); const imageAlt = ref(''); const imageInput = ref(null); const tableRows = ref(0); const tableCols = ref(0); const fimEnabled = computed(() => appStore.settings.fimEnabled === true); const fimSuggestion = ref(''); const editorStateTick = ref(0); let fimTimer; let savedSelection = null; let pendingAiRequest = null
+const modeIcons = { rich: PenLine, split: Columns2, source: FileCode2, read: Eye }
+const editorModes = NOTE_MODES.map(mode => ({ ...mode, icon: modeIcons[mode.id] }))
+const editorMode = ref(DEFAULT_NOTE_MODE)
+const modeMenuOpen = ref(false)
+const modeMenuIndex = ref(0)
+const modeMenuRef = ref(null)
+const markdownDraft = ref('')
+const markdownParseError = ref('')
+const sourceDirty = ref(false)
+const splitRatio = ref(50)
+const splitVertical = ref(false)
+const splitWorkspace = ref(null)
+const sourceEditorRef = ref(null)
+const previewScroller = ref(null)
+const pendingSourceDrafts = new Map()
+const persistedSignatures = new Map()
+let applyingEditorContent = false
+let markdownParseTimer
+let splitResizeObserver
+let splitDragState
+let scrollSyncFrame
+let scrollSyncSource = ''
+const currentMode = computed(() => editorModes.find(mode => mode.id === editorMode.value) || editorModes[0])
+const richMode = computed(() => editorMode.value === 'rich')
+const codeMode = computed(() => editorMode.value === 'source' || editorMode.value === 'split')
+const splitPaneStyle = computed(() => splitVertical.value ? { height: `${splitRatio.value}%` } : { width: `${splitRatio.value}%` })
 const aiActionLabels = { interpret: '解读', refine: '精炼', polish: '润色', expand: '扩写', translate: '翻译', summarize: '总结', continue_write: '续写', fix_grammar: '语法修正', generate_plan: '生成任务计划', generate_table: '生成表格', custom: 'AI 写作' }
 const aiErrorMessages = { model_profile_unavailable: '还没有配置可用模型，请先打开设置完成配置。', api_key_not_configured: '当前模型还没有配置 API Key，请先打开设置完成配置。', credential_store_unavailable: '系统凭据存储不可用，暂时无法调用 AI。', provider_request_failed: '模型服务请求失败，请检查模型地址和网络连接。', provider_stream_failed: '模型服务连接中断，请稍后重试。' }
 const contextConsentModelId = computed(() => appStore.defaultModel?.id || 'default')
@@ -64,7 +73,18 @@ const aiDialogStyle = computed(() => {
 })
 let aiDragState = null
 const refreshEditorState = () => { editorStateTick.value += 1 }
-const editor = useEditor({ content: props.note?.contentHtml || '<p></p>', extensions: [StarterKit.configure({ codeBlock: false, link: false, underline: false }), Underline, Link.configure({ openOnClick: false }), Highlight, Image.configure({ allowBase64: false }), Table.configure({ resizable: true }), TableRow, TableHeader, TableCell, TaskList, TaskItem.configure({ nested: true }), Subscript, Superscript, TextStyle, Color, TextAlign.configure({ types: ['heading', 'paragraph'] }), CodeBlockLowlight.extend({ addNodeView() { return VueNodeViewRenderer(CodeBlockComponent) } }).configure({ lowlight }), Placeholder.configure({ placeholder: '写下此刻的想法…' })], editorProps: { attributes: { class: 'note-prose' } }, onTransaction: refreshEditorState, onSelectionUpdate: refreshEditorState, onUpdate: ({ editor: e }) => { if (!props.note) return; props.note.contentHtml = e.getHTML(); props.note.contentText = e.getText(); if (!props.note.title || props.note.title === '未命名笔记') { const first = e.getText().split('\n').find(Boolean); if (first) props.note.title = first.slice(0, 60) } store.scheduleSave(props.note); if (fimEnabled.value) { clearTimeout(fimTimer); fimTimer = setTimeout(runFim, 2000) } } })
+const editor = useEditor({
+  content: props.note?.contentHtml || '<p></p>',
+  extensions: createNoteExtensions({
+    lowlight,
+    codeBlockNodeView: VueNodeViewRenderer(CodeBlockComponent),
+    placeholder: '写下此刻的想法…'
+  }),
+  editorProps: { attributes: { class: 'note-prose' } },
+  onTransaction: refreshEditorState,
+  onSelectionUpdate: refreshEditorState,
+  onUpdate: ({ editor: instance }) => handleRichEditorUpdate(instance)
+})
 const canUndo = computed(() => { editorStateTick.value; return editor.value?.can().undo() ?? false })
 const canRedo = computed(() => { editorStateTick.value; return editor.value?.can().redo() ?? false })
 const linkActive = computed(() => { editorStateTick.value; return editor.value?.isActive('link') ?? false })
@@ -74,12 +94,282 @@ const knowledgeGroups = computed(() => [
   { id: 'personal', label: t('personal'), items: library.bases.filter(base => base.category === 'personal') },
   { id: 'local', label: t('local'), items: library.bases.filter(base => base.category === 'local') }
 ].filter(group => group.items.length))
-function shouldShowBubbleMenu({ state }) { return !state.selection.empty && state.doc.textBetween(state.selection.from, state.selection.to, '\n').trim().length > 0 }
+function shouldShowBubbleMenu({ state }) { return richMode.value && !aiText.value && !state.selection.empty && state.doc.textBetween(state.selection.from, state.selection.to, '\n').trim().length > 0 }
 const textColorPalette = ['#1c1917', '#dc2626', '#ea580c', '#ca8a04', '#16a34a', '#0891b2', '#2563eb', '#7c3aed', '#db2777']
 const highlightPalette = ['#fef08a', '#fed7aa', '#fecaca', '#bbf7d0', '#bae6fd', '#c7d2fe', '#e9d5ff', '#fbcfe8']
 const currentHeadingLabel = computed(() => { editorStateTick.value; const instance = editor.value; if (!instance) return '标题'; for (const level of [1, 2, 3]) if (instance.isActive('heading', { level })) return `H${level}`; return '正文' })
-watch(() => props.note?.id, () => { savedSelection = null; pendingAiRequest = null; aiConsentOpen.value = false; closeAiPanel(); aiText.value = ''; aiResultAction.value = ''; aiBusy.value = false; aiDialogPosition.value = null; assistantOpen.value = false; assistantBusy.value = false; assistantStreamingText.value = ''; assistantMessages.value = []; assistantSelection.value = null; if (props.note && editor.value) editor.value.commands.setContent(props.note.contentHtml || '<p></p>'); loadExternalProposal() })
-onBeforeUnmount(() => { clearTimeout(fimTimer); stopAiDrag(); editor.value?.destroy() })
+
+function noteContentSignature(note) {
+  if (!note) return ''
+  return JSON.stringify([note.title, note.notebookId, note.contentHtml, note.contentText, note.contentMarkdown || ''])
+}
+
+function scheduleNoteSave(note = props.note) {
+  if (!note) return
+  const signature = noteContentSignature(note)
+  store.scheduleSave(note, () => persistedSignatures.set(note.id, signature))
+}
+
+async function saveDirtyNote(note = props.note) {
+  if (!note || persistedSignatures.get(note.id) === noteContentSignature(note)) return
+  clearTimeout(store.saveTimer)
+  await store.save(note)
+  persistedSignatures.set(note.id, noteContentSignature(note))
+}
+
+function handleRichEditorUpdate(instance) {
+  if (!props.note || applyingEditorContent || editorMode.value !== 'rich') return
+  props.note.contentHtml = sanitizeEditorHtml(instance.getHTML())
+  props.note.contentText = instance.getText()
+  props.note.contentMarkdown = instance.getMarkdown()
+  markdownDraft.value = props.note.contentMarkdown
+  sourceDirty.value = false
+  markdownParseError.value = ''
+  pendingSourceDrafts.delete(props.note.id)
+  if (!props.note.title || props.note.title === '未命名笔记') {
+    const first = instance.getText().split('\n').find(Boolean)
+    if (first) props.note.title = first.slice(0, 60)
+  }
+  scheduleNoteSave(props.note)
+  if (fimEnabled.value) {
+    clearTimeout(fimTimer)
+    fimTimer = setTimeout(runFim, 2000)
+  }
+}
+
+function deriveMarkdown(note = props.note) {
+  if (!note) return ''
+  if (pendingSourceDrafts.has(note.id)) return pendingSourceDrafts.get(note.id)
+  if (note.contentMarkdown || !note.contentHtml) return note.contentMarkdown || ''
+  return editor.value?.getMarkdown?.() || ''
+}
+
+function commitMarkdown(note = props.note, { schedule = true } = {}) {
+  if (!note || !editor.value || !sourceDirty.value) return !markdownParseError.value
+  const source = markdownDraft.value
+  const fallbackHtml = note.contentHtml || '<p></p>'
+  applyingEditorContent = true
+  try {
+    const applied = editor.value.commands.setContent(source, {
+      contentType: 'markdown',
+      emitUpdate: false,
+      errorOnInvalidContent: true
+    })
+    if (!applied) throw new Error('Markdown content was rejected')
+    const safeHtml = sanitizeEditorHtml(editor.value.getHTML())
+    if (safeHtml !== editor.value.getHTML()) {
+      editor.value.commands.setContent(safeHtml || '<p></p>', { emitUpdate: false, errorOnInvalidContent: true })
+    }
+    note.contentMarkdown = source
+    note.contentHtml = sanitizeEditorHtml(editor.value.getHTML())
+    note.contentText = editor.value.getText()
+    sourceDirty.value = false
+    markdownParseError.value = ''
+    pendingSourceDrafts.delete(note.id)
+    if (schedule) scheduleNoteSave(note)
+    return true
+  } catch {
+    pendingSourceDrafts.set(note.id, source)
+    markdownParseError.value = '源码解析失败，尚未保存'
+    try { editor.value.commands.setContent(fallbackHtml, { emitUpdate: false }) } catch {}
+    return false
+  } finally {
+    applyingEditorContent = false
+  }
+}
+
+function queueMarkdownParse() {
+  clearTimeout(markdownParseTimer)
+  markdownParseTimer = setTimeout(() => commitMarkdown(props.note), 150)
+}
+
+function updateMarkdownDraft(value) {
+  if (!props.note) return
+  markdownDraft.value = value
+  sourceDirty.value = true
+  markdownParseError.value = ''
+  pendingSourceDrafts.set(props.note.id, value)
+  queueMarkdownParse()
+}
+
+async function flushLatestContent({ note = props.note, save = false } = {}) {
+  clearTimeout(markdownParseTimer)
+  const valid = !sourceDirty.value || commitMarkdown(note, { schedule: !save })
+  if (valid && save) await saveDirtyNote(note)
+  return valid
+}
+
+function resetEditorSession(note) {
+  clearTimeout(markdownParseTimer)
+  editorMode.value = DEFAULT_NOTE_MODE
+  splitRatio.value = 50
+  modeMenuOpen.value = false
+  markdownParseError.value = ''
+  sourceDirty.value = pendingSourceDrafts.has(note?.id)
+  applyingEditorContent = true
+  if (note && editor.value) editor.value.commands.setContent(note.contentHtml || '<p></p>', { emitUpdate: false })
+  applyingEditorContent = false
+  editor.value?.setEditable(true, false)
+  markdownDraft.value = deriveMarkdown(note)
+  if (sourceDirty.value) markdownParseError.value = '源码解析失败，尚未保存'
+  if (note) persistedSignatures.set(note.id, noteContentSignature(note))
+}
+
+async function changeEditorMode(mode) {
+  if (!editorModes.some(option => option.id === mode)) return
+  modeMenuOpen.value = false
+  if (mode === editorMode.value) return
+  const valid = await flushLatestContent({ save: true })
+  if (!valid && mode === 'rich') return
+  if ((mode === 'source' || mode === 'split') && !sourceDirty.value) markdownDraft.value = deriveMarkdown()
+  editorMode.value = mode
+  editor.value?.setEditable(mode === 'rich', false)
+  closeToolbarMenus()
+  fimSuggestion.value = ''
+  await nextTick()
+  setupSplitObserver()
+}
+
+function toggleModeMenu() {
+  closeToolbarMenus()
+  modeMenuIndex.value = Math.max(0, editorModes.findIndex(mode => mode.id === editorMode.value))
+  modeMenuOpen.value = !modeMenuOpen.value
+  if (modeMenuOpen.value) nextTick(() => focusModeOption())
+}
+
+function focusModeOption() {
+  modeMenuRef.value?.querySelectorAll('[role="menuitemradio"]')?.[modeMenuIndex.value]?.focus()
+}
+
+function moveModeFocus(offset) {
+  modeMenuIndex.value = (modeMenuIndex.value + offset + editorModes.length) % editorModes.length
+  focusModeOption()
+}
+
+function handleModeMenuKeydown(event) {
+  if (event.key === 'ArrowDown') { event.preventDefault(); moveModeFocus(1) }
+  else if (event.key === 'ArrowUp') { event.preventDefault(); moveModeFocus(-1) }
+  else if (event.key === 'Home') { event.preventDefault(); modeMenuIndex.value = 0; focusModeOption() }
+  else if (event.key === 'End') { event.preventDefault(); modeMenuIndex.value = editorModes.length - 1; focusModeOption() }
+  else if (event.key === 'Escape') { event.preventDefault(); modeMenuOpen.value = false }
+}
+
+function handleDocumentPointerDown(event) {
+  if (!event.target.closest('.mode-menu-anchor')) modeMenuOpen.value = false
+}
+
+function updateSplitOrientation() {
+  if (splitWorkspace.value) splitVertical.value = splitWorkspace.value.clientWidth < 720
+}
+
+function setupSplitObserver() {
+  splitResizeObserver?.disconnect()
+  splitResizeObserver = null
+  if (editorMode.value !== 'split' || !splitWorkspace.value || typeof ResizeObserver === 'undefined') return
+  updateSplitOrientation()
+  splitResizeObserver = new ResizeObserver(updateSplitOrientation)
+  splitResizeObserver.observe(splitWorkspace.value)
+}
+
+function stopSplitResize() {
+  if (!splitDragState) return
+  window.removeEventListener('pointermove', resizeSplitPane)
+  window.removeEventListener('pointerup', stopSplitResize)
+  window.removeEventListener('pointercancel', stopSplitResize)
+  splitDragState = null
+}
+
+function resizeSplitPane(event) {
+  if (!splitDragState || event.pointerId !== splitDragState.pointerId) return
+  const rect = splitWorkspace.value?.getBoundingClientRect()
+  if (!rect) return
+  const position = splitVertical.value ? event.clientY - rect.top : event.clientX - rect.left
+  const total = splitVertical.value ? rect.height : rect.width
+  if (total) splitRatio.value = clampSplitRatio((position / total) * 100)
+}
+
+function startSplitResize(event) {
+  if (event.button !== 0) return
+  splitDragState = { pointerId: event.pointerId }
+  window.addEventListener('pointermove', resizeSplitPane)
+  window.addEventListener('pointerup', stopSplitResize)
+  window.addEventListener('pointercancel', stopSplitResize)
+  event.preventDefault()
+}
+
+function synchronizeSplitScroll(origin, payload) {
+  if (editorMode.value !== 'split' || (scrollSyncSource && scrollSyncSource !== origin)) return
+  scrollSyncSource = origin
+  cancelAnimationFrame(scrollSyncFrame)
+  scrollSyncFrame = requestAnimationFrame(() => {
+    if (origin === 'source') {
+      const progress = scrollProgress(payload.scrollTop, payload.scrollHeight, payload.clientHeight)
+      const target = previewScroller.value
+      if (target) target.scrollTop = scrollOffset(progress, target.scrollHeight, target.clientHeight)
+    } else {
+      const target = previewScroller.value
+      if (target) sourceEditorRef.value?.setScrollProgress(scrollProgress(target.scrollTop, target.scrollHeight, target.clientHeight))
+    }
+    requestAnimationFrame(() => { scrollSyncSource = '' })
+  })
+}
+
+function handlePreviewScroll() {
+  synchronizeSplitScroll('preview', {})
+}
+
+async function handleEditorLink(event) {
+  if (editorMode.value !== 'read') return
+  const link = event.target.closest('a[href]')
+  if (!link) return
+  event.preventDefault()
+  const href = normalizeLinkHref(link.getAttribute('href'))
+  if (!href) return
+  if (window.__TAURI_INTERNALS__) await openUrl(href)
+  else window.open(href, '_blank', 'noopener,noreferrer')
+}
+
+function resetTransientEditorState() {
+  savedSelection = null
+  pendingAiRequest = null
+  aiConsentOpen.value = false
+  closeAiPanel()
+  aiText.value = ''
+  aiResultAction.value = ''
+  aiBusy.value = false
+  aiDialogPosition.value = null
+  assistantOpen.value = false
+  assistantBusy.value = false
+  assistantStreamingText.value = ''
+  assistantMessages.value = []
+  assistantSelection.value = null
+}
+
+watch(() => props.note?.id, async (id, previousId) => {
+  if (previousId && previousId !== id) {
+    const previous = [...store.notes, ...store.deleted].find(note => note.id === previousId)
+    if (previous) await flushLatestContent({ note: previous, save: true })
+  }
+  resetTransientEditorState()
+  resetEditorSession(props.note)
+  await nextTick()
+  setupSplitObserver()
+  loadExternalProposal()
+}, { immediate: true, flush: 'post' })
+
+watch(assistantOpen, () => nextTick(setupSplitObserver))
+
+onBeforeUnmount(() => {
+  clearTimeout(fimTimer)
+  clearTimeout(markdownParseTimer)
+  stopAiDrag()
+  stopSplitResize()
+  splitResizeObserver?.disconnect()
+  cancelAnimationFrame(scrollSyncFrame)
+  document.removeEventListener('pointerdown', handleDocumentPointerDown)
+  void flushLatestContent({ save: true })
+  editor.value?.destroy()
+})
 async function loadExternalProposal(id = props.proposalId) {
   if (!id || !props.note) return
   try {
@@ -94,7 +384,13 @@ async function loadExternalProposal(id = props.proposalId) {
   } catch {}
 }
 watch(() => props.proposalId, id => loadExternalProposal(id))
-onMounted(async () => { await appStore.initialize(); if (!library.bases.length) { try { await library.load() } catch {} }; await loadExternalProposal() })
+onMounted(async () => {
+  document.addEventListener('pointerdown', handleDocumentPointerDown)
+  await appStore.initialize()
+  if (!library.bases.length) { try { await library.load() } catch {} }
+  await loadExternalProposal()
+  setupSplitObserver()
+})
 function toggle(type) { editor.value?.chain().focus()[type]().run() }
 function hasNoteContextConsent() {
   const key = `tiny-note-context-consent:${contextConsentModelId.value}`
@@ -112,13 +408,15 @@ function confirmAiConsent() {
   if (request?.kind === 'assistant') sendAssistantMessage(request.prompt)
   else if (request) runAi(request.action, request.requestText, request.instruction)
 }
-async function runAi(action = aiAction.value, requestText = props.note?.contentText || '', instruction = null) {
+async function runAi(action = aiAction.value, requestText = null, instruction = null) {
   if (!props.note || aiBusy.value) return
   if (!hasNoteContextConsent()) {
     pendingAiRequest = { kind: 'editor', action, requestText, instruction }
     aiConsentOpen.value = true
     return
   }
+  if (!await flushLatestContent()) return
+  if (requestText == null || editorMode.value !== 'rich') requestText = props.note.contentText || ''
   const actionLabel = aiActionLabels[action] || 'AI 写作'
   aiBusy.value = true
   aiText.value = `正在生成${actionLabel}…`
@@ -129,7 +427,7 @@ async function runAi(action = aiAction.value, requestText = props.note?.contentT
   aiRequestId.value = crypto.randomUUID()
   clearTimeout(store.saveTimer)
   try {
-    await store.save(props.note)
+    await saveDirtyNote(props.note)
   } catch {
     aiText.value = `${actionLabel}失败：文章保存失败，请稍后重试。`
     aiBusy.value = false
@@ -192,8 +490,9 @@ async function sendAssistantMessage(prompt) {
     aiConsentOpen.value = true
     return
   }
+  if (!await flushLatestContent()) return
   clearTimeout(store.saveTimer)
-  await store.save(props.note)
+  await saveDirtyNote(props.note)
   const message = prompt.trim()
   assistantMessages.value.push({ role: 'user', content: message, references: assistantReferences() })
   assistantBusy.value = true
@@ -253,35 +552,45 @@ async function stopAssistant() {
 }
 async function copyAssistantMessage(content) { if (content) await navigator.clipboard?.writeText(content) }
 async function stopAi() { if (!aiRequestId.value) return; if (window.__TAURI_INTERNALS__) await (await import('../services/tauri')).invoke('note_ai_cancel', { requestId: aiRequestId.value }); aiBusy.value = false }
-function exportMarkdown() { if (!props.note || !editor.value) return; const markdown = new TurndownService().turndown(editor.value.getHTML()); const blob = new Blob([markdown], { type: 'text/markdown;charset=utf-8' }); const url = URL.createObjectURL(blob); const link = document.createElement('a'); link.href = url; link.download = `${props.note.title || 'note'}.md`; link.click(); URL.revokeObjectURL(url) }
+async function exportMarkdown() { if (!props.note || !editor.value || !await flushLatestContent()) return; const markdown = props.note.contentMarkdown || editor.value.getMarkdown(); const blob = new Blob([markdown], { type: 'text/markdown;charset=utf-8' }); const url = URL.createObjectURL(blob); const link = document.createElement('a'); link.href = url; link.download = `${props.note.title || 'note'}.md`; link.click(); URL.revokeObjectURL(url) }
 function printNote() { window.print() }
 async function openRevisions() { if (!props.note) return; moreOpen.value = false; revisionsOpen.value = true; revisionsBusy.value = true; try { revisions.value = await (await import('../services/tauri')).invoke('note_revision_list', { noteId: props.note.id }) } finally { revisionsBusy.value = false } }
-async function restoreRevision(revision) { if (!window.confirm('恢复这个版本？当前内容也会先保存为可恢复版本。')) return; const updated = await (await import('../services/tauri')).invoke('note_revision_restore', { id: revision.id }); Object.assign(props.note, updated); editor.value?.commands.setContent(updated.contentHtml || '<p></p>', { emitUpdate: false }); revisions.value = await (await import('../services/tauri')).invoke('note_revision_list', { noteId: props.note.id }) }
+async function restoreRevision(revision) { if (!window.confirm('恢复这个版本？当前内容也会先保存为可恢复版本。')) return; const updated = await (await import('../services/tauri')).invoke('note_revision_restore', { id: revision.id }); Object.assign(props.note, updated); applyingEditorContent = true; editor.value?.commands.setContent(updated.contentHtml || '<p></p>', { emitUpdate: false }); applyingEditorContent = false; markdownDraft.value = updated.contentMarkdown || editor.value?.getMarkdown?.() || ''; sourceDirty.value = false; markdownParseError.value = ''; pendingSourceDrafts.delete(updated.id); persistedSignatures.set(updated.id, noteContentSignature(updated)); revisions.value = await (await import('../services/tauri')).invoke('note_revision_list', { noteId: props.note.id }) }
 function formatRevisionTime(value) { try { return new Intl.DateTimeFormat('zh-CN', { dateStyle: 'medium', timeStyle: 'short' }).format(new Date(value)) } catch { return value } }
 function restoreSavedSelection() { if (!editor.value || !savedSelection) return false; return editor.value.chain().focus().setTextSelection(savedSelection).run() }
-function prepareAiHtml(content) { return DOMPurify.sanitize(marked.parse(content || '', { breaks: true, gfm: true })) }
 async function applyAiResult(mode) {
   if (!editor.value || !aiText.value || !aiProposal.value) return
+  if (mode === 'insert' && editorMode.value !== 'rich') {
+    window.alert('源码、分栏和阅读模式没有可靠插入位置，请切换到富文本模式后再应用插入。')
+    return
+  }
+  if (!await flushLatestContent()) return
   const beforeHtml = editor.value.getHTML()
   const beforeText = editor.value.getText()
-  const html = prepareAiHtml(aiText.value)
-  const chain = editor.value.chain().focus()
-  if (savedSelection) chain.setTextSelection(mode === 'insert' ? savedSelection.to : savedSelection)
-  else if (mode === 'replace') chain.selectAll()
-  if (mode === 'replace') chain.insertContent(html)
-  else chain.insertContent(html)
-  chain.run()
+  const beforeMarkdown = props.note.contentMarkdown || editor.value.getMarkdown()
+  const beforeDraft = markdownDraft.value
+  if (mode === 'replace') {
+    markdownDraft.value = aiText.value
+    sourceDirty.value = true
+    if (!commitMarkdown(props.note, { schedule: false })) return
+  } else {
+    const chain = editor.value.chain().focus()
+    if (savedSelection) chain.setTextSelection(savedSelection.to)
+    chain.insertContent(aiText.value, { contentType: 'markdown' }).run()
+  }
   clearTimeout(store.saveTimer)
   try {
     if (!window.__TAURI_INTERNALS__) {
-      await store.save(props.note)
+      await saveDirtyNote(props.note)
       aiProposal.value.status = 'applied'
       savedSelection = null
       await dismissAiResult()
       return
     }
-    const updated = await (await import('../services/tauri')).invoke('note_edit_apply', { proposalId: aiProposal.value.id, expectedUpdatedAt: aiProposal.value.baseUpdatedAt, contentHtml: editor.value.getHTML(), contentText: editor.value.getText() })
+    const updated = await (await import('../services/tauri')).invoke('note_edit_apply', { proposalId: aiProposal.value.id, expectedUpdatedAt: aiProposal.value.baseUpdatedAt, contentHtml: props.note.contentHtml, contentText: props.note.contentText, contentMarkdown: props.note.contentMarkdown || editor.value.getMarkdown() })
     Object.assign(props.note, updated)
+    markdownDraft.value = updated.contentMarkdown || editor.value.getMarkdown()
+    persistedSignatures.set(updated.id, noteContentSignature(updated))
     aiProposal.value.status = 'applied'
     savedSelection = null
     dismissAiResult()
@@ -289,6 +598,9 @@ async function applyAiResult(mode) {
     editor.value.commands.setContent(beforeHtml, { emitUpdate: false })
     props.note.contentHtml = beforeHtml
     props.note.contentText = beforeText
+    props.note.contentMarkdown = beforeMarkdown
+    markdownDraft.value = beforeDraft
+    sourceDirty.value = false
     window.alert(error?.code === 'proposal_stale' ? '文章已经发生变化，请重新生成修改建议。' : '应用修改失败，请重试。')
   }
 }
@@ -359,7 +671,7 @@ function openInConversation() {
   closeAiPanel()
   openAssistant(captureAssistantSelection())
 }
-async function runFim() { if (!fimEnabled.value || !editor.value || !props.note?.contentText) return; const id = crypto.randomUUID(); const channel = new Channel(); let result = ''; channel.onmessage = event => { if (event.type === 'delta') result += event.text; if (event.type === 'completed') fimSuggestion.value = result }; try { await (await import('../services/tauri')).invoke('note_fim_stream', { request: { requestId: id, action: 'continue_write', text: props.note.contentText.slice(-800), instruction: `Continue naturally. Context after cursor: ${props.note.contentText.slice(-400)}`, modelProfileId: null }, onEvent: channel }) } catch { fimSuggestion.value = '' } }
+async function runFim() { if (editorMode.value !== 'rich' || !fimEnabled.value || !editor.value || !props.note?.contentText) return; const id = crypto.randomUUID(); const channel = new Channel(); let result = ''; channel.onmessage = event => { if (event.type === 'delta') result += event.text; if (event.type === 'completed') fimSuggestion.value = result }; try { await (await import('../services/tauri')).invoke('note_fim_stream', { request: { requestId: id, action: 'continue_write', text: props.note.contentText.slice(-800), instruction: `Continue naturally. Context after cursor: ${props.note.contentText.slice(-400)}`, modelProfileId: null }, onEvent: channel }) } catch { fimSuggestion.value = '' } }
 function acceptFim() { if (fimSuggestion.value && editor.value) { editor.value.commands.insertContent(fimSuggestion.value); fimSuggestion.value = '' } }
 function dismissFim() { fimSuggestion.value = '' }
 function insertCodeBlock() { editor.value?.chain().focus().toggleCodeBlock().run(); insertOpen.value = false }
@@ -429,6 +741,7 @@ function editLink() {
 }
 async function addToKnowledge(knowledgeBaseId) {
   if (!props.note || !knowledgeBaseId) return
+  if (!await flushLatestContent()) return
   try { await library.addNoteReference(knowledgeBaseId, props.note); knowledgeMenuOpen.value = false } catch (error) { window.alert(error?.message || '添加到知识库失败，请重试') }
 }
 async function createKnowledgeFromEditor() {
@@ -436,13 +749,13 @@ async function createKnowledgeFromEditor() {
   if (!name?.trim()) return
   try { await library.create(name.trim(), 'personal'); if (library.activeId) await addToKnowledge(library.activeId) } catch (error) { window.alert(error?.message || '创建知识库失败，请重试') }
 }
-const title = computed({ get: () => props.note?.title || '', set: v => { if (props.note) { props.note.title = v; store.scheduleSave(props.note) } } })
+const title = computed({ get: () => props.note?.title || '', set: v => { if (props.note && editorMode.value !== 'read') { props.note.title = v; scheduleNoteSave(props.note) } } })
 </script>
 <template>
   <div v-if="note" class="note-editor-shell">
-    <section class="editor-panel">
-    <div class="toolbar friday-editor-toolbar">
-      <div class="toolbar-left-group">
+    <section class="editor-panel" :class="{ 'is-code-mode': codeMode, 'is-read-mode': editorMode === 'read' }">
+    <div class="toolbar friday-editor-toolbar" :class="{ 'is-compact': !richMode, 'has-stop': aiBusy }">
+      <div v-show="richMode" key="toolbar-rich-controls" class="toolbar-left-group">
         <button :title="t('undo')" :disabled="!canUndo" @click="editor?.chain().focus().undo().run()"><Undo2 :size="19" /></button>
         <button :title="t('redo')" :disabled="!canRedo" @click="editor?.chain().focus().redo().run()"><Redo2 :size="19" /></button>
         <button title="清除格式" @click="toggle('clearNodes')"><Eraser :size="19" /></button>
@@ -468,7 +781,7 @@ const title = computed({ get: () => props.note?.title || '', set: v => { if (pro
         <button title="居中" @click="editor?.chain().focus().setTextAlign('center').run()"><AlignCenter :size="19" /></button>
         <button title="右对齐" @click="editor?.chain().focus().setTextAlign('right').run()"><AlignRight :size="19" /></button>
       </div>
-      <div class="toolbar-right-group">
+      <div key="toolbar-mode-controls" class="toolbar-right-group">
         <span class="toolbar-menu-anchor knowledge-menu-anchor"><button :title="t('addToKnowledge')" @click="closeToolbarMenus(); knowledgeMenuOpen = !knowledgeMenuOpen"><PlusCircle :size="19" /></button><div v-if="knowledgeMenuOpen" class="toolbar-knowledge-menu" @click.stop>
           <button class="knowledge-menu-create" @click="createKnowledgeFromEditor"><Plus :size="14" />{{ t('newKnowledge') }}</button>
           <div class="note-context-divider"></div>
@@ -480,15 +793,41 @@ const title = computed({ get: () => props.note?.title || '', set: v => { if (pro
           </template>
           <span v-else class="toolbar-knowledge-empty">{{ t('noKnowledgeBases') }}</span>
         </div></span>
+        <span class="toolbar-menu-anchor mode-menu-anchor">
+          <button type="button" class="editor-mode-trigger" :aria-expanded="modeMenuOpen" aria-haspopup="menu" :title="`文章模式：${currentMode.label}`" @click="toggleModeMenu" @keydown.esc.stop="modeMenuOpen = false">
+            <component :is="currentMode.icon" :size="16" />
+            <span class="editor-mode-label">{{ currentMode.label }}</span>
+            <ChevronDown :size="13" />
+          </button>
+          <div v-if="modeMenuOpen" ref="modeMenuRef" class="editor-mode-menu" role="menu" aria-label="文章模式" @keydown="handleModeMenuKeydown" @click.stop>
+            <button v-for="(mode, index) in editorModes" :key="mode.id" type="button" role="menuitemradio" :aria-checked="editorMode === mode.id" :tabindex="index === modeMenuIndex ? 0 : -1" @focus="modeMenuIndex = index" @click="changeEditorMode(mode.id)">
+              <component :is="mode.icon" :size="15" />
+              <span><strong>{{ mode.label }}</strong><small>{{ mode.description }}</small></span>
+              <Check v-if="editorMode === mode.id" :size="14" class="editor-mode-check" />
+            </button>
+          </div>
+        </span>
         <span class="toolbar-menu-anchor"><button title="更多" @click="knowledgeMenuOpen = false; moreOpen = !moreOpen"><MoreHorizontal :size="20" /></button><div v-if="moreOpen" class="toolbar-more-menu"><button @click="openRevisions"><RotateCcw :size="15" /> AI 版本历史</button><button @click="exportMarkdown(); moreOpen = false"><Download :size="15" /> 导出 Markdown</button><button @click="printNote(); moreOpen = false"><Printer :size="15" /> 打印 / 保存 PDF</button><button class="danger" @click="emit('deleted', note.id); moreOpen = false"><Trash2 :size="15" /> 删除笔记</button></div></span>
         <button class="ai-button" :class="{ pressed: assistantOpen }" @click="toggleAssistant"><Layers :size="17" /> Tiny Note 助理</button>
         <button v-if="aiBusy" class="stop-button" @click="stopAi">{{ t('stop') }}</button>
       </div>
     </div>
-    <div class="editor-head"><input v-model="title" class="title-input" :placeholder="t('untitled')" /><div class="editor-meta"><span :class="{ saving: store.saving }">{{ store.saving ? t('saving') : t('save') }}</span></div></div>
+    <div class="editor-head"><input v-model="title" class="title-input" :readonly="editorMode === 'read'" :aria-readonly="editorMode === 'read'" :placeholder="t('untitled')" /><div class="editor-meta"><span :class="{ saving: store.saving }">{{ store.saving ? t('saving') : t('save') }}</span></div></div>
     <button class="toc-btn" :class="{ 'is-open': tocVisible }" title="目录" aria-label="目录" @click="emit('toggle-toc')"><span class="toc-char">目</span><span class="toc-char">录</span></button>
-    <EditorContent :editor="editor" class="editor-content" @keydown.tab.prevent="acceptFim" @keydown.esc="dismissFim" />
-    <BubbleMenu v-if="editor && !aiText" :editor="editor" :options="{ duration: 120, placement: 'top', maxWidth: 'none' }" :should-show="shouldShowBubbleMenu" class="tiny-note-bubble-menu">
+    <div ref="splitWorkspace" class="editor-workspace" :class="[`mode-${editorMode}`, { 'is-vertical': splitVertical }]">
+      <MarkdownSourceEditor v-if="editorMode === 'source'" key="source-only" ref="sourceEditorRef" :model-value="markdownDraft" aria-label="Markdown 源码编辑器" @update:model-value="updateMarkdownDraft" />
+      <template v-if="editorMode === 'split'" key="split-layout">
+        <div key="split-source" class="split-source-pane" :style="splitPaneStyle">
+          <MarkdownSourceEditor ref="sourceEditorRef" :model-value="markdownDraft" aria-label="Markdown 源码编辑器" @update:model-value="updateMarkdownDraft" @scroll="synchronizeSplitScroll('source', $event)" />
+        </div>
+        <div key="split-divider" class="split-divider" role="separator" :aria-orientation="splitVertical ? 'horizontal' : 'vertical'" aria-label="调整源码与预览比例" aria-valuemin="30" aria-valuemax="70" :aria-valuenow="Math.round(splitRatio)" @pointerdown="startSplitResize"><span></span></div>
+      </template>
+      <div v-show="editorMode !== 'source'" key="editor-render" ref="previewScroller" class="editor-render-pane" :class="{ 'split-preview-pane': editorMode === 'split' }" @scroll.passive="handlePreviewScroll">
+        <EditorContent :editor="editor" class="editor-content" :class="{ 'split-preview-content': editorMode === 'split', 'read-content': editorMode === 'read' }" @click="handleEditorLink" @keydown.tab.prevent="acceptFim" @keydown.esc="dismissFim" />
+      </div>
+      <div v-if="markdownParseError" class="markdown-parse-error" role="alert">{{ markdownParseError }}</div>
+    </div>
+    <BubbleMenu v-if="editor" v-show="!aiText && richMode" :editor="editor" :options="{ duration: 120, placement: 'top', maxWidth: 'none' }" :should-show="shouldShowBubbleMenu" class="tiny-note-bubble-menu">
       <div v-if="aiPanelOpen" class="tiny-note-ai-input-wrapper" @mousedown.stop>
         <textarea ref="aiInputRef" v-model="aiPrompt" class="tiny-note-ai-textarea" rows="1" placeholder="基于选中文本：或许你还不知道从何开始，别担心，一切都是慢慢…" @keydown.enter.exact.prevent="sendCustomAi" @keydown.esc.prevent="closeAiPanel"></textarea>
         <div class="tiny-note-ai-input-actions">
@@ -528,7 +867,7 @@ const title = computed({ get: () => props.note?.title || '', set: v => { if (pro
         <button class="bubble-btn" title="复制" @mousedown.prevent="copySelection"><Copy :size="14" /></button>
       </div>
     </BubbleMenu>
-    <div v-if="fimSuggestion" class="fim-suggestion">{{ fimSuggestion }} <small>Tab 接受 · Esc 放弃</small></div>
+    <div v-if="fimSuggestion && richMode" class="fim-suggestion">{{ fimSuggestion }} <small>Tab 接受 · Esc 放弃</small></div>
     <div v-if="aiConsentOpen" class="editor-dialog-overlay" @click.self="cancelAiConsent">
       <div class="editor-dialog ai-consent-dialog" role="dialog" aria-modal="true" aria-labelledby="ai-consent-title">
         <div class="editor-dialog-header"><strong id="ai-consent-title"><Sparkles :size="16" />允许 AI 使用文章上下文</strong><button class="editor-dialog-close" title="关闭" aria-label="关闭" @click="cancelAiConsent">×</button></div>
@@ -545,7 +884,7 @@ const title = computed({ get: () => props.note?.title || '', set: v => { if (pro
           <div v-if="aiSources.length" class="ai-source-list"><span v-for="(source, index) in aiSources" :key="source.id" :title="source.snippet">[{{ index + 1 }}] {{ source.title }}<small v-if="source.truncated">已截取</small></span></div>
         </div>
         <div class="ai-output-footer"><div class="ai-output-footer-meta"><span>内容由 AI 生成 <ShieldCheck :size="13" /></span><span>已生成{{ aiCharCount }}字</span></div><div class="ai-output-feedback"><button type="button" :class="{ active: aiFeedback === 'like' }" title="有帮助" @click="toggleAiFeedback('like')"><ThumbsUp :size="16" /></button><button type="button" :class="{ active: aiFeedback === 'dislike' }" title="没帮助" @click="toggleAiFeedback('dislike')"><ThumbsDown :size="16" /></button><button type="button" title="复制" @click="copyAi"><Copy :size="16" /></button></div></div>
-        <div class="ai-output-actions"><div><button type="button" class="ai-output-action rewrite" :disabled="aiBusy" @click="rewriteAi"><RotateCcw :size="14" />重写</button><button type="button" class="ai-output-action discard" :disabled="aiBusy" @click="dismissAiResult"><Trash2 :size="14" />弃用</button></div><div><button type="button" class="ai-output-action replace" :disabled="aiBusy || !aiText || !aiProposal" @click="replaceWithAi">应用替换</button><button type="button" class="ai-output-action insert" :disabled="aiBusy || !aiText || !aiProposal" @click="insertAi">应用插入</button></div></div>
+        <div class="ai-output-actions"><div><button type="button" class="ai-output-action rewrite" :disabled="aiBusy" @click="rewriteAi"><RotateCcw :size="14" />重写</button><button type="button" class="ai-output-action discard" :disabled="aiBusy" @click="dismissAiResult"><Trash2 :size="14" />弃用</button></div><div><button type="button" class="ai-output-action replace" :disabled="aiBusy || !aiText || !aiProposal" @click="replaceWithAi">应用替换</button><button type="button" class="ai-output-action insert" :disabled="aiBusy || !aiText || !aiProposal || !richMode" :title="richMode ? '在当前光标位置插入' : '请切换到富文本模式后应用插入'" @click="insertAi">应用插入</button></div></div>
       </div>
     </div>
     <div v-if="imageDialogOpen" class="editor-dialog-overlay" @click.self="imageDialogOpen = false">
