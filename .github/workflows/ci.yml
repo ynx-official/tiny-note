@@ -50,7 +50,7 @@ jobs:
 
   windows-bundle:
     needs: checks
-    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    if: github.event_name == 'pull_request' || (github.event_name == 'push' && github.ref == 'refs/heads/main')
     runs-on: windows-latest
     permissions:
       contents: write
@@ -75,7 +75,7 @@ jobs:
 
   macos-bundle:
     needs: checks
-    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    if: github.event_name == 'pull_request' || (github.event_name == 'push' && github.ref == 'refs/heads/main')
     strategy:
       matrix:
         include:
