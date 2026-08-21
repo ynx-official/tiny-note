@@ -76,14 +76,17 @@ describe('NoteEditor article modes', () => {
     await flushPromises()
 
     expect(wrapper.find('.ai-button').exists()).toBe(false)
+    expect(wrapper.get('.friday-editor-toolbar').classes()).toContain('with-assistant')
     const sidebar = wrapper.getComponent(NoteAssistantSidebar)
     await sidebar.vm.$emit('close')
     await flushPromises()
 
     expect(wrapper.find('.ai-button').exists()).toBe(false)
+    expect(wrapper.get('.friday-editor-toolbar').classes()).toContain('with-assistant')
     await vi.advanceTimersByTimeAsync(250)
     await flushPromises()
     expect(wrapper.get('.ai-button').text()).toContain('Tiny Note 助理')
+    expect(wrapper.get('.friday-editor-toolbar').classes()).not.toContain('with-assistant')
     wrapper.unmount()
   })
 

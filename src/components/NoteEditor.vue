@@ -1018,7 +1018,7 @@ const title = computed({
 <template>
   <div v-if="note" class="note-editor-shell">
     <section class="editor-panel" :class="{ 'is-code-mode': codeMode, 'is-read-mode': editorMode === 'read' }">
-    <div class="toolbar friday-editor-toolbar" :class="{ 'is-compact': !richMode }">
+    <div class="toolbar friday-editor-toolbar" :class="{ 'is-compact': !richMode, 'with-assistant': !assistantTriggerVisible }">
       <div v-show="richMode" key="toolbar-rich-controls" class="toolbar-left-group">
         <button :title="t('undo')" :disabled="!canUndo" @click="editor?.chain().focus().undo().run()"><Undo2 :size="19" /></button>
         <button :title="t('redo')" :disabled="!canRedo" @click="editor?.chain().focus().redo().run()"><Redo2 :size="19" /></button>
