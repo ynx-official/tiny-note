@@ -1,5 +1,6 @@
 import { createPinia } from 'pinia'
 import { mount, flushPromises } from '@vue/test-utils'
+import { EditorContent } from '@tiptap/vue-3'
 import { createI18n } from 'vue-i18n'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { messages } from '../i18n'
@@ -247,6 +248,7 @@ describe('NoteEditor article modes', () => {
   })
 
   it('replaces only the proposal selection in instant editing mode', async () => {
+    vi.useFakeTimers()
     const active = note('note-ai-selection')
     localStorage.setItem('tiny-note-browser-state', JSON.stringify({
       notes: [active],
@@ -264,8 +266,26 @@ describe('NoteEditor article modes', () => {
       }]
     }))
     const wrapper = await mountEditor(active, { proposalId: 'proposal-ai-selection' })
+    const tiptapEditor = wrapper.getComponent(EditorContent).props('editor')
+    tiptapEditor.commands.setTextSelection({ from: 5, to: 7 })
+    expect(tiptapEditor.state.selection.empty).toBe(false)
 
     await wrapper.get('.ai-output-action.replace').trigger('click')
+    await flushPromises()
+
+    expect(tiptapEditor.state.selection.empty).toBe(true)
+    expect(wrapper.get('.note-prose s').text()).toBe('正文')
+    expect(wrapper.get('.note-prose mark[data-color="#fef08a"]').text()).toBe('新的正文')
+    expect(active.contentMarkdown).toBe('# 标题\n\n正文')
+
+    await vi.advanceTimersByTimeAsync(500)
+    await flushPromises()
+
+    expect(wrapper.get('.note-prose s').text()).toBe('正文')
+    expect(wrapper.get('.note-prose mark[data-color="#fef08a"]').text()).toBe('新的正文')
+    expect(active.contentMarkdown).toBe('# 标题\n\n正文')
+
+    await wrapper.get('.editor-content').trigger('mousedown')
     await flushPromises()
 
     expect(active.contentText.replace(/\s+/g, ' ')).toBe('标题 新的正文')
@@ -274,6 +294,7 @@ describe('NoteEditor article modes', () => {
   })
 
   it('preserves existing inline Markdown formatting for a plain-text AI replacement', async () => {
+    vi.useFakeTimers()
     const active = {
       ...note('note-ai-formatting'),
       contentHtml: '<p><strong>重点内容</strong> 保留段落</p>',
@@ -300,8 +321,56 @@ describe('NoteEditor article modes', () => {
     await wrapper.get('.ai-output-action.replace').trigger('click')
     await flushPromises()
 
+    await wrapper.get('.editor-content').trigger('mousedown')
+    await flushPromises()
+
     expect(active.contentMarkdown).toBe('**核心内容** 保留段落')
     expect(active.contentHtml).toContain('<strong>核心内容</strong>')
+    wrapper.unmount()
+  })
+
+  it('previews inserted AI content with a yellow highlight before committing it', async () => {
+    vi.useFakeTimers()
+    const active = note('note-ai-insert')
+    localStorage.setItem('tiny-note-browser-state', JSON.stringify({
+      notes: [active],
+      editProposals: [{
+        id: 'proposal-ai-insert',
+        noteId: active.id,
+        action: 'continue_write',
+        originalText: '正文',
+        replacementMarkdown: '补充内容',
+        selectionFrom: 5,
+        selectionTo: 7,
+        baseUpdatedAt: active.updatedAt,
+        status: 'draft',
+        sources: []
+      }]
+    }))
+    const wrapper = await mountEditor(active, { proposalId: 'proposal-ai-insert' })
+    const tiptapEditor = wrapper.getComponent(EditorContent).props('editor')
+    tiptapEditor.commands.setTextSelection({ from: 5, to: 7 })
+    expect(tiptapEditor.state.selection.empty).toBe(false)
+
+    await wrapper.get('.ai-output-action.insert').trigger('click')
+    await flushPromises()
+
+    expect(tiptapEditor.state.selection.empty).toBe(true)
+    expect(wrapper.find('.note-prose s').exists()).toBe(false)
+    expect(wrapper.get('.note-prose mark[data-color="#fef08a"]').text()).toBe('补充内容')
+    expect(active.contentMarkdown).toBe('# 标题\n\n正文')
+
+    await vi.advanceTimersByTimeAsync(500)
+    await flushPromises()
+
+    expect(wrapper.get('.note-prose mark[data-color="#fef08a"]').text()).toBe('补充内容')
+    expect(active.contentMarkdown).toBe('# 标题\n\n正文')
+
+    await wrapper.get('.editor-content').trigger('mousedown')
+    await flushPromises()
+
+    expect(wrapper.find('.note-prose mark[data-color="#fef08a"]').exists()).toBe(false)
+    expect(active.contentMarkdown).toContain('正文补充内容')
     wrapper.unmount()
   })
 
@@ -359,6 +428,67 @@ describe('NoteEditor article modes', () => {
     await flushPromises()
 
     expect(wrapper.get('.ai-output-content').text()).toContain('当前模型还没有配置 API Key')
+    wrapper.unmount()
+  })
+
+  it('keeps the AI output panel mounted while rewriting', async () => {
+    vi.useFakeTimers()
+    localStorage.setItem('tiny-note-context-consent:default', 'granted')
+    const active = note('note-ai-rewrite')
+    localStorage.setItem('tiny-note-browser-state', JSON.stringify({
+      notes: [active],
+      editProposals: [{
+        id: 'proposal-ai-rewrite',
+        noteId: active.id,
+        action: 'polish',
+        originalText: '正文',
+        replacementMarkdown: '润色后的正文',
+        selectionFrom: 5,
+        selectionTo: 7,
+        baseUpdatedAt: active.updatedAt,
+        status: 'draft',
+        sources: []
+      }]
+    }))
+    const wrapper = await mountEditor(active, { proposalId: 'proposal-ai-rewrite' })
+    const panel = wrapper.get('.ai-output-panel').element
+
+    await wrapper.get('.ai-output-action.rewrite').trigger('click')
+    await flushPromises()
+
+    expect(wrapper.get('.ai-output-panel').element).toBe(panel)
+    wrapper.unmount()
+  })
+
+  it('keeps only AI actions in the selection menu and renders output Markdown', async () => {
+    const active = note('note-ai-markdown-output')
+    localStorage.setItem('tiny-note-browser-state', JSON.stringify({
+      notes: [active],
+      editProposals: [{
+        id: 'proposal-ai-markdown-output',
+        noteId: active.id,
+        action: 'polish',
+        originalText: '正文',
+        replacementMarkdown: '## 建议标题\n\n- 第一项\n- 第二项\n\n**重点内容**<script>alert(1)</script>',
+        selectionFrom: 5,
+        selectionTo: 7,
+        baseUpdatedAt: active.updatedAt,
+        status: 'draft',
+        sources: []
+      }]
+    }))
+    const wrapper = await mountEditor(active, { proposalId: 'proposal-ai-markdown-output' })
+    const bubble = wrapper.get('.tiny-note-bubble-content')
+
+    expect(bubble.find('button[title="粗体"]').exists()).toBe(false)
+    expect(bubble.find('button[title="斜体"]').exists()).toBe(false)
+    expect(bubble.find('button[title="下划线"]').exists()).toBe(false)
+    expect(bubble.find('button[title="复制"]').exists()).toBe(false)
+    expect(bubble.get('button[title="在对话中打开"]').classes()).not.toContain('chat-open-btn')
+    expect(wrapper.get('.ai-output-markdown h2').text()).toBe('建议标题')
+    expect(wrapper.findAll('.ai-output-markdown li').map(item => item.text())).toEqual(['第一项', '第二项'])
+    expect(wrapper.get('.ai-output-markdown strong').text()).toBe('重点内容')
+    expect(wrapper.find('.ai-output-markdown script').exists()).toBe(false)
     wrapper.unmount()
   })
 

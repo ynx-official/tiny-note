@@ -2,6 +2,7 @@
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { EditorContent, useEditor } from '@tiptap/vue-3'
 import { BubbleMenu } from '@tiptap/vue-3/menus'
+import { TextSelection } from '@tiptap/pm/state'
 import { Channel } from '@tauri-apps/api/core'
 import { openUrl } from '@tauri-apps/plugin-opener'
 import { createLowlight } from 'lowlight'
@@ -19,6 +20,7 @@ import rust from 'highlight.js/lib/languages/rust'
 import { VueNodeViewRenderer } from '@tiptap/vue-3'
 import CodeBlockComponent from './CodeBlockComponent.vue'
 import MarkdownSourceEditor from './MarkdownSourceEditor.vue'
+import MarkdownMessage from './MarkdownMessage.vue'
 import NoteAssistantSidebar from './NoteAssistantSidebar.vue'
 import { BookOpen, Bold, CalendarDays, Check, ChevronDown, CircleHelp, Columns2, Copy, Eye, FileCode2, FileText, Italic, Languages, Maximize2, MessageSquare, RotateCcw, Send, ShieldCheck, Table2, ThumbsDown, ThumbsUp, Underline as UnderlineIcon, Strikethrough, List, ListOrdered, ListChecks, Quote, Code2, Undo2, Redo2, Eraser, Link2, Highlighter, PenLine, AlignLeft, AlignCenter, AlignRight, Plus, PlusCircle, MoreHorizontal, Layers, Sparkles, Trash2, Download, Printer, X, Zap } from 'lucide-vue-next'
 import { useNotesStore } from '../stores/notes'
@@ -30,7 +32,7 @@ import { DEFAULT_NOTE_MODE, NOTE_MODES, applyMarkdownSourceToEditor, clampSplitR
 
 const lowlight = createLowlight()
 lowlight.register('javascript', javascript); lowlight.register('typescript', typescript); lowlight.register('python', python); lowlight.register('json', json); lowlight.register('html', xml); lowlight.register('xml', xml); lowlight.register('css', css); lowlight.register('bash', bash); lowlight.register('sql', sql); lowlight.register('markdown', markdown); lowlight.register('yaml', yaml); lowlight.register('rust', rust)
-const props = defineProps({ note: Object, tocVisible: { type: Boolean, default: false }, proposalId: { type: String, default: '' } }); const emit = defineEmits(['deleted', 'toggle-toc', 'proposal-reviewed']); const store = useNotesStore(); const library = useLibraryStore(); const appStore = useAppStore(); const { t } = useI18n(); const aiBusy = ref(false); const aiText = ref(''); const aiRequestId = ref(''); const aiAction = ref('summarize'); const aiResultAction = ref(''); const aiProposal = ref(null); const aiSources = ref([]); const aiConsentOpen = ref(false); const assistantOpen = ref(false); const assistantBusy = ref(false); const assistantRequestId = ref(''); const assistantStreamingText = ref(''); const assistantMessages = ref([]); const assistantSelection = ref(null); const assistantResponseSources = ref([]); const assistantResponseProposal = ref(null); const aiPanelOpen = ref(false); const aiPanelSelectionText = ref(''); const commandMenuOpen = ref(false); const aiPrompt = ref(''); const aiInputRef = ref(null); const commandMenuDirection = ref('down'); const moreOpen = ref(false); const revisionsOpen = ref(false); const revisions = ref([]); const revisionsBusy = ref(false); const insertOpen = ref(false); const tablePickerOpen = ref(false); const textColorOpen = ref(false); const highlightOpen = ref(false); const headingOpen = ref(false); const knowledgeMenuOpen = ref(false); const imageDialogOpen = ref(false); const imageUrl = ref(''); const imageAlt = ref(''); const imageInput = ref(null); const tableRows = ref(0); const tableCols = ref(0); const fimEnabled = computed(() => appStore.settings.fimEnabled === true); const fimSuggestion = ref(''); const editorStateTick = ref(0); let fimTimer; let savedSelection = null; let pendingAiRequest = null
+const props = defineProps({ note: Object, tocVisible: { type: Boolean, default: false }, proposalId: { type: String, default: '' } }); const emit = defineEmits(['deleted', 'toggle-toc', 'proposal-reviewed']); const store = useNotesStore(); const library = useLibraryStore(); const appStore = useAppStore(); const { t } = useI18n(); const aiBusy = ref(false); const aiText = ref(''); const aiRequestId = ref(''); const aiAction = ref('summarize'); const aiResultAction = ref(''); const aiProposal = ref(null); const aiSources = ref([]); const aiConsentOpen = ref(false); const assistantOpen = ref(false); const assistantBusy = ref(false); const assistantRequestId = ref(''); const assistantStreamingText = ref(''); const assistantMessages = ref([]); const assistantSelection = ref(null); const assistantResponseSources = ref([]); const assistantResponseProposal = ref(null); const aiPanelOpen = ref(false); const aiPanelSelectionText = ref(''); const commandMenuOpen = ref(false); const aiPrompt = ref(''); const aiInputRef = ref(null); const commandMenuDirection = ref('down'); const moreOpen = ref(false); const revisionsOpen = ref(false); const revisions = ref([]); const revisionsBusy = ref(false); const insertOpen = ref(false); const tablePickerOpen = ref(false); const textColorOpen = ref(false); const highlightOpen = ref(false); const headingOpen = ref(false); const knowledgeMenuOpen = ref(false); const imageDialogOpen = ref(false); const imageUrl = ref(''); const imageAlt = ref(''); const imageInput = ref(null); const tableRows = ref(0); const tableCols = ref(0); const fimEnabled = computed(() => appStore.settings.fimEnabled === true); const fimSuggestion = ref(''); const editorStateTick = ref(0); let fimTimer; let savedSelection = null; let pendingAiRequest = null; let pendingAiChange = null
 const modeIcons = { rich: PenLine, markdown: FileCode2, read: Eye }
 const editorModes = NOTE_MODES.map(mode => ({ ...mode, icon: modeIcons[mode.id] }))
 const editorMode = ref(DEFAULT_NOTE_MODE)
@@ -68,6 +70,9 @@ function aiEventErrorMessage(event) {
 }
 const contextConsentModelId = computed(() => appStore.defaultModel?.id || 'default')
 const aiFeedback = ref('')
+const aiOutputOpen = ref(false)
+const aiOriginalText = ref('')
+const AI_CHANGE_HIGHLIGHT = '#fef08a'
 const aiCharCount = computed(() => aiText.value.replace(/\s/g, '').length)
 const aiDialogPosition = ref(null)
 const aiDialogStyle = computed(() => {
@@ -160,7 +165,7 @@ const knowledgeGroups = computed(() => [
   { id: 'personal', label: t('personal'), items: library.bases.filter(base => base.category === 'personal') },
   { id: 'local', label: t('local'), items: library.bases.filter(base => base.category === 'local') }
 ].filter(group => group.items.length))
-function shouldShowBubbleMenu({ state }) { return richMode.value && !aiText.value && !state.selection.empty && state.doc.textBetween(state.selection.from, state.selection.to, '\n').trim().length > 0 }
+function shouldShowBubbleMenu({ state }) { return richMode.value && !aiOutputOpen.value && !state.selection.empty && state.doc.textBetween(state.selection.from, state.selection.to, '\n').trim().length > 0 }
 const textColorPalette = ['#1c1917', '#dc2626', '#ea580c', '#ca8a04', '#16a34a', '#0891b2', '#2563eb', '#7c3aed', '#db2777']
 const highlightPalette = ['#fef08a', '#fed7aa', '#fecaca', '#bbf7d0', '#bae6fd', '#c7d2fe', '#e9d5ff', '#fbcfe8']
 const currentHeadingLabel = computed(() => { editorStateTick.value; const instance = editor.value; if (!instance) return '标题'; for (const level of [1, 2, 3]) if (instance.isActive('heading', { level })) return `H${level}`; return '正文' })
@@ -415,6 +420,9 @@ function resetTransientEditorState() {
   aiText.value = ''
   aiResultAction.value = ''
   aiBusy.value = false
+  aiOutputOpen.value = false
+  aiOriginalText.value = ''
+  pendingAiChange = null
   aiDialogPosition.value = null
   assistantOpen.value = false
   assistantBusy.value = false
@@ -459,6 +467,8 @@ async function loadExternalProposal(id = props.proposalId) {
     aiProposal.value = proposal
     aiText.value = proposal.replacementMarkdown
     aiResultAction.value = proposal.action
+    aiOutputOpen.value = true
+    aiOriginalText.value = proposal.originalText || ''
     aiSources.value = proposal.sources || []
     savedSelection = proposal.selectionFrom != null && proposal.selectionTo != null ? { from: proposal.selectionFrom, to: proposal.selectionTo } : null
     emit('proposal-reviewed')
@@ -496,16 +506,22 @@ async function runAi(action = aiAction.value, requestText = null, instruction = 
     aiConsentOpen.value = true
     return
   }
-  if (!await flushLatestContent()) return
   if (requestText == null) requestText = props.note.contentText || ''
   const actionLabel = aiActionLabels[action] || 'AI 写作'
   aiBusy.value = true
+  aiOutputOpen.value = true
   aiText.value = `正在生成${actionLabel}…`
   aiResultAction.value = action
+  aiOriginalText.value = requestText
   aiProposal.value = null
   aiSources.value = []
   aiDialogPosition.value = null
   aiRequestId.value = crypto.randomUUID()
+  if (!await flushLatestContent()) {
+    aiText.value = `${actionLabel}失败：文章保存失败，请稍后重试。`
+    aiBusy.value = false
+    return
+  }
   clearTimeout(store.saveTimer)
   try {
     await saveDirtyNote(props.note)
@@ -611,6 +627,8 @@ async function sendAssistantMessage(prompt) {
         aiSources.value = assistantResponseSources.value
         aiText.value = assistantResponseProposal.value.replacementMarkdown
         aiResultAction.value = assistantResponseProposal.value.action
+        aiOutputOpen.value = true
+        aiOriginalText.value = assistantResponseProposal.value.originalText || assistantSelection.value?.text || ''
         savedSelection = assistantResponseProposal.value.selectionFrom != null ? { from: assistantResponseProposal.value.selectionFrom, to: assistantResponseProposal.value.selectionTo } : null
       }
       assistantStreamingText.value = ''
@@ -639,6 +657,135 @@ async function openRevisions() { if (!props.note) return; moreOpen.value = false
 async function restoreRevision(revision) { if (!window.confirm('恢复这个版本？当前内容也会先保存为可恢复版本。')) return; const updated = await (await import('../services/tauri')).invoke('note_revision_restore', { id: revision.id }); Object.assign(props.note, updated); applyingEditorContent = true; editor.value?.commands.setContent(prepareEditorContent(updated), { emitUpdate: false }); applyingEditorContent = false; markdownDraft.value = updated.contentMarkdown || getEditorMarkdown() || ''; sourceDirty.value = false; markdownParseError.value = ''; pendingSourceDrafts.delete(updated.id); persistedSignatures.set(updated.id, noteContentSignature(updated)); revisions.value = await (await import('../services/tauri')).invoke('note_revision_list', { noteId: props.note.id }) }
 function formatRevisionTime(value) { try { return new Intl.DateTimeFormat('zh-CN', { dateStyle: 'medium', timeStyle: 'short' }).format(new Date(value)) } catch { return value } }
 function restoreSavedSelection() { if (!editor.value || !savedSelection) return false; return editor.value.chain().focus().setTextSelection(savedSelection).run() }
+function clearAiResultState() { aiOutputOpen.value = false; aiText.value = ''; aiOriginalText.value = ''; aiResultAction.value = ''; aiFeedback.value = ''; aiDialogPosition.value = null; aiProposal.value = null; aiSources.value = [] }
+function syncNoteFromEditor() {
+  if (!props.note || !editor.value) return
+  props.note.contentHtml = sanitizeEditorHtml(editor.value.getHTML())
+  props.note.contentText = editor.value.getText()
+  props.note.contentMarkdown = getEditorMarkdown()
+  markdownDraft.value = props.note.contentMarkdown
+  sourceDirty.value = false
+  markdownParseError.value = ''
+  pendingSourceDrafts.delete(props.note.id)
+}
+function selectedContentMarks(doc, from, to) {
+  let marks = []
+  doc.nodesBetween(from, to, node => {
+    if (node.isText && !marks.length) marks = node.marks
+  })
+  return marks
+}
+function insertPendingAiContent(content, insertPos, selectionFrom, selectionTo) {
+  if (!editor.value) return null
+  const beforeSize = editor.value.state.doc.content.size
+  const { doc, schema } = editor.value.state
+  const $from = doc.resolve(selectionFrom)
+  const $to = doc.resolve(selectionTo)
+  applyingEditorContent = true
+  if ($from.parent === $to.parent && $from.parent.isTextblock && isPlainInlineAiReplacement(content)) {
+    const marks = selectedContentMarks(doc, selectionFrom, selectionTo)
+    editor.value.view.dispatch(editor.value.state.tr.insert(insertPos, schema.text(content, marks)).scrollIntoView())
+    editor.value.commands.focus()
+  } else {
+    editor.value.chain().focus().insertContentAt(insertPos, content, { contentType: 'markdown' }).run()
+  }
+  const insertedLength = editor.value.state.doc.content.size - beforeSize
+  applyingEditorContent = false
+  return { insertionFrom: insertPos, insertionTo: insertPos + insertedLength }
+}
+function stagePendingAiChange(mode, content, selectionFrom, selectionTo, change) {
+  const preview = insertPendingAiContent(content, selectionTo, selectionFrom, selectionTo)
+  if (!preview) return false
+  const highlightMark = editor.value.state.schema.marks.highlight
+  const strikeMark = editor.value.state.schema.marks.strike
+  applyingEditorContent = true
+  let transaction = editor.value.state.tr
+  if (highlightMark && preview.insertionFrom < preview.insertionTo) {
+    transaction = transaction.addMark(preview.insertionFrom, preview.insertionTo, highlightMark.create({ color: AI_CHANGE_HIGHLIGHT }))
+  }
+  if (mode === 'replace' && strikeMark) {
+    transaction = transaction.addMark(selectionFrom, selectionTo, strikeMark.create())
+  }
+  transaction = transaction.setSelection(TextSelection.near(transaction.doc.resolve(preview.insertionTo)))
+  editor.value.view.dispatch(transaction.scrollIntoView())
+  applyingEditorContent = false
+  pendingAiChange = {
+    ...change,
+    type: mode,
+    noteId: props.note.id,
+    strikeFrom: selectionFrom,
+    strikeTo: selectionTo,
+    highlightFrom: preview.insertionFrom,
+    highlightTo: preview.insertionTo
+  }
+  clearAiResultState()
+  return true
+}
+function restoreAiChange(change) {
+  applyingEditorContent = true
+  editor.value?.commands.setContent(change.beforeHtml, { emitUpdate: false })
+  applyingEditorContent = false
+  if (props.note?.id === change.noteId) {
+    props.note.contentHtml = change.beforeHtml
+    props.note.contentText = change.beforeText
+    props.note.contentMarkdown = change.beforeMarkdown
+    markdownDraft.value = change.beforeDraft
+    sourceDirty.value = false
+  }
+  aiText.value = change.replacement
+  aiOutputOpen.value = true
+  aiOriginalText.value = change.proposal.originalText || ''
+  aiResultAction.value = change.resultAction
+  aiProposal.value = change.proposal
+  aiSources.value = change.resultSources
+}
+async function persistAiChange(change) {
+  clearTimeout(store.saveTimer)
+  if (!window.__TAURI_INTERNALS__) {
+    await saveDirtyNote(props.note)
+    change.proposal.status = 'applied'
+    savedSelection = null
+    return
+  }
+  const updated = await (await import('../services/tauri')).invoke('note_edit_apply', {
+    proposalId: change.proposal.id,
+    expectedUpdatedAt: change.proposal.baseUpdatedAt,
+    contentHtml: props.note.contentHtml,
+    contentText: props.note.contentText,
+    contentMarkdown: props.note.contentMarkdown || getEditorMarkdown()
+  })
+  Object.assign(props.note, updated)
+  markdownDraft.value = updated.contentMarkdown || getEditorMarkdown()
+  persistedSignatures.set(updated.id, noteContentSignature(updated))
+  change.proposal.status = 'applied'
+  savedSelection = null
+}
+async function confirmPendingAiChange() {
+  if (!pendingAiChange || !editor.value || pendingAiChange.noteId !== props.note?.id) return
+  const change = pendingAiChange
+  pendingAiChange = null
+  try {
+    const highlightMark = editor.value.state.schema.marks.highlight
+    applyingEditorContent = true
+    let transaction = editor.value.state.tr
+    if (change.type === 'replace') {
+      transaction = transaction.delete(change.strikeFrom, change.strikeTo)
+      const mappedFrom = transaction.mapping.map(change.highlightFrom)
+      const mappedTo = transaction.mapping.map(change.highlightTo)
+      if (highlightMark) transaction = transaction.removeMark(mappedFrom, mappedTo, highlightMark)
+    } else if (highlightMark) {
+      transaction = transaction.removeMark(change.highlightFrom, change.highlightTo, highlightMark)
+    }
+    editor.value.view.dispatch(transaction.scrollIntoView())
+    applyingEditorContent = false
+    syncNoteFromEditor()
+    await persistAiChange(change)
+  } catch (error) {
+    applyingEditorContent = false
+    restoreAiChange(change)
+    window.alert(error?.code === 'proposal_stale' ? '文章已经发生变化，请重新生成修改建议。' : '应用修改失败，请重试。')
+  }
+}
 async function applyAiResult(mode) {
   if (!editor.value || !aiText.value || !aiProposal.value) return
   if (mode === 'insert' && editorMode.value !== 'rich') {
@@ -646,57 +793,51 @@ async function applyAiResult(mode) {
     return
   }
   if (!await flushLatestContent()) return
+  const proposal = aiProposal.value
+  const replacement = aiText.value
+  const resultAction = aiResultAction.value
+  const resultSources = aiSources.value
   const beforeHtml = editor.value.getHTML()
   const beforeText = editor.value.getText()
   const beforeMarkdown = props.note.contentMarkdown || getEditorMarkdown()
   const beforeDraft = markdownDraft.value
-  if (mode === 'replace') {
-    const selectionFrom = aiProposal.value.selectionFrom
-    const selectionTo = aiProposal.value.selectionTo
-    const hasProposalSelection = Number.isInteger(selectionFrom) && Number.isInteger(selectionTo) && selectionFrom < selectionTo
-    if (hasProposalSelection) {
-      const { doc, tr } = editor.value.state
-      const $from = doc.resolve(selectionFrom)
-      const $to = doc.resolve(selectionTo)
-      if ($from.parent === $to.parent && $from.parent.isTextblock && isPlainInlineAiReplacement(aiText.value)) {
-        editor.value.view.dispatch(tr.insertText(aiText.value, selectionFrom, selectionTo).scrollIntoView())
-        editor.value.commands.focus()
+  const selectionFrom = proposal.selectionFrom
+  const selectionTo = proposal.selectionTo
+  const hasProposalSelection = Number.isInteger(selectionFrom) && Number.isInteger(selectionTo) && selectionFrom < selectionTo
+  const change = { noteId: props.note.id, proposal, replacement, resultAction, resultSources, beforeHtml, beforeText, beforeMarkdown, beforeDraft }
+  const insertionSelection = hasProposalSelection ? { from: selectionFrom, to: selectionTo } : savedSelection
+  if (editorMode.value === 'rich' && ((mode === 'replace' && hasProposalSelection) || (mode === 'insert' && insertionSelection))) {
+    const range = mode === 'replace' ? { from: selectionFrom, to: selectionTo } : insertionSelection
+    stagePendingAiChange(mode, replacement, range.from, range.to, change)
+    return
+  }
+  clearAiResultState()
+  try {
+    if (mode === 'replace') {
+      if (hasProposalSelection) {
+        const { doc, tr } = editor.value.state
+        const $from = doc.resolve(selectionFrom)
+        const $to = doc.resolve(selectionTo)
+        if ($from.parent === $to.parent && $from.parent.isTextblock && isPlainInlineAiReplacement(replacement)) {
+          editor.value.view.dispatch(tr.insertText(replacement, selectionFrom, selectionTo).scrollIntoView())
+          editor.value.commands.focus()
+        } else {
+          editor.value.chain().focus().setTextSelection({ from: selectionFrom, to: selectionTo }).insertContent(replacement, { contentType: 'markdown' }).run()
+        }
+        syncNoteFromEditor()
       } else {
-        editor.value.chain().focus().setTextSelection({ from: selectionFrom, to: selectionTo }).insertContent(aiText.value, { contentType: 'markdown' }).run()
+        markdownDraft.value = replacement
+        sourceDirty.value = true
+        if (!commitMarkdown(props.note, { schedule: false })) return
       }
     } else {
-      markdownDraft.value = aiText.value
-      sourceDirty.value = true
-      if (!commitMarkdown(props.note, { schedule: false })) return
+      editor.value.chain().focus().insertContent(replacement, { contentType: 'markdown' }).run()
+      syncNoteFromEditor()
     }
-  } else {
-    const chain = editor.value.chain().focus()
-    if (savedSelection) chain.setTextSelection(savedSelection.to)
-    chain.insertContent(aiText.value, { contentType: 'markdown' }).run()
-  }
-  clearTimeout(store.saveTimer)
-  try {
-    if (!window.__TAURI_INTERNALS__) {
-      await saveDirtyNote(props.note)
-      aiProposal.value.status = 'applied'
-      savedSelection = null
-      await dismissAiResult()
-      return
-    }
-    const updated = await (await import('../services/tauri')).invoke('note_edit_apply', { proposalId: aiProposal.value.id, expectedUpdatedAt: aiProposal.value.baseUpdatedAt, contentHtml: props.note.contentHtml, contentText: props.note.contentText, contentMarkdown: props.note.contentMarkdown || getEditorMarkdown() })
-    Object.assign(props.note, updated)
-    markdownDraft.value = updated.contentMarkdown || getEditorMarkdown()
-    persistedSignatures.set(updated.id, noteContentSignature(updated))
-    aiProposal.value.status = 'applied'
-    savedSelection = null
-    dismissAiResult()
+    await persistAiChange(change)
   } catch (error) {
-    editor.value.commands.setContent(beforeHtml, { emitUpdate: false })
-    props.note.contentHtml = beforeHtml
-    props.note.contentText = beforeText
-    props.note.contentMarkdown = beforeMarkdown
-    markdownDraft.value = beforeDraft
-    sourceDirty.value = false
+    applyingEditorContent = false
+    restoreAiChange(change)
     window.alert(error?.code === 'proposal_stale' ? '文章已经发生变化，请重新生成修改建议。' : '应用修改失败，请重试。')
   }
 }
@@ -704,7 +845,7 @@ function insertAi() { return applyAiResult('insert') }
 function replaceWithAi() { return applyAiResult('replace') }
 async function copyAi() { if (aiText.value) await navigator.clipboard?.writeText(aiText.value) }
 function toggleAiFeedback(type) { aiFeedback.value = aiFeedback.value === type ? '' : type }
-async function dismissAiResult() { if (aiProposal.value?.status === 'draft' && window.__TAURI_INTERNALS__) { try { await (await import('../services/tauri')).invoke('note_edit_discard', { proposalId: aiProposal.value.id }) } catch {} }; aiText.value = ''; aiResultAction.value = ''; aiFeedback.value = ''; aiDialogPosition.value = null; aiProposal.value = null; aiSources.value = [] }
+async function dismissAiResult() { if (aiProposal.value?.status === 'draft' && window.__TAURI_INTERNALS__) { try { await (await import('../services/tauri')).invoke('note_edit_discard', { proposalId: aiProposal.value.id }) } catch {} }; clearAiResultState() }
 async function closeAiResult() { if (aiBusy.value) await stopAi(); dismissAiResult() }
 function stopAiDrag() {
   if (!aiDragState) return
@@ -740,10 +881,12 @@ function rewriteAi() {
   const action = aiResultAction.value
   let text = selectedText.value
   if (savedSelection && editor.value) text = editor.value.state.doc.textBetween(savedSelection.from, savedSelection.to, '\n').trim()
-  dismissAiResult()
+  if (aiProposal.value?.status === 'draft' && window.__TAURI_INTERNALS__) {
+    const proposalId = aiProposal.value.id
+    void import('../services/tauri').then(({ invoke }) => invoke('note_edit_discard', { proposalId })).catch(() => {})
+  }
   runAi(action, text || props.note?.contentText || '')
 }
-async function copySelection() { if (selectedText.value) await navigator.clipboard?.writeText(selectedText.value) }
 function saveCurrentSelection() { const selection = editor.value?.state.selection; if (selection && !selection.empty) savedSelection = { from: selection.from, to: selection.to } }
 function closeAiPanel() { aiPanelOpen.value = false; aiPanelSelectionText.value = ''; commandMenuOpen.value = false; aiPrompt.value = '' }
 function positionCommandMenu() {
@@ -932,7 +1075,7 @@ const title = computed({
       </div>
       <div v-if="splitMode" class="split-divider" role="separator" :aria-orientation="splitVertical ? 'horizontal' : 'vertical'" aria-label="调整源码与预览比例" aria-valuemin="30" aria-valuemax="70" :aria-valuenow="Math.round(splitRatio)" @pointerdown="startSplitResize"><span></span></div>
       <div v-show="!codeMode || markdownPreview" key="editor-render" ref="previewScroller" class="editor-render-pane" :class="{ 'split-preview-pane': splitMode }" @scroll.passive="handlePreviewScroll">
-        <EditorContent :editor="editor" class="editor-content" :class="{ 'split-preview-content': splitMode, 'read-content': editorMode === 'read' }" @click="handleEditorLink" @keydown.tab.prevent="acceptFim" @keydown.esc="dismissFim" />
+        <EditorContent :editor="editor" class="editor-content" :class="{ 'split-preview-content': splitMode, 'read-content': editorMode === 'read' }" @mousedown="confirmPendingAiChange" @click="handleEditorLink" @keydown.tab.prevent="acceptFim" @keydown.esc="dismissFim" />
       </div>
       <div v-if="markdownParseError" class="markdown-parse-error" role="alert">{{ markdownParseError }}</div>
       <div v-if="markdownPasteNotice" class="markdown-paste-notice" role="status">
@@ -941,7 +1084,7 @@ const title = computed({
         <button type="button" class="markdown-paste-close" aria-label="关闭提示" @click="markdownPasteNotice = false">×</button>
       </div>
     </div>
-    <BubbleMenu v-if="editor" v-show="!aiText && richMode" :editor="editor" :options="{ duration: 120, placement: 'top', maxWidth: 'none' }" :should-show="shouldShowBubbleMenu" class="tiny-note-bubble-menu">
+    <BubbleMenu v-if="editor" v-show="!aiOutputOpen && richMode" :editor="editor" :options="{ duration: 120, placement: 'top', maxWidth: 'none' }" :should-show="shouldShowBubbleMenu" class="tiny-note-bubble-menu">
       <div v-if="aiPanelOpen" class="tiny-note-ai-input-wrapper" @mousedown.stop>
         <div v-if="aiPanelSelectionText" class="tiny-note-ai-selection-context" role="group" aria-label="选中文本">
           <span class="tiny-note-ai-selection-label">基于选中文本</span>
@@ -977,12 +1120,7 @@ const title = computed({
         <button class="bubble-btn" title="润色" @mousedown.prevent="runSelectedAi('polish')"><PenLine :size="14" /><span>润色</span></button>
         <button class="bubble-btn" title="扩写" @mousedown.prevent="runSelectedAi('expand')"><Maximize2 :size="14" /><span>扩写</span></button>
         <span class="bubble-divider"></span>
-        <button class="bubble-btn chat-open-btn" title="在对话中打开" @mousedown.prevent="openInConversation"><MessageSquare :size="14" /><span>在对话中打开</span></button>
-        <span class="bubble-divider"></span>
-        <button class="bubble-btn" title="粗体" :class="{ active: editor.isActive('bold') }" @mousedown.prevent="toggle('toggleBold')"><Bold :size="14" /></button>
-        <button class="bubble-btn" title="斜体" :class="{ active: editor.isActive('italic') }" @mousedown.prevent="toggle('toggleItalic')"><Italic :size="14" /></button>
-        <button class="bubble-btn" title="下划线" :class="{ active: editor.isActive('underline') }" @mousedown.prevent="toggle('toggleUnderline')"><UnderlineIcon :size="14" /></button>
-        <button class="bubble-btn" title="复制" @mousedown.prevent="copySelection"><Copy :size="14" /></button>
+        <button class="bubble-btn" title="在对话中打开" @mousedown.prevent="openInConversation"><MessageSquare :size="14" /><span>在对话中打开</span></button>
       </div>
     </BubbleMenu>
     <div v-if="fimSuggestion && richMode" class="fim-suggestion">{{ fimSuggestion }} <small>Tab 接受 · Esc 放弃</small></div>
@@ -993,12 +1131,12 @@ const title = computed({
         <div class="editor-dialog-footer"><button class="secondary-button" @click="cancelAiConsent">取消</button><button class="primary-button" @click="confirmAiConsent">允许并继续</button></div>
       </div>
     </div>
-    <div v-if="aiText" class="ai-output-overlay" @mousedown.self="closeAiResult">
+    <div v-if="aiOutputOpen" class="ai-output-overlay" @mousedown.self="closeAiResult">
       <div class="ai-output-panel" :style="aiDialogStyle" role="dialog" aria-modal="true" aria-label="AI 写作结果" @mousedown.stop>
         <div class="ai-output-header" @pointerdown="startAiDrag"><strong><Sparkles :size="14" />{{ aiActionLabels[aiResultAction] || 'AI 写作' }}内容</strong><button type="button" title="关闭" aria-label="关闭" @click="closeAiResult"><X :size="17" /></button></div>
         <div class="ai-output-content">
-          <div v-if="aiProposal?.originalText" class="ai-diff-preview"><div class="ai-diff-before"><small>原文</small>{{ aiProposal.originalText }}</div><div class="ai-diff-after"><small>建议</small>{{ aiText }}</div></div>
-          <div v-else>{{ aiText }}</div><span v-if="aiBusy" class="ai-output-cursor"></span>
+          <div v-if="aiOriginalText && aiResultAction !== 'interpret'" class="ai-diff-preview"><div class="ai-diff-before"><small>原文</small>{{ aiOriginalText }}</div><div class="ai-diff-after"><small>建议</small><MarkdownMessage class="ai-output-markdown" :content="aiText" :streaming="aiBusy" /></div></div>
+          <MarkdownMessage v-else class="ai-output-markdown" :content="aiText" :streaming="aiBusy" />
           <div v-if="aiSources.length" class="ai-source-list"><span v-for="(source, index) in aiSources" :key="source.id" :title="source.snippet">[{{ index + 1 }}] {{ source.title }}<small v-if="source.truncated">已截取</small></span></div>
         </div>
         <div class="ai-output-footer"><div class="ai-output-footer-meta"><span>内容由 AI 生成 <ShieldCheck :size="13" /></span><span>已生成{{ aiCharCount }}字</span></div><div class="ai-output-feedback"><button type="button" :class="{ active: aiFeedback === 'like' }" title="有帮助" @click="toggleAiFeedback('like')"><ThumbsUp :size="16" /></button><button type="button" :class="{ active: aiFeedback === 'dislike' }" title="没帮助" @click="toggleAiFeedback('dislike')"><ThumbsDown :size="16" /></button><button type="button" title="复制" @click="copyAi"><Copy :size="16" /></button></div></div>
