@@ -72,6 +72,7 @@ const contextConsentModelId = computed(() => appStore.defaultModel?.id || 'defau
 const aiFeedback = ref('')
 const aiOutputOpen = ref(false)
 const aiOriginalText = ref('')
+const aiChangePending = ref(false)
 const AI_CHANGE_HIGHLIGHT = '#fef08a'
 const aiCharCount = computed(() => aiText.value.replace(/\s/g, '').length)
 const aiDialogPosition = ref(null)
@@ -422,6 +423,7 @@ function resetTransientEditorState() {
   aiBusy.value = false
   aiOutputOpen.value = false
   aiOriginalText.value = ''
+  aiChangePending.value = false
   pendingAiChange = null
   aiDialogPosition.value = null
   assistantOpen.value = false
@@ -718,10 +720,12 @@ function stagePendingAiChange(mode, content, selectionFrom, selectionTo, change)
     highlightFrom: preview.insertionFrom,
     highlightTo: preview.insertionTo
   }
+  aiChangePending.value = true
   clearAiResultState()
   return true
 }
 function restoreAiChange(change) {
+  aiChangePending.value = false
   applyingEditorContent = true
   editor.value?.commands.setContent(change.beforeHtml, { emitUpdate: false })
   applyingEditorContent = false
@@ -764,6 +768,7 @@ async function confirmPendingAiChange() {
   if (!pendingAiChange || !editor.value || pendingAiChange.noteId !== props.note?.id) return
   const change = pendingAiChange
   pendingAiChange = null
+  aiChangePending.value = false
   try {
     const highlightMark = editor.value.state.schema.marks.highlight
     applyingEditorContent = true
@@ -1075,7 +1080,7 @@ const title = computed({
       </div>
       <div v-if="splitMode" class="split-divider" role="separator" :aria-orientation="splitVertical ? 'horizontal' : 'vertical'" aria-label="调整源码与预览比例" aria-valuemin="30" aria-valuemax="70" :aria-valuenow="Math.round(splitRatio)" @pointerdown="startSplitResize"><span></span></div>
       <div v-show="!codeMode || markdownPreview" key="editor-render" ref="previewScroller" class="editor-render-pane" :class="{ 'split-preview-pane': splitMode }" @scroll.passive="handlePreviewScroll">
-        <EditorContent :editor="editor" class="editor-content" :class="{ 'split-preview-content': splitMode, 'read-content': editorMode === 'read' }" @mousedown="confirmPendingAiChange" @click="handleEditorLink" @keydown.tab.prevent="acceptFim" @keydown.esc="dismissFim" />
+        <EditorContent :editor="editor" class="editor-content" :class="{ 'split-preview-content': splitMode, 'read-content': editorMode === 'read', 'has-pending-ai-change': aiChangePending }" @mousedown="confirmPendingAiChange" @click="handleEditorLink" @keydown.tab.prevent="acceptFim" @keydown.esc="dismissFim" />
       </div>
       <div v-if="markdownParseError" class="markdown-parse-error" role="alert">{{ markdownParseError }}</div>
       <div v-if="markdownPasteNotice" class="markdown-paste-notice" role="status">
@@ -1131,8 +1136,9 @@ const title = computed({
         <div class="editor-dialog-footer"><button class="secondary-button" @click="cancelAiConsent">取消</button><button class="primary-button" @click="confirmAiConsent">允许并继续</button></div>
       </div>
     </div>
-    <div v-if="aiOutputOpen" class="ai-output-overlay" @mousedown.self="closeAiResult">
-      <div class="ai-output-panel" :style="aiDialogStyle" role="dialog" aria-modal="true" aria-label="AI 写作结果" @mousedown.stop>
+    <Transition name="ai-output-transition">
+      <div v-if="aiOutputOpen" class="ai-output-overlay" @mousedown.self="closeAiResult">
+        <div class="ai-output-panel" :style="aiDialogStyle" role="dialog" aria-modal="true" aria-label="AI 写作结果" @mousedown.stop>
         <div class="ai-output-header" @pointerdown="startAiDrag"><strong><Sparkles :size="14" />{{ aiActionLabels[aiResultAction] || 'AI 写作' }}内容</strong><button type="button" title="关闭" aria-label="关闭" @click="closeAiResult"><X :size="17" /></button></div>
         <div class="ai-output-content">
           <div v-if="aiOriginalText && aiResultAction !== 'interpret'" class="ai-diff-preview"><div class="ai-diff-before"><small>原文</small>{{ aiOriginalText }}</div><div class="ai-diff-after"><small>建议</small><MarkdownMessage class="ai-output-markdown" :content="aiText" :streaming="aiBusy" /></div></div>
@@ -1141,8 +1147,9 @@ const title = computed({
         </div>
         <div class="ai-output-footer"><div class="ai-output-footer-meta"><span>内容由 AI 生成 <ShieldCheck :size="13" /></span><span>已生成{{ aiCharCount }}字</span></div><div class="ai-output-feedback"><button type="button" :class="{ active: aiFeedback === 'like' }" title="有帮助" @click="toggleAiFeedback('like')"><ThumbsUp :size="16" /></button><button type="button" :class="{ active: aiFeedback === 'dislike' }" title="没帮助" @click="toggleAiFeedback('dislike')"><ThumbsDown :size="16" /></button><button type="button" title="复制" @click="copyAi"><Copy :size="16" /></button></div></div>
         <div class="ai-output-actions"><div><button type="button" class="ai-output-action rewrite" :disabled="aiBusy" @click="rewriteAi"><RotateCcw :size="14" />重写</button><button type="button" class="ai-output-action discard" :disabled="aiBusy" @click="dismissAiResult"><Trash2 :size="14" />弃用</button></div><div><button type="button" class="ai-output-action replace" :disabled="aiBusy || !aiText || !aiProposal" @click="replaceWithAi">应用替换</button><button type="button" class="ai-output-action insert" :disabled="aiBusy || !aiText || !aiProposal || !richMode" :title="richMode ? '在当前光标位置插入' : '请切换到即时编辑后应用插入'" @click="insertAi">应用插入</button></div></div>
+        </div>
       </div>
-    </div>
+    </Transition>
     <div v-if="imageDialogOpen" class="editor-dialog-overlay" @click.self="imageDialogOpen = false">
       <div class="editor-dialog" role="dialog" aria-modal="true" aria-label="插入图片">
         <div class="editor-dialog-header"><strong>插入图片</strong><button class="editor-dialog-close" title="关闭" @click="imageDialogOpen = false">×</button></div>

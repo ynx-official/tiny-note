@@ -274,6 +274,7 @@ describe('NoteEditor article modes', () => {
     await flushPromises()
 
     expect(tiptapEditor.state.selection.empty).toBe(true)
+    expect(wrapper.get('.editor-content').classes()).toContain('has-pending-ai-change')
     expect(wrapper.get('.note-prose s').text()).toBe('正文')
     expect(wrapper.get('.note-prose mark[data-color="#fef08a"]').text()).toBe('新的正文')
     expect(active.contentMarkdown).toBe('# 标题\n\n正文')
@@ -288,6 +289,7 @@ describe('NoteEditor article modes', () => {
     await wrapper.get('.editor-content').trigger('mousedown')
     await flushPromises()
 
+    expect(wrapper.get('.editor-content').classes()).not.toContain('has-pending-ai-change')
     expect(active.contentText.replace(/\s+/g, ' ')).toBe('标题 新的正文')
     expect(active.contentMarkdown).toBe('# 标题\n\n新的正文')
     wrapper.unmount()
