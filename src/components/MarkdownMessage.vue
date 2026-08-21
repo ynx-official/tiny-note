@@ -87,7 +87,13 @@ async function copyCode(event) {
   border-radius: 0 7px 7px 0;
   color: var(--text-secondary);
   background: color-mix(in srgb, var(--accent) 7%, transparent);
+  font-style: italic;
 }
+
+.markdown-body :deep(blockquote p),
+.markdown-body :deep(blockquote li) { font-style: italic; }
+.markdown-body :deep(blockquote pre),
+.markdown-body :deep(blockquote code) { font-style: normal; }
 
 .markdown-body :deep(a) { color: var(--accent); text-decoration: underline; text-underline-offset: 2px; }
 .markdown-body :deep(strong) { font-weight: 650; }

@@ -68,7 +68,6 @@ describe('NoteEditor article modes', () => {
     await wrapper.get('.editor-mode-trigger').trigger('click')
     await wrapper.findAll('[role="menuitemradio"]')[3].trigger('click')
     await flushPromises()
-    expect(wrapper.get('.title-input').attributes('readonly')).toBeDefined()
     expect(wrapper.get('.note-prose').attributes('contenteditable')).toBe('false')
     expect(wrapper.find('.markdown-source-editor').exists()).toBe(false)
     wrapper.unmount()
@@ -232,6 +231,57 @@ describe('NoteEditor article modes', () => {
     const html = wrapper.get('.note-prose').element.innerHTML
     expect(html).toContain('<h2>剪贴板标题</h2>')
     expect(html).toContain('<li><p>第一项</p></li>')
+    wrapper.unmount()
+  })
+
+  it('renders pasted Markdown quotes and defaults language-less code blocks to auto', async () => {
+    const wrapper = await mountEditor()
+    await wrapper.get('.note-prose').trigger('paste', {
+      clipboardData: {
+        getData: type => type === 'text/plain'
+          ? '> 引用内容\n\n```\nconst value = 1\n```'
+          : ''
+      }
+    })
+    await flushPromises()
+
+    const quote = wrapper.get('.note-prose blockquote')
+    expect(quote.text()).toBe('引用内容')
+    const language = wrapper.get('.code-block-component .language-select')
+    expect(language.element.value).toBe('')
+    expect(language.find('option:checked').text()).toBe('auto')
+    wrapper.unmount()
+  })
+
+  it('keeps pasted Markdown table headers separate from normal-weight body cells', async () => {
+    const wrapper = await mountEditor()
+    await wrapper.get('.note-prose').trigger('paste', {
+      clipboardData: {
+        getData: type => type === 'text/plain'
+          ? '| 信息对象 | 权威系统 | 处理 |\n| --- | --- | --- |\n| 项目编号 | 立项工具 | 原始主数据 |'
+          : ''
+      }
+    })
+    await flushPromises()
+
+    expect(wrapper.findAll('.note-prose th')).toHaveLength(3)
+    expect(wrapper.findAll('.note-prose td')).toHaveLength(3)
+    expect(wrapper.findAll('.note-prose th > p')).toHaveLength(3)
+    expect(wrapper.findAll('.note-prose td > p')).toHaveLength(3)
+    expect(wrapper.findAll('.note-prose table [data-note-title]')).toHaveLength(0)
+    expect(wrapper.findAll('.note-prose td strong')).toHaveLength(0)
+    wrapper.unmount()
+  })
+
+  it('repairs legacy table cells that were persisted as note titles', async () => {
+    const legacy = note('note-legacy-table-titles')
+    legacy.contentHtml = '<h1 data-note-title="true">文档标题</h1><table><tbody><tr><th><h1 data-note-title="true"><strong>表头</strong></h1></th></tr><tr><td><h1 data-note-title="true">正文单元格</h1></td></tr></tbody></table>'
+    const wrapper = await mountEditor(legacy)
+
+    expect(wrapper.findAll('.note-prose > h1[data-note-title]')).toHaveLength(1)
+    expect(wrapper.findAll('.note-prose table [data-note-title]')).toHaveLength(0)
+    expect(wrapper.get('.note-prose th > p').text()).toBe('表头')
+    expect(wrapper.get('.note-prose td > p').text()).toBe('正文单元格')
     wrapper.unmount()
   })
 })

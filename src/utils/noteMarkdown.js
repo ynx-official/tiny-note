@@ -1,4 +1,5 @@
 import DOMPurify from 'dompurify'
+import { marked } from 'marked'
 
 export const DEFAULT_NOTE_MODE = 'rich'
 
@@ -17,7 +18,7 @@ const allowedTags = [
 ]
 
 const allowedAttributes = [
-  'href', 'target', 'rel', 'src', 'alt', 'title', 'class', 'style', 'data-color',
+  'href', 'target', 'rel', 'src', 'alt', 'title', 'class', 'style', 'data-color', 'data-note-title',
   'data-type', 'data-checked', 'colspan', 'rowspan', 'colwidth', 'span', 'start',
   'type', 'checked', 'disabled'
 ]
@@ -25,6 +26,52 @@ const allowedAttributes = [
 const colorValuePattern = /^(?:#[\da-f]{3,8}|(?:rgb|rgba|hsl|hsla)\([\d\s.,%+\-/]+\)|[a-z]+)$/i
 const safeLinkProtocols = new Set(['http:', 'https:', 'mailto:', 'tel:'])
 const safeImageProtocols = new Set(['http:', 'https:'])
+const editorMarkedOptions = Object.freeze({ gfm: true, breaks: false })
+
+const richClipboardPatterns = [
+  /<strong\b|<b\b|<em\b|<i\b|<u\b|<s\b|<strike\b/i,
+  /<h[1-6]\b[^>]*>/i,
+  /<a\s+href=/i,
+  /<img\s+src=/i,
+  /<table\b/i,
+  /<blockquote\b/i,
+  /<pre\b|<code\b/i,
+  /<ol\b|<ul\b/i,
+  /style\s*=\s*["'][^"']*(?:color|font-weight|font-style|text-decoration|background)/i,
+  /class\s*=\s*["'][^"']*(?:bold|italic|underline|highlight)/i
+]
+
+export function isRichClipboardHtml(html = '') {
+  return richClipboardPatterns.some(pattern => pattern.test(String(html)))
+}
+
+export function preprocessMarkdownTables(text = '') {
+  const lines = String(text).split('\n')
+  const processedLines = []
+  let inTable = false
+
+  for (const line of lines) {
+    const isTableLine = line.trim().startsWith('|')
+    if (isTableLine) {
+      if (!inTable && processedLines.at(-1)?.trim() === '') processedLines.pop()
+      inTable = true
+      processedLines.push(line)
+      continue
+    }
+    if (inTable && line.trim() === '') inTable = false
+    processedLines.push(line)
+  }
+
+  return processedLines.join('\n')
+}
+
+export function fixEmptyTableCells(html = '') {
+  return String(html).replace(/<(td|th)(\s[^>]*)?>\s*<\/\1>/gi, (_match, tag, attributes = '') => `<${tag}${attributes}>&nbsp;</${tag}>`)
+}
+
+export function markdownToEditorHtml(text = '') {
+  return fixEmptyTableCells(marked.parse(preprocessMarkdownTables(text), editorMarkedOptions))
+}
 
 export function safeColorValue(value) {
   const normalized = String(value || '').trim()

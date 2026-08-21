@@ -19,6 +19,20 @@ describe('renderMarkdown', () => {
     expect(html).toContain('&lt;')
   })
 
+  it('labels fenced code without a language as auto', () => {
+    const html = renderMarkdown('```\nconst value = 1\n```')
+
+    expect(html).toContain('<span>auto</span>')
+    expect(html).not.toContain('<span>text</span>')
+  })
+
+  it('marks blockquotes for the shared italic quote presentation', () => {
+    const html = renderMarkdown('> 引用内容')
+
+    expect(html).toContain('<blockquote class="markdown-blockquote">')
+    expect(html).toContain('<p>引用内容</p>')
+  })
+
   it('sanitizes unsafe model output', () => {
     const html = renderMarkdown('<img src=x onerror="alert(1)">[危险链接](javascript:alert(1))')
 

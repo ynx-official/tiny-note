@@ -19,6 +19,7 @@ import Superscript from '@tiptap/extension-superscript'
 import { TextStyle } from '@tiptap/extension-text-style'
 import Color from '@tiptap/extension-color'
 import { Markdown } from '@tiptap/markdown'
+import { Node } from '@tiptap/core'
 import { safeColorValue } from '../utils/noteMarkdown'
 
 function escapeHtml(value = '') {
@@ -32,6 +33,23 @@ function escapeHtml(value = '') {
 function safeAlign(value) {
   return /^(left|center|right|justify)$/.test(value || '') ? value : ''
 }
+
+const NoteTitle = Node.create({
+  name: 'noteTitle',
+  group: 'block',
+  content: 'inline*',
+  defining: true,
+  parseHTML: () => [{ tag: 'h1[data-note-title]' }],
+  renderHTML: ({ HTMLAttributes }) => ['h1', { ...HTMLAttributes, 'data-note-title': 'true' }, 0],
+  addKeyboardShortcuts() {
+    return {
+      Enter: () => {
+        if (!this.editor.isActive(this.name)) return false
+        return this.editor.chain().splitBlock().setNode('paragraph').run()
+      }
+    }
+  }
+})
 
 function renderInlineNode(node) {
   if (node.type === 'hardBreak') return '<br>'
@@ -164,6 +182,7 @@ const MarkdownTable = Table.extend({
 
 export function createNoteExtensions({ lowlight, codeBlockNodeView, placeholder, resizableTables = true } = {}) {
   const extensions = [
+    NoteTitle,
     StarterKit.configure({
       codeBlock: lowlight ? false : {},
       heading: false,
@@ -187,7 +206,7 @@ export function createNoteExtensions({ lowlight, codeBlockNodeView, placeholder,
     MarkdownSuperscript,
     MarkdownTextStyle,
     Color,
-    TextAlign.configure({ types: ['heading', 'paragraph'] }),
+    TextAlign.configure({ types: ['noteTitle', 'heading', 'paragraph'] }),
     Markdown.configure({ markedOptions: { gfm: true } })
   ]
 

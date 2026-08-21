@@ -26,7 +26,7 @@ import { useLibraryStore } from '../stores/library'
 import { useAppStore } from '../stores/app'
 import { useI18n } from 'vue-i18n'
 import { createNoteExtensions } from '../editor/noteExtensions'
-import { DEFAULT_NOTE_MODE, NOTE_MODES, clampSplitRatio, sanitizeEditorHtml, scrollOffset, scrollProgress } from '../utils/noteMarkdown'
+import { DEFAULT_NOTE_MODE, NOTE_MODES, clampSplitRatio, isRichClipboardHtml, markdownToEditorHtml, sanitizeEditorHtml, scrollOffset, scrollProgress } from '../utils/noteMarkdown'
 
 const lowlight = createLowlight()
 lowlight.register('javascript', javascript); lowlight.register('typescript', typescript); lowlight.register('python', python); lowlight.register('json', json); lowlight.register('html', xml); lowlight.register('xml', xml); lowlight.register('css', css); lowlight.register('bash', bash); lowlight.register('sql', sql); lowlight.register('markdown', markdown); lowlight.register('yaml', yaml); lowlight.register('rust', rust)
@@ -73,23 +73,87 @@ const aiDialogStyle = computed(() => {
 })
 let aiDragState = null
 const refreshEditorState = () => { editorStateTick.value += 1 }
-function looksLikeMarkdown(text) {
-  return /(^|\n)\s{0,3}(#{1,6}\s|[-*+]\s|\d+\.\s|>\s|```|~~~)/m.test(text) ||
-    /(?:\*\*[^*]+\*\*|__[^_]+__|`[^`]+`|!?\[[^\]]+\]\([^)]+\)|^\s*\|.+\|\s*$)/m.test(text)
-}
 function handleMarkdownPaste(view, event) {
   if (!richMode.value || !event.clipboardData) return false
+
+  const { $head } = view.state.selection
+  for (let depth = $head.depth; depth > 0; depth -= 1) {
+    if ($head.node(depth).type.name === 'codeBlock') return false
+  }
+
   const text = event.clipboardData.getData('text/plain')
-  if (!text || !looksLikeMarkdown(text) || !editor.value) return false
-  event.preventDefault()
-  return editor.value.commands.insertContent(text, { contentType: 'markdown' })
+  const html = event.clipboardData.getData('text/html')
+  if (!text || !editor.value || (html && isRichClipboardHtml(html))) return false
+
+  try {
+    event.preventDefault()
+    event.stopPropagation?.()
+    const parsedHtml = sanitizeEditorHtml(markdownToEditorHtml(text))
+    return editor.value.chain().focus().insertContent(parsedHtml).run()
+  } catch (error) {
+    console.error('Markdown paste failed:', error)
+    return false
+  }
+}
+function prepareEditorContent(note) {
+  const container = document.createElement('div')
+  container.innerHTML = note?.contentHtml || ''
+  let firstBlock = container.firstElementChild
+
+  // Older builds registered noteTitle ahead of paragraph. ProseMirror then used
+  // noteTitle as the fallback text block for bare table-cell content, persisting
+  // every cell as an H1. Keep the one document title and repair nested copies.
+  const validTitle = firstBlock?.matches('h1[data-note-title]') ? firstBlock : null
+  container.querySelectorAll('[data-note-title]').forEach(title => {
+    if (title === validTitle) return
+    if (title.parentElement === container) {
+      title.removeAttribute('data-note-title')
+      return
+    }
+    const paragraph = document.createElement('p')
+    const textAlign = title.style?.textAlign
+    if (textAlign) paragraph.style.textAlign = textAlign
+    paragraph.innerHTML = title.innerHTML
+    title.replaceWith(paragraph)
+  })
+
+  if (validTitle) return container.innerHTML
+  firstBlock = container.firstElementChild
+  if (!firstBlock) {
+    container.innerHTML = '<h1 data-note-title="true"></h1>'
+    return container.innerHTML
+  }
+  if (/^H[1-3]$/.test(firstBlock.tagName) || firstBlock.tagName === 'P') {
+    const title = document.createElement('h1')
+    title.dataset.noteTitle = 'true'
+    title.innerHTML = firstBlock.innerHTML
+    firstBlock.replaceWith(title)
+  } else {
+    const title = document.createElement('h1')
+    title.dataset.noteTitle = 'true'
+    container.insertBefore(title, firstBlock)
+  }
+  return container.innerHTML
+}
+function extractNoteTitle(html) {
+  const container = document.createElement('div')
+  container.innerHTML = html || ''
+  return container.querySelector('[data-note-title]')?.textContent?.trim().slice(0, 60) || ''
+}
+function getEditorMarkdown(instance = editor.value) {
+  if (!instance?.getMarkdown) return ''
+  const markdown = instance.getMarkdown()
+  const noteTitle = extractNoteTitle(instance.getHTML())
+  if (!noteTitle) return markdown
+  const body = markdown.trimStart()
+  return body.startsWith(`# ${noteTitle}`) ? body : `# ${noteTitle}\n\n${body}`
 }
 const editor = useEditor({
-  content: props.note?.contentHtml || '<p></p>',
+  content: prepareEditorContent(props.note),
   extensions: createNoteExtensions({
     lowlight,
     codeBlockNodeView: VueNodeViewRenderer(CodeBlockComponent),
-    placeholder: '写下此刻的想法…'
+    placeholder: ({ node }) => node.type.name === 'noteTitle' ? '输入标题…' : '写下此刻的想法…'
   }),
   editorProps: { attributes: { class: 'note-prose' }, handlePaste: handleMarkdownPaste },
   onTransaction: refreshEditorState,
@@ -132,15 +196,13 @@ function handleRichEditorUpdate(instance) {
   if (!props.note || applyingEditorContent || editorMode.value !== 'rich') return
   props.note.contentHtml = sanitizeEditorHtml(instance.getHTML())
   props.note.contentText = instance.getText()
-  props.note.contentMarkdown = instance.getMarkdown()
+  props.note.contentMarkdown = getEditorMarkdown(instance)
   markdownDraft.value = props.note.contentMarkdown
   sourceDirty.value = false
   markdownParseError.value = ''
   pendingSourceDrafts.delete(props.note.id)
-  if (!props.note.title || props.note.title === '未命名笔记') {
-    const first = instance.getText().split('\n').find(Boolean)
-    if (first) props.note.title = first.slice(0, 60)
-  }
+  const contentTitle = extractNoteTitle(instance.getHTML())
+  if (contentTitle) props.note.title = contentTitle
   scheduleNoteSave(props.note)
   if (fimEnabled.value) {
     clearTimeout(fimTimer)
@@ -152,7 +214,7 @@ function deriveMarkdown(note = props.note) {
   if (!note) return ''
   if (pendingSourceDrafts.has(note.id)) return pendingSourceDrafts.get(note.id)
   if (note.contentMarkdown || !note.contentHtml) return note.contentMarkdown || ''
-  return editor.value?.getMarkdown?.() || ''
+  return getEditorMarkdown() || ''
 }
 
 function commitMarkdown(note = props.note, { schedule = true } = {}) {
@@ -218,7 +280,7 @@ function resetEditorSession(note) {
   markdownParseError.value = ''
   sourceDirty.value = pendingSourceDrafts.has(note?.id)
   applyingEditorContent = true
-  if (note && editor.value) editor.value.commands.setContent(note.contentHtml || '<p></p>', { emitUpdate: false })
+  if (note && editor.value) editor.value.commands.setContent(prepareEditorContent(note), { emitUpdate: false })
   applyingEditorContent = false
   editor.value?.setEditable(true, false)
   markdownDraft.value = deriveMarkdown(note)
@@ -563,10 +625,10 @@ async function stopAssistant() {
 }
 async function copyAssistantMessage(content) { if (content) await navigator.clipboard?.writeText(content) }
 async function stopAi() { if (!aiRequestId.value) return; if (window.__TAURI_INTERNALS__) await (await import('../services/tauri')).invoke('note_ai_cancel', { requestId: aiRequestId.value }); aiBusy.value = false }
-async function exportMarkdown() { if (!props.note || !editor.value || !await flushLatestContent()) return; const markdown = props.note.contentMarkdown || editor.value.getMarkdown(); const blob = new Blob([markdown], { type: 'text/markdown;charset=utf-8' }); const url = URL.createObjectURL(blob); const link = document.createElement('a'); link.href = url; link.download = `${props.note.title || 'note'}.md`; link.click(); URL.revokeObjectURL(url) }
+async function exportMarkdown() { if (!props.note || !editor.value || !await flushLatestContent()) return; const markdown = props.note.contentMarkdown || getEditorMarkdown(); const blob = new Blob([markdown], { type: 'text/markdown;charset=utf-8' }); const url = URL.createObjectURL(blob); const link = document.createElement('a'); link.href = url; link.download = `${props.note.title || 'note'}.md`; link.click(); URL.revokeObjectURL(url) }
 function printNote() { window.print() }
 async function openRevisions() { if (!props.note) return; moreOpen.value = false; revisionsOpen.value = true; revisionsBusy.value = true; try { revisions.value = await (await import('../services/tauri')).invoke('note_revision_list', { noteId: props.note.id }) } finally { revisionsBusy.value = false } }
-async function restoreRevision(revision) { if (!window.confirm('恢复这个版本？当前内容也会先保存为可恢复版本。')) return; const updated = await (await import('../services/tauri')).invoke('note_revision_restore', { id: revision.id }); Object.assign(props.note, updated); applyingEditorContent = true; editor.value?.commands.setContent(updated.contentHtml || '<p></p>', { emitUpdate: false }); applyingEditorContent = false; markdownDraft.value = updated.contentMarkdown || editor.value?.getMarkdown?.() || ''; sourceDirty.value = false; markdownParseError.value = ''; pendingSourceDrafts.delete(updated.id); persistedSignatures.set(updated.id, noteContentSignature(updated)); revisions.value = await (await import('../services/tauri')).invoke('note_revision_list', { noteId: props.note.id }) }
+async function restoreRevision(revision) { if (!window.confirm('恢复这个版本？当前内容也会先保存为可恢复版本。')) return; const updated = await (await import('../services/tauri')).invoke('note_revision_restore', { id: revision.id }); Object.assign(props.note, updated); applyingEditorContent = true; editor.value?.commands.setContent(prepareEditorContent(updated), { emitUpdate: false }); applyingEditorContent = false; markdownDraft.value = updated.contentMarkdown || getEditorMarkdown() || ''; sourceDirty.value = false; markdownParseError.value = ''; pendingSourceDrafts.delete(updated.id); persistedSignatures.set(updated.id, noteContentSignature(updated)); revisions.value = await (await import('../services/tauri')).invoke('note_revision_list', { noteId: props.note.id }) }
 function formatRevisionTime(value) { try { return new Intl.DateTimeFormat('zh-CN', { dateStyle: 'medium', timeStyle: 'short' }).format(new Date(value)) } catch { return value } }
 function restoreSavedSelection() { if (!editor.value || !savedSelection) return false; return editor.value.chain().focus().setTextSelection(savedSelection).run() }
 async function applyAiResult(mode) {
@@ -578,7 +640,7 @@ async function applyAiResult(mode) {
   if (!await flushLatestContent()) return
   const beforeHtml = editor.value.getHTML()
   const beforeText = editor.value.getText()
-  const beforeMarkdown = props.note.contentMarkdown || editor.value.getMarkdown()
+  const beforeMarkdown = props.note.contentMarkdown || getEditorMarkdown()
   const beforeDraft = markdownDraft.value
   if (mode === 'replace') {
     markdownDraft.value = aiText.value
@@ -598,9 +660,9 @@ async function applyAiResult(mode) {
       await dismissAiResult()
       return
     }
-    const updated = await (await import('../services/tauri')).invoke('note_edit_apply', { proposalId: aiProposal.value.id, expectedUpdatedAt: aiProposal.value.baseUpdatedAt, contentHtml: props.note.contentHtml, contentText: props.note.contentText, contentMarkdown: props.note.contentMarkdown || editor.value.getMarkdown() })
+    const updated = await (await import('../services/tauri')).invoke('note_edit_apply', { proposalId: aiProposal.value.id, expectedUpdatedAt: aiProposal.value.baseUpdatedAt, contentHtml: props.note.contentHtml, contentText: props.note.contentText, contentMarkdown: props.note.contentMarkdown || getEditorMarkdown() })
     Object.assign(props.note, updated)
-    markdownDraft.value = updated.contentMarkdown || editor.value.getMarkdown()
+    markdownDraft.value = updated.contentMarkdown || getEditorMarkdown()
     persistedSignatures.set(updated.id, noteContentSignature(updated))
     aiProposal.value.status = 'applied'
     savedSelection = null
@@ -760,7 +822,6 @@ async function createKnowledgeFromEditor() {
   if (!name?.trim()) return
   try { await library.create(name.trim(), 'personal'); if (library.activeId) await addToKnowledge(library.activeId) } catch (error) { window.alert(error?.message || '创建知识库失败，请重试') }
 }
-const title = computed({ get: () => props.note?.title || '', set: v => { if (props.note && editorMode.value !== 'read') { props.note.title = v; scheduleNoteSave(props.note) } } })
 </script>
 <template>
   <div v-if="note" class="note-editor-shell">
@@ -823,7 +884,6 @@ const title = computed({ get: () => props.note?.title || '', set: v => { if (pro
         <button v-if="aiBusy" class="stop-button" @click="stopAi">{{ t('stop') }}</button>
       </div>
     </div>
-    <div class="editor-head"><input v-model="title" class="title-input" :readonly="editorMode === 'read'" :aria-readonly="editorMode === 'read'" :placeholder="t('untitled')" /><div class="editor-meta"><span :class="{ saving: store.saving }">{{ store.saving ? t('saving') : t('save') }}</span></div></div>
     <button class="toc-btn" :class="{ 'is-open': tocVisible }" title="目录" aria-label="目录" @click="emit('toggle-toc')"><span class="toc-char">目</span><span class="toc-char">录</span></button>
     <div ref="splitWorkspace" class="editor-workspace" :class="[`mode-${editorMode}`, { 'is-vertical': splitVertical }]">
       <MarkdownSourceEditor v-if="editorMode === 'source'" key="source-only" ref="sourceEditorRef" :model-value="markdownDraft" aria-label="Markdown 源码编辑器" @update:model-value="updateMarkdownDraft" />

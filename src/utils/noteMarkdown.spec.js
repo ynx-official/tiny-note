@@ -3,6 +3,8 @@ import {
   DEFAULT_NOTE_MODE,
   NOTE_MODES,
   clampSplitRatio,
+  isRichClipboardHtml,
+  markdownToEditorHtml,
   sanitizeEditorHtml,
   scrollOffset,
   scrollProgress,
@@ -43,6 +45,19 @@ describe('note Markdown safety and mode helpers', () => {
     expect(html).toContain('src="https://example.com/a.png"')
     expect(html).toContain('data-type="taskList"')
     expect(html).toContain('data-checked="true"')
+  })
+
+  it('uses the Friday paste pipeline for Markdown quotes and empty table cells', () => {
+    const html = markdownToEditorHtml('> 引用内容\n\n| 状态 | 说明 |\n| --- | --- |\n| 正常 | |')
+
+    expect(html).toContain('<blockquote>')
+    expect(html).toContain('<p>引用内容</p>')
+    expect(html).toContain('<td>&nbsp;</td>')
+  })
+
+  it('lets actual rich clipboard HTML use the browser paste parser', () => {
+    expect(isRichClipboardHtml('<p><strong>富文本</strong></p>')).toBe(true)
+    expect(isRichClipboardHtml('<p>## Markdown 标题</p>')).toBe(false)
   })
 
   it('clamps split ratios and converts scroll positions without divide-by-zero', () => {
