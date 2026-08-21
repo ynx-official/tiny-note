@@ -2,9 +2,10 @@
 import { computed, onMounted, ref, watch } from 'vue'
 import { storeToRefs } from 'pinia'
 import { useI18n } from 'vue-i18n'
-import { Check, ChevronDown, ChevronRight, Cpu, Globe2, Info, Languages, Moon, Monitor, Palette, Plus, RefreshCw, Search, Sparkles, Sun, Trash2, X } from 'lucide-vue-next'
+import { Check, ChevronDown, ChevronRight, Cpu, Globe2, Info, Languages, Moon, Monitor, Palette, Plus, RefreshCw, Search, Sparkles, Sun, Trash2, Wrench, X } from 'lucide-vue-next'
 import { invoke } from '../services/tauri'
 import { useAppStore } from '../stores/app'
+import AgentToolsCatalog from '../components/AgentToolsCatalog.vue'
 import doubaoIcon from '../assets/providers/doubao.png'
 import qwenIcon from '../assets/providers/qwen.png'
 import zhipuIcon from '../assets/providers/zhipu.png'
@@ -56,6 +57,7 @@ const currentLanguageLabel = computed(() => languageOptions.value.find(option =>
 const settingsSections = computed(() => [
   { id: 'appearance', label: t('appearance'), description: t('appearanceHint'), icon: Palette },
   { id: 'ai', label: t('aiWriting'), description: t('aiWritingHint'), icon: Sparkles },
+  { id: 'agent-tools', label: locale.value === 'zh-CN' ? 'Agent 工具' : 'Agent tools', description: locale.value === 'zh-CN' ? '查看可用能力和强制审批策略' : 'Inspect available capabilities and approval policies', icon: Wrench },
   { id: 'models', label: t('models'), description: t('modelsHint'), icon: Cpu },
   { id: 'about', label: t('about'), description: t('aboutHint'), icon: Info }
 ])
@@ -385,6 +387,11 @@ watch(filteredSections, sections => {
                 </div>
               </article>
             </div>
+          </section>
+
+          <section v-else-if="activeSectionId === 'agent-tools'" class="settings-detail-section settings-agent-tools-section">
+            <div class="settings-section-kicker">工具与权限</div>
+            <AgentToolsCatalog />
           </section>
 
           <section v-else class="settings-detail-section settings-about-section">

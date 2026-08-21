@@ -16,6 +16,20 @@ const browserSkillSeed = [
   { name: 'knowledge-research', description: '检索并汇总 Tiny Note 本地知识，保留来源和不确定性。', fileName: 'knowledge-research/SKILL.md', builtin: true, content: '---\nname: knowledge-research\ndescription: 检索并汇总 Tiny Note 本地知识，保留来源和不确定性。\n---\n\n# 知识调研\n\n先检索，再汇总并保留来源。\n' },
   { name: 'note-organizer', description: '将零散材料整理为结构清晰、便于后续维护的笔记。', fileName: 'note-organizer/SKILL.md', builtin: true, content: '---\nname: note-organizer\ndescription: 将零散材料整理为结构清晰、便于后续维护的笔记。\n---\n\n# 笔记整理\n\n保持结构清晰，不添加未知事实。\n' }
 ]
+const browserAgentToolDefaults = [
+  ['list_knowledge_bases', '列出现有知识库及索引概况', false], ['get_current_time', '获取本机当前时间', false],
+  ['list_mcp_tools', '列出已发现的 MCP 工具', false], ['call_mcp_tool', '调用外部 MCP 工具', true],
+  ['delegate_task', '委派独立子任务', true], ['run_sandbox_script', '执行隔离计算脚本', true],
+  ['search_notes', '搜索未删除笔记', false], ['get_note', '读取指定笔记', false],
+  ['retrieve_knowledge', '检索笔记和文本知识库', false], ['list_agent_files', '浏览 Agent 工作区', false],
+  ['read_agent_file', '读取 Agent 工作区文本文件', false], ['write_agent_file', '写入 Agent 工作区文本文件', true],
+  ['read_skill', '读取 Agent 技能', false], ['write_skill', '创建或更新 Agent 技能', true],
+  ['create_note', '创建笔记', true], ['update_note', '生成笔记修改提案', true], ['update_memory', '更新 Agent 记忆', true]
+]
+function browserAgentTools(state) {
+  const policies = state.agentToolPolicies || {}
+  return browserAgentToolDefaults.map(([name, description, defaultRequireApproval]) => ({ name, description, defaultRequireApproval, requireApproval: Object.hasOwn(policies, name) ? policies[name] : defaultRequireApproval }))
+}
 function ensureLibraryParents(state, knowledgeBaseId, relativePath, now) {
   const parts = normalizeRelativePath(relativePath).split('/').filter(Boolean)
   parts.pop()
@@ -41,6 +55,7 @@ export async function invoke(command, args = {}) {
   if (!state.libraryFiles) state.libraryFiles = []
   if (!state.memories) state.memories = browserMemorySeed.map(file => ({ ...file, updatedAt: new Date().toISOString() }))
   if (!state.agentSkills) state.agentSkills = browserSkillSeed.map(skill => ({ ...skill, updatedAt: new Date().toISOString() }))
+  if (!state.agentToolPolicies) state.agentToolPolicies = {}
   if (!state.mcpServers) state.mcpServers = []
   if (!state.usageRecords) state.usageRecords = []
   if (!state.chatConversations) state.chatConversations = []
@@ -205,24 +220,17 @@ export async function invoke(command, args = {}) {
   else if (command === 'usage_clear') { state.usageRecords = []; result = null }
   else if (command === 'agent_get_pending_run' || command === 'agent_get_run') result = null
   else if (command === 'agent_cancel' || command === 'agent_resume') result = null
-  else if (command === 'agent_list_tools') result = [
-    { name: 'get_current_time', description: '获取本机当前时间', requireApproval: false },
-    { name: 'list_mcp_tools', description: '列出已发现的 MCP 工具', requireApproval: false },
-    { name: 'call_mcp_tool', description: '调用外部 MCP 工具', requireApproval: true },
-    { name: 'delegate_task', description: '委派独立子任务', requireApproval: true },
-    { name: 'run_sandbox_script', description: '执行隔离计算脚本', requireApproval: true },
-    { name: 'search_notes', description: '搜索未删除笔记', requireApproval: false },
-    { name: 'get_note', description: '读取指定笔记', requireApproval: false },
-    { name: 'retrieve_knowledge', description: '检索笔记和文本知识库', requireApproval: false },
-    { name: 'list_agent_files', description: '浏览 Agent 工作区', requireApproval: false },
-    { name: 'read_agent_file', description: '读取 Agent 工作区文本文件', requireApproval: false },
-    { name: 'write_agent_file', description: '写入 Agent 工作区文本文件', requireApproval: true },
-    { name: 'read_skill', description: '读取 Agent 技能', requireApproval: false },
-    { name: 'write_skill', description: '创建或更新 Agent 技能', requireApproval: true },
-    { name: 'create_note', description: '创建笔记', requireApproval: true },
-    { name: 'update_note', description: '生成笔记修改提案', requireApproval: true },
-    { name: 'update_memory', description: '更新 Agent 记忆', requireApproval: true }
-  ]
+  else if (command === 'agent_list_tools') result = browserAgentTools(state)
+  else if (command === 'agent_tool_policy_update') {
+    const request = args.request || args
+    const known = new Set(browserAgentToolDefaults.map(([name]) => name))
+    if (!request.toolNames?.length || request.toolNames.some(name => !known.has(name))) throw new Error('工具审批策略无效')
+    for (const name of request.toolNames) {
+      if (request.requireApproval === null || request.requireApproval === undefined) delete state.agentToolPolicies[name]
+      else state.agentToolPolicies[name] = Boolean(request.requireApproval)
+    }
+    result = browserAgentTools(state)
+  }
   else if (command === 'model_list') result = state.models || []
   else if (command === 'model_fetch_models') {
     // Keep the browser fallback aligned with the Tauri DTO shape while

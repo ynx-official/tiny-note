@@ -67,6 +67,11 @@ describe('ChatView Agent approval', () => {
       if (command === 'settings_get') return { theme: 'light', language: 'zh-CN', fimEnabled: false }
       if (command === 'model_list') return [{ id: 'model-1', provider: 'test', model: 'test-model', isDefault: true }]
       if (command === 'note_list' || command === 'notebook_list' || command === 'knowledge_base_list') return []
+      if (command === 'agent_list_tools') return [
+        { name: 'list_knowledge_bases', requireApproval: false },
+        { name: 'create_note', requireApproval: true },
+        { name: 'retrieve_knowledge', requireApproval: false }
+      ]
       if (command === 'chat_create') return { id: 'conversation-1', title: '新对话', mode: args.mode }
       if (command === 'chat_add_message') return { id: crypto.randomUUID(), role: args.role, content: args.content, references: args.references || [] }
       if (command === 'agent_invoke') {
@@ -129,6 +134,21 @@ describe('ChatView Agent approval', () => {
     expect(resumeCalls).toHaveLength(2)
     expect(resumeCalls[1][1].onEvent).not.toBe(resumeCalls[0][1].onEvent)
 
+    wrapper.unmount()
+  })
+
+  it('shows the available tool and approval counts in agent mode', async () => {
+    const wrapper = mount(ChatView, {
+      attachTo: window.document.body,
+      global: { plugins: [createPinia()], stubs: { MarkdownMessage: true } }
+    })
+    await flushPromises()
+
+    await wrapper.findAll('.chat-mode-switch button')[1].trigger('click')
+    await flushPromises()
+
+    expect(wrapper.get('[data-testid="agent-tool-summary"]').text()).toContain('3 个工具可用')
+    expect(wrapper.get('[data-testid="agent-tool-summary"]').text()).toContain('1 个操作需审批')
     wrapper.unmount()
   })
 })

@@ -2996,6 +2996,7 @@ pub fn run() {
             agent::agent_get_run,
             agent::agent_get_pending_run,
             agent::agent_list_tools,
+            agent::agent_tool_policy_update,
             agent_skills::agent_skill_list,
             agent_skills::agent_skill_read,
             agent_skills::agent_skill_upsert,
@@ -3170,6 +3171,19 @@ mod tests {
         assert_eq!(agent_tables, 2);
         assert_eq!(conversation_mode, 1);
         assert_eq!(message_run_link, 1);
+    }
+    #[test]
+    fn migration_creates_agent_tool_policy_table() {
+        let c = Connection::open_in_memory().unwrap();
+        init_database(&c).unwrap();
+        let exists: i64 = c
+            .query_row(
+                "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='agent_tool_policies'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(exists, 1);
     }
     #[test]
     fn title_request_disables_deepseek_thinking() {

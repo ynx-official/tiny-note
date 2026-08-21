@@ -41,11 +41,13 @@ const modeSaving = ref(false)
 const agentSegments = ref([])
 const currentAgentRunId = ref('')
 const pendingApproval = ref(null)
+const agentTools = ref([])
 const approvalBusy = ref(false)
 const approvalError = ref('')
 const titlesGenerating = new Set()
 const fromHome = computed(() => route.query.from === 'home')
 const selectedModel = computed(() => models.value.find(model => model.id === selectedModelId.value) || models.value.find(model => model.isDefault) || models.value[0] || null)
+const agentApprovalCount = computed(() => agentTools.value.filter(tool => tool.requireApproval).length)
 
 function scrollToBottom() {
   nextTick(() => {
@@ -373,7 +375,8 @@ onMounted(async () => {
   await appStore.initialize()
   await Promise.allSettled([
     notesStore.notes.length ? Promise.resolve() : notesStore.load(),
-    library.bases.length ? Promise.resolve() : library.load()
+    library.bases.length ? Promise.resolve() : library.load(),
+    invoke('agent_list_tools').then(value => { agentTools.value = value || [] })
   ])
   window.addEventListener('tiny-note-chat-deleted', handleDeleted)
   if (route.query.id) {
@@ -413,7 +416,7 @@ async function selectMode(mode) {
 }
 
 function toolLabel(name) {
-  return ({ retrieve_knowledge: '检索知识库', search_notes: '搜索笔记', get_note: '读取笔记', get_current_time: '获取当前时间', create_note: '创建笔记', update_note: '生成修改提案', update_memory: '更新记忆', list_agent_files: '浏览工作区', read_agent_file: '读取工作区文件', write_agent_file: '写入工作区文件', read_skill: '读取技能', write_skill: '更新技能', list_mcp_tools: '查找 MCP 工具', call_mcp_tool: '调用 MCP 工具', delegate_task: '委派子 Agent', run_sandbox_script: '运行隔离脚本' })[name] || name || '调用工具'
+  return ({ list_knowledge_bases: '读取知识库目录', retrieve_knowledge: '检索知识库', search_notes: '搜索笔记', get_note: '读取笔记', get_current_time: '获取当前时间', create_note: '创建笔记', update_note: '生成修改提案', update_memory: '更新记忆', list_agent_files: '浏览工作区', read_agent_file: '读取工作区文件', write_agent_file: '写入工作区文件', read_skill: '读取技能', write_skill: '更新技能', list_mcp_tools: '查找 MCP 工具', call_mcp_tool: '调用 MCP 工具', delegate_task: '委派子 Agent', run_sandbox_script: '运行隔离脚本' })[name] || name || '调用工具'
 }
 
 function formatToolDetail(value) {
@@ -464,7 +467,7 @@ function formatToolDetail(value) {
     <form class="chat-page-composer" @submit.prevent="submit">
       <div v-if="references.length" class="chat-reference-tags"><span v-for="reference in references" :key="reference.key"><FileText v-if="reference.type === 'note'" :size="13" /><File v-else :size="13" />{{ reference.name }}<button type="button" @click="removeReference(reference.key)"><X :size="12" /></button></span></div>
       <textarea v-model="draft" rows="2" placeholder="输入消息..." @keydown.enter.exact.prevent="submit"></textarea>
-      <div class="chat-page-composer-footer"><div class="chat-composer-left"><div class="chat-mode-switch" :class="{ 'is-locked': busy || modeSaving }"><button type="button" :class="{ active: currentMode === 'chat' }" :disabled="busy || modeSaving" title="普通对话" @click="selectMode('chat')"><MessageCircle :size="14" />对话</button><button type="button" :class="{ active: currentMode === 'agent' }" :disabled="busy || modeSaving" title="自主调用工具完成任务" @click="selectMode('agent')"><Wrench :size="14" />Agent</button></div><div class="chat-reference-anchor"><button type="button" class="chat-attach-button" title="引用笔记或文件" @click="toggleReferenceMenu"><Paperclip :size="15" /></button><div v-if="referenceMenuOpen" class="chat-reference-menu"><strong>引用内容</strong><small>笔记</small><button v-for="note in notesStore.notes" :key="note.id" type="button" @click="addNoteReference(note)"><FileText :size="13" />{{ note.title || '未命名笔记' }}</button><small v-if="library.entries.some(item => item.kind === 'file')">{{ library.active?.name || '知识库文件' }}</small><button v-for="entry in library.entries.filter(item => item.kind === 'file')" :key="entry.relativePath" type="button" @click="addFileReference(entry)"><BookOpen :size="13" />{{ entry.name }}</button></div></div><small>{{ modeSaving ? '正在切换模式…' : currentMode === 'agent' ? 'Agent 可自主检索本地内容' : '内容保存在你的设备上' }}</small></div><button v-if="busy" type="button" class="chat-page-send is-stop" title="停止生成" @click="stop"><Square :size="15" /></button><button v-else type="submit" class="chat-page-send" :class="{ active: draft.trim() }" title="发送"><Send :size="16" /></button></div>
+      <div class="chat-page-composer-footer"><div class="chat-composer-left"><div class="chat-mode-switch" :class="{ 'is-locked': busy || modeSaving }"><button type="button" :class="{ active: currentMode === 'chat' }" :disabled="busy || modeSaving" title="普通对话" @click="selectMode('chat')"><MessageCircle :size="14" />对话</button><button type="button" :class="{ active: currentMode === 'agent' }" :disabled="busy || modeSaving" title="自主调用工具完成任务" @click="selectMode('agent')"><Wrench :size="14" />Agent</button></div><div class="chat-reference-anchor"><button type="button" class="chat-attach-button" title="引用笔记或文件" @click="toggleReferenceMenu"><Paperclip :size="15" /></button><div v-if="referenceMenuOpen" class="chat-reference-menu"><strong>引用内容</strong><small>笔记</small><button v-for="note in notesStore.notes" :key="note.id" type="button" @click="addNoteReference(note)"><FileText :size="13" />{{ note.title || '未命名笔记' }}</button><small v-if="library.entries.some(item => item.kind === 'file')">{{ library.active?.name || '知识库文件' }}</small><button v-for="entry in library.entries.filter(item => item.kind === 'file')" :key="entry.relativePath" type="button" @click="addFileReference(entry)"><BookOpen :size="13" />{{ entry.name }}</button></div></div><small v-if="currentMode === 'agent'" data-testid="agent-tool-summary" class="chat-agent-tool-summary">{{ agentTools.length }} 个工具可用 · {{ agentApprovalCount }} 个操作需审批</small><small v-else>{{ modeSaving ? '正在切换模式…' : '内容保存在你的设备上' }}</small></div><button v-if="busy" type="button" class="chat-page-send is-stop" title="停止生成" @click="stop"><Square :size="15" /></button><button v-else type="submit" class="chat-page-send" :class="{ active: draft.trim() }" title="发送"><Send :size="16" /></button></div>
     </form>
   </div>
 </template>
