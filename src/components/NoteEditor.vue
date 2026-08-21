@@ -31,7 +31,7 @@ import { DEFAULT_NOTE_MODE, NOTE_MODES, clampSplitRatio, isRichClipboardHtml, ma
 const lowlight = createLowlight()
 lowlight.register('javascript', javascript); lowlight.register('typescript', typescript); lowlight.register('python', python); lowlight.register('json', json); lowlight.register('html', xml); lowlight.register('xml', xml); lowlight.register('css', css); lowlight.register('bash', bash); lowlight.register('sql', sql); lowlight.register('markdown', markdown); lowlight.register('yaml', yaml); lowlight.register('rust', rust)
 const props = defineProps({ note: Object, tocVisible: { type: Boolean, default: false }, proposalId: { type: String, default: '' } }); const emit = defineEmits(['deleted', 'toggle-toc', 'proposal-reviewed']); const store = useNotesStore(); const library = useLibraryStore(); const appStore = useAppStore(); const { t } = useI18n(); const aiBusy = ref(false); const aiText = ref(''); const aiRequestId = ref(''); const aiAction = ref('summarize'); const aiResultAction = ref(''); const aiProposal = ref(null); const aiSources = ref([]); const aiConsentOpen = ref(false); const assistantOpen = ref(false); const assistantBusy = ref(false); const assistantRequestId = ref(''); const assistantStreamingText = ref(''); const assistantMessages = ref([]); const assistantSelection = ref(null); const assistantResponseSources = ref([]); const assistantResponseProposal = ref(null); const aiPanelOpen = ref(false); const commandMenuOpen = ref(false); const aiPrompt = ref(''); const aiInputRef = ref(null); const commandMenuDirection = ref('down'); const moreOpen = ref(false); const revisionsOpen = ref(false); const revisions = ref([]); const revisionsBusy = ref(false); const insertOpen = ref(false); const tablePickerOpen = ref(false); const textColorOpen = ref(false); const highlightOpen = ref(false); const headingOpen = ref(false); const knowledgeMenuOpen = ref(false); const imageDialogOpen = ref(false); const imageUrl = ref(''); const imageAlt = ref(''); const imageInput = ref(null); const tableRows = ref(0); const tableCols = ref(0); const fimEnabled = computed(() => appStore.settings.fimEnabled === true); const fimSuggestion = ref(''); const editorStateTick = ref(0); let fimTimer; let savedSelection = null; let pendingAiRequest = null
-const modeIcons = { rich: PenLine, split: Columns2, source: FileCode2, read: Eye }
+const modeIcons = { rich: PenLine, markdown: FileCode2, read: Eye }
 const editorModes = NOTE_MODES.map(mode => ({ ...mode, icon: modeIcons[mode.id] }))
 const editorMode = ref(DEFAULT_NOTE_MODE)
 const modeMenuOpen = ref(false)
@@ -40,6 +40,8 @@ const modeMenuRef = ref(null)
 const markdownDraft = ref('')
 const markdownParseError = ref('')
 const sourceDirty = ref(false)
+const markdownPasteNotice = ref(false)
+const markdownPreview = ref(true)
 const splitRatio = ref(50)
 const splitVertical = ref(false)
 const splitWorkspace = ref(null)
@@ -49,13 +51,15 @@ const pendingSourceDrafts = new Map()
 const persistedSignatures = new Map()
 let applyingEditorContent = false
 let markdownParseTimer
+let markdownPasteTimer
 let splitResizeObserver
 let splitDragState
 let scrollSyncFrame
 let scrollSyncSource = ''
 const currentMode = computed(() => editorModes.find(mode => mode.id === editorMode.value) || editorModes[0])
 const richMode = computed(() => editorMode.value === 'rich')
-const codeMode = computed(() => editorMode.value === 'source' || editorMode.value === 'split')
+const codeMode = computed(() => editorMode.value === 'markdown')
+const splitMode = computed(() => codeMode.value && markdownPreview.value)
 const splitPaneStyle = computed(() => splitVertical.value ? { height: `${splitRatio.value}%` } : { width: `${splitRatio.value}%` })
 const aiActionLabels = { interpret: '解读', refine: '精炼', polish: '润色', expand: '扩写', translate: '翻译', summarize: '总结', continue_write: '续写', fix_grammar: '语法修正', generate_plan: '生成任务计划', generate_table: '生成表格', custom: 'AI 写作' }
 const aiErrorMessages = { model_profile_unavailable: '还没有配置可用模型，请先打开设置完成配置。', api_key_not_configured: '当前模型还没有配置 API Key，请先打开设置完成配置。', credential_store_unavailable: '系统凭据存储不可用，暂时无法调用 AI。', provider_request_failed: '模型服务请求失败，请检查模型地址和网络连接。', provider_stream_failed: '模型服务连接中断，请稍后重试。' }
@@ -73,6 +77,10 @@ const aiDialogStyle = computed(() => {
 })
 let aiDragState = null
 const refreshEditorState = () => { editorStateTick.value += 1 }
+function looksLikeMarkdown(text) {
+  return /(^|\n)\s{0,3}(#{1,6}\s|[-*+]\s|\d+\.\s|>\s|```|~~~)/m.test(text) ||
+    /(?:\*\*[^*]+\*\*|__[^_]+__|`[^`]+`|!?\[[^\]]+\]\([^)]+\)|^\s*\|.+\|\s*$)/m.test(text)
+}
 function handleMarkdownPaste(view, event) {
   if (!richMode.value || !event.clipboardData) return false
 
@@ -89,7 +97,13 @@ function handleMarkdownPaste(view, event) {
     event.preventDefault()
     event.stopPropagation?.()
     const parsedHtml = sanitizeEditorHtml(markdownToEditorHtml(text))
-    return editor.value.chain().focus().insertContent(parsedHtml).run()
+    const applied = editor.value.chain().focus().insertContent(parsedHtml).run()
+    if (applied && looksLikeMarkdown(text)) {
+      markdownPasteNotice.value = true
+      clearTimeout(markdownPasteTimer)
+      markdownPasteTimer = setTimeout(() => { markdownPasteNotice.value = false }, 5000)
+    }
+    return applied
   } catch (error) {
     console.error('Markdown paste failed:', error)
     return false
@@ -98,62 +112,32 @@ function handleMarkdownPaste(view, event) {
 function prepareEditorContent(note) {
   const container = document.createElement('div')
   container.innerHTML = note?.contentHtml || ''
-  let firstBlock = container.firstElementChild
 
-  // Older builds registered noteTitle ahead of paragraph. ProseMirror then used
-  // noteTitle as the fallback text block for bare table-cell content, persisting
-  // every cell as an H1. Keep the one document title and repair nested copies.
-  const validTitle = firstBlock?.matches('h1[data-note-title]') ? firstBlock : null
-  container.querySelectorAll('[data-note-title]').forEach(title => {
-    if (title === validTitle) return
-    if (title.parentElement === container) {
-      title.removeAttribute('data-note-title')
-      return
-    }
+  // A development build briefly stored the independent note title as a
+  // data-note-title H1 inside the body. Remove that duplicate and repair
+  // table cells produced by the same schema before loading the document.
+  if (container.firstElementChild?.matches('h1[data-note-title]')) {
+    container.firstElementChild.remove()
+  }
+  container.querySelectorAll('[data-note-title]').forEach(titleNode => {
     const paragraph = document.createElement('p')
-    const textAlign = title.style?.textAlign
+    const textAlign = titleNode.style?.textAlign
     if (textAlign) paragraph.style.textAlign = textAlign
-    paragraph.innerHTML = title.innerHTML
-    title.replaceWith(paragraph)
+    paragraph.innerHTML = titleNode.innerHTML
+    titleNode.replaceWith(paragraph)
   })
 
-  if (validTitle) return container.innerHTML
-  firstBlock = container.firstElementChild
-  if (!firstBlock) {
-    container.innerHTML = '<h1 data-note-title="true"></h1>'
-    return container.innerHTML
-  }
-  if (/^H[1-3]$/.test(firstBlock.tagName) || firstBlock.tagName === 'P') {
-    const title = document.createElement('h1')
-    title.dataset.noteTitle = 'true'
-    title.innerHTML = firstBlock.innerHTML
-    firstBlock.replaceWith(title)
-  } else {
-    const title = document.createElement('h1')
-    title.dataset.noteTitle = 'true'
-    container.insertBefore(title, firstBlock)
-  }
-  return container.innerHTML
-}
-function extractNoteTitle(html) {
-  const container = document.createElement('div')
-  container.innerHTML = html || ''
-  return container.querySelector('[data-note-title]')?.textContent?.trim().slice(0, 60) || ''
+  return container.innerHTML || '<p></p>'
 }
 function getEditorMarkdown(instance = editor.value) {
-  if (!instance?.getMarkdown) return ''
-  const markdown = instance.getMarkdown()
-  const noteTitle = extractNoteTitle(instance.getHTML())
-  if (!noteTitle) return markdown
-  const body = markdown.trimStart()
-  return body.startsWith(`# ${noteTitle}`) ? body : `# ${noteTitle}\n\n${body}`
+  return instance?.getMarkdown?.() || ''
 }
 const editor = useEditor({
   content: prepareEditorContent(props.note),
   extensions: createNoteExtensions({
     lowlight,
     codeBlockNodeView: VueNodeViewRenderer(CodeBlockComponent),
-    placeholder: ({ node }) => node.type.name === 'noteTitle' ? '输入标题…' : '写下此刻的想法…'
+    placeholder: '写下此刻的想法…'
   }),
   editorProps: { attributes: { class: 'note-prose' }, handlePaste: handleMarkdownPaste },
   onTransaction: refreshEditorState,
@@ -201,8 +185,6 @@ function handleRichEditorUpdate(instance) {
   sourceDirty.value = false
   markdownParseError.value = ''
   pendingSourceDrafts.delete(props.note.id)
-  const contentTitle = extractNoteTitle(instance.getHTML())
-  if (contentTitle) props.note.title = contentTitle
   scheduleNoteSave(props.note)
   if (fimEnabled.value) {
     clearTimeout(fimTimer)
@@ -274,15 +256,13 @@ async function flushLatestContent({ note = props.note, save = false } = {}) {
 
 function resetEditorSession(note) {
   clearTimeout(markdownParseTimer)
-  editorMode.value = DEFAULT_NOTE_MODE
-  splitRatio.value = 50
   modeMenuOpen.value = false
   markdownParseError.value = ''
   sourceDirty.value = pendingSourceDrafts.has(note?.id)
   applyingEditorContent = true
   if (note && editor.value) editor.value.commands.setContent(prepareEditorContent(note), { emitUpdate: false })
   applyingEditorContent = false
-  editor.value?.setEditable(true, false)
+  editor.value?.setEditable(editorMode.value === 'rich', false)
   markdownDraft.value = deriveMarkdown(note)
   if (sourceDirty.value) markdownParseError.value = '源码解析失败，尚未保存'
   if (note) persistedSignatures.set(note.id, noteContentSignature(note))
@@ -294,7 +274,7 @@ async function changeEditorMode(mode) {
   if (mode === editorMode.value) return
   const valid = await flushLatestContent({ save: true })
   if (!valid && mode === 'rich') return
-  if ((mode === 'source' || mode === 'split') && !sourceDirty.value) markdownDraft.value = deriveMarkdown()
+  if (mode === 'markdown' && !sourceDirty.value) markdownDraft.value = deriveMarkdown()
   editorMode.value = mode
   editor.value?.setEditable(mode === 'rich', false)
   closeToolbarMenus()
@@ -338,7 +318,7 @@ function updateSplitOrientation() {
 function setupSplitObserver() {
   splitResizeObserver?.disconnect()
   splitResizeObserver = null
-  if (editorMode.value !== 'split' || !splitWorkspace.value || typeof ResizeObserver === 'undefined') return
+  if (!splitMode.value || !splitWorkspace.value || typeof ResizeObserver === 'undefined') return
   updateSplitOrientation()
   splitResizeObserver = new ResizeObserver(updateSplitOrientation)
   splitResizeObserver.observe(splitWorkspace.value)
@@ -371,7 +351,7 @@ function startSplitResize(event) {
 }
 
 function synchronizeSplitScroll(origin, payload) {
-  if (editorMode.value !== 'split' || (scrollSyncSource && scrollSyncSource !== origin)) return
+  if (!splitMode.value || (scrollSyncSource && scrollSyncSource !== origin)) return
   scrollSyncSource = origin
   cancelAnimationFrame(scrollSyncFrame)
   scrollSyncFrame = requestAnimationFrame(() => {
@@ -388,7 +368,21 @@ function synchronizeSplitScroll(origin, payload) {
 }
 
 function handlePreviewScroll() {
+  if (!splitMode.value) return
   synchronizeSplitScroll('preview', {})
+}
+
+async function toggleMarkdownPreview() {
+  markdownPreview.value = !markdownPreview.value
+  await nextTick()
+  setupSplitObserver()
+}
+
+async function viewPastedMarkdown() {
+  markdownPasteNotice.value = false
+  clearTimeout(markdownPasteTimer)
+  await changeEditorMode('markdown')
+  sourceEditorRef.value?.focus()
 }
 
 async function handleEditorLink(event) {
@@ -416,6 +410,8 @@ function resetTransientEditorState() {
   assistantStreamingText.value = ''
   assistantMessages.value = []
   assistantSelection.value = null
+  markdownPasteNotice.value = false
+  clearTimeout(markdownPasteTimer)
 }
 
 watch(() => props.note?.id, async (id, previousId) => {
@@ -435,6 +431,7 @@ watch(assistantOpen, () => nextTick(setupSplitObserver))
 onBeforeUnmount(() => {
   clearTimeout(fimTimer)
   clearTimeout(markdownParseTimer)
+  clearTimeout(markdownPasteTimer)
   stopAiDrag()
   stopSplitResize()
   splitResizeObserver?.disconnect()
@@ -634,7 +631,7 @@ function restoreSavedSelection() { if (!editor.value || !savedSelection) return 
 async function applyAiResult(mode) {
   if (!editor.value || !aiText.value || !aiProposal.value) return
   if (mode === 'insert' && editorMode.value !== 'rich') {
-    window.alert('源码、分栏和阅读模式没有可靠插入位置，请切换到富文本模式后再应用插入。')
+    window.alert('Markdown 和阅读模式没有可靠插入位置，请切换到即时编辑后再应用插入。')
     return
   }
   if (!await flushLatestContent()) return
@@ -822,6 +819,14 @@ async function createKnowledgeFromEditor() {
   if (!name?.trim()) return
   try { await library.create(name.trim(), 'personal'); if (library.activeId) await addToKnowledge(library.activeId) } catch (error) { window.alert(error?.message || '创建知识库失败，请重试') }
 }
+const title = computed({
+  get: () => props.note?.title || '',
+  set: value => {
+    if (!props.note || editorMode.value === 'read') return
+    props.note.title = value
+    scheduleNoteSave(props.note)
+  }
+})
 </script>
 <template>
   <div v-if="note" class="note-editor-shell">
@@ -865,6 +870,15 @@ async function createKnowledgeFromEditor() {
           </template>
           <span v-else class="toolbar-knowledge-empty">{{ t('noKnowledgeBases') }}</span>
         </div></span>
+        <button
+          v-if="codeMode"
+          type="button"
+          class="markdown-preview-toggle"
+          :class="{ pressed: markdownPreview }"
+          :aria-pressed="markdownPreview"
+          :title="markdownPreview ? '关闭实时预览' : '打开实时预览'"
+          @click="toggleMarkdownPreview"
+        ><Columns2 :size="16" /><span>预览</span></button>
         <span class="toolbar-menu-anchor mode-menu-anchor">
           <button type="button" class="editor-mode-trigger" :aria-expanded="modeMenuOpen" aria-haspopup="menu" :title="`文章模式：${currentMode.label}`" @click="toggleModeMenu" @keydown.esc.stop="modeMenuOpen = false">
             <component :is="currentMode.icon" :size="16" />
@@ -884,19 +898,22 @@ async function createKnowledgeFromEditor() {
         <button v-if="aiBusy" class="stop-button" @click="stopAi">{{ t('stop') }}</button>
       </div>
     </div>
+    <div class="editor-head"><input v-model="title" class="title-input" :readonly="editorMode === 'read'" :aria-readonly="editorMode === 'read'" :placeholder="t('untitled')" /><div class="editor-meta"><span :class="{ saving: store.saving }">{{ store.saving ? t('saving') : t('save') }}</span></div></div>
     <button class="toc-btn" :class="{ 'is-open': tocVisible }" title="目录" aria-label="目录" @click="emit('toggle-toc')"><span class="toc-char">目</span><span class="toc-char">录</span></button>
-    <div ref="splitWorkspace" class="editor-workspace" :class="[`mode-${editorMode}`, { 'is-vertical': splitVertical }]">
-      <MarkdownSourceEditor v-if="editorMode === 'source'" key="source-only" ref="sourceEditorRef" :model-value="markdownDraft" aria-label="Markdown 源码编辑器" @update:model-value="updateMarkdownDraft" />
-      <template v-if="editorMode === 'split'" key="split-layout">
-        <div key="split-source" class="split-source-pane" :style="splitPaneStyle">
-          <MarkdownSourceEditor ref="sourceEditorRef" :model-value="markdownDraft" aria-label="Markdown 源码编辑器" @update:model-value="updateMarkdownDraft" @scroll="synchronizeSplitScroll('source', $event)" />
-        </div>
-        <div key="split-divider" class="split-divider" role="separator" :aria-orientation="splitVertical ? 'horizontal' : 'vertical'" aria-label="调整源码与预览比例" aria-valuemin="30" aria-valuemax="70" :aria-valuenow="Math.round(splitRatio)" @pointerdown="startSplitResize"><span></span></div>
-      </template>
-      <div v-show="editorMode !== 'source'" key="editor-render" ref="previewScroller" class="editor-render-pane" :class="{ 'split-preview-pane': editorMode === 'split' }" @scroll.passive="handlePreviewScroll">
-        <EditorContent :editor="editor" class="editor-content" :class="{ 'split-preview-content': editorMode === 'split', 'read-content': editorMode === 'read' }" @click="handleEditorLink" @keydown.tab.prevent="acceptFim" @keydown.esc="dismissFim" />
+    <div ref="splitWorkspace" class="editor-workspace" :class="[`mode-${editorMode}`, { 'is-previewing': splitMode, 'is-vertical': splitVertical }]">
+      <div v-if="codeMode" class="markdown-source-pane" :class="{ 'split-source-pane': splitMode }" :style="splitMode ? splitPaneStyle : undefined">
+        <MarkdownSourceEditor ref="sourceEditorRef" :model-value="markdownDraft" aria-label="Markdown 源码编辑器" @update:model-value="updateMarkdownDraft" @scroll="synchronizeSplitScroll('source', $event)" />
+      </div>
+      <div v-if="splitMode" class="split-divider" role="separator" :aria-orientation="splitVertical ? 'horizontal' : 'vertical'" aria-label="调整源码与预览比例" aria-valuemin="30" aria-valuemax="70" :aria-valuenow="Math.round(splitRatio)" @pointerdown="startSplitResize"><span></span></div>
+      <div v-show="!codeMode || markdownPreview" key="editor-render" ref="previewScroller" class="editor-render-pane" :class="{ 'split-preview-pane': splitMode }" @scroll.passive="handlePreviewScroll">
+        <EditorContent :editor="editor" class="editor-content" :class="{ 'split-preview-content': splitMode, 'read-content': editorMode === 'read' }" @click="handleEditorLink" @keydown.tab.prevent="acceptFim" @keydown.esc="dismissFim" />
       </div>
       <div v-if="markdownParseError" class="markdown-parse-error" role="alert">{{ markdownParseError }}</div>
+      <div v-if="markdownPasteNotice" class="markdown-paste-notice" role="status">
+        <span>已按 Markdown 渲染</span>
+        <button type="button" class="markdown-paste-source" @click="viewPastedMarkdown">查看源码</button>
+        <button type="button" class="markdown-paste-close" aria-label="关闭提示" @click="markdownPasteNotice = false">×</button>
+      </div>
     </div>
     <BubbleMenu v-if="editor" v-show="!aiText && richMode" :editor="editor" :options="{ duration: 120, placement: 'top', maxWidth: 'none' }" :should-show="shouldShowBubbleMenu" class="tiny-note-bubble-menu">
       <div v-if="aiPanelOpen" class="tiny-note-ai-input-wrapper" @mousedown.stop>
@@ -955,7 +972,7 @@ async function createKnowledgeFromEditor() {
           <div v-if="aiSources.length" class="ai-source-list"><span v-for="(source, index) in aiSources" :key="source.id" :title="source.snippet">[{{ index + 1 }}] {{ source.title }}<small v-if="source.truncated">已截取</small></span></div>
         </div>
         <div class="ai-output-footer"><div class="ai-output-footer-meta"><span>内容由 AI 生成 <ShieldCheck :size="13" /></span><span>已生成{{ aiCharCount }}字</span></div><div class="ai-output-feedback"><button type="button" :class="{ active: aiFeedback === 'like' }" title="有帮助" @click="toggleAiFeedback('like')"><ThumbsUp :size="16" /></button><button type="button" :class="{ active: aiFeedback === 'dislike' }" title="没帮助" @click="toggleAiFeedback('dislike')"><ThumbsDown :size="16" /></button><button type="button" title="复制" @click="copyAi"><Copy :size="16" /></button></div></div>
-        <div class="ai-output-actions"><div><button type="button" class="ai-output-action rewrite" :disabled="aiBusy" @click="rewriteAi"><RotateCcw :size="14" />重写</button><button type="button" class="ai-output-action discard" :disabled="aiBusy" @click="dismissAiResult"><Trash2 :size="14" />弃用</button></div><div><button type="button" class="ai-output-action replace" :disabled="aiBusy || !aiText || !aiProposal" @click="replaceWithAi">应用替换</button><button type="button" class="ai-output-action insert" :disabled="aiBusy || !aiText || !aiProposal || !richMode" :title="richMode ? '在当前光标位置插入' : '请切换到富文本模式后应用插入'" @click="insertAi">应用插入</button></div></div>
+        <div class="ai-output-actions"><div><button type="button" class="ai-output-action rewrite" :disabled="aiBusy" @click="rewriteAi"><RotateCcw :size="14" />重写</button><button type="button" class="ai-output-action discard" :disabled="aiBusy" @click="dismissAiResult"><Trash2 :size="14" />弃用</button></div><div><button type="button" class="ai-output-action replace" :disabled="aiBusy || !aiText || !aiProposal" @click="replaceWithAi">应用替换</button><button type="button" class="ai-output-action insert" :disabled="aiBusy || !aiText || !aiProposal || !richMode" :title="richMode ? '在当前光标位置插入' : '请切换到即时编辑后应用插入'" @click="insertAi">应用插入</button></div></div>
       </div>
     </div>
     <div v-if="imageDialogOpen" class="editor-dialog-overlay" @click.self="imageDialogOpen = false">

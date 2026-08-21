@@ -52,40 +52,58 @@ async function mountEditor(activeNote = note(), extraProps = {}) {
 afterEach(() => { vi.useRealTimers(); localStorage.clear() })
 
 describe('NoteEditor article modes', () => {
-  it('opens in rich text and switches to source and read modes', async () => {
+  it('opens in instant editing and exposes Markdown and reading as the other primary modes', async () => {
     const wrapper = await mountEditor()
-    expect(wrapper.get('.editor-mode-trigger').text()).toContain('富文本')
+    expect(wrapper.get('.editor-mode-trigger').text()).toContain('即时编辑')
     expect(wrapper.get('.toolbar-left-group').isVisible()).toBe(true)
 
     await wrapper.get('.editor-mode-trigger').trigger('click')
     const modeItems = wrapper.findAll('[role="menuitemradio"]')
-    expect(modeItems.map(item => item.find('strong').text())).toEqual(['富文本', '源码 + 预览', '纯源码', '阅读'])
-    await modeItems[2].trigger('click')
+    expect(modeItems.map(item => item.find('strong').text())).toEqual(['即时编辑', 'Markdown', '阅读'])
+    await modeItems[1].trigger('click')
     await flushPromises()
     expect(wrapper.find('.markdown-source-editor').exists()).toBe(true)
+    expect(wrapper.find('.split-preview-pane').exists()).toBe(true)
     expect(wrapper.get('.toolbar-left-group').isVisible()).toBe(false)
 
     await wrapper.get('.editor-mode-trigger').trigger('click')
-    await wrapper.findAll('[role="menuitemradio"]')[3].trigger('click')
+    await wrapper.findAll('[role="menuitemradio"]')[2].trigger('click')
     await flushPromises()
     expect(wrapper.get('.note-prose').attributes('contenteditable')).toBe('false')
     expect(wrapper.find('.markdown-source-editor').exists()).toBe(false)
     wrapper.unmount()
   })
 
-  it('supports keyboard menu navigation and resets to rich text for another note', async () => {
+  it('supports keyboard menu navigation and keeps the current mode for another note', async () => {
     const wrapper = await mountEditor()
     await wrapper.get('.editor-mode-trigger').trigger('click')
     await wrapper.get('.editor-mode-menu').trigger('keydown', { key: 'ArrowDown' })
-    expect(window.document.activeElement?.textContent).toContain('源码 + 预览')
+    expect(window.document.activeElement?.textContent).toContain('Markdown')
     await wrapper.findAll('[role="menuitemradio"]')[1].trigger('click')
     await flushPromises()
-    expect(wrapper.find('.editor-workspace.mode-split').exists()).toBe(true)
+    expect(wrapper.find('.editor-workspace.mode-markdown.is-previewing').exists()).toBe(true)
 
     await wrapper.setProps({ note: note('note-2') })
     await flushPromises()
-    expect(wrapper.get('.editor-mode-trigger').text()).toContain('富文本')
-    expect(wrapper.get('.toolbar-left-group').isVisible()).toBe(true)
+    expect(wrapper.get('.editor-mode-trigger').text()).toContain('Markdown')
+    expect(wrapper.find('.editor-workspace.mode-markdown.is-previewing').exists()).toBe(true)
+    wrapper.unmount()
+  })
+
+  it('treats preview as a layout option inside Markdown mode', async () => {
+    const wrapper = await mountEditor()
+    await wrapper.get('.editor-mode-trigger').trigger('click')
+    await wrapper.findAll('[role="menuitemradio"]')[1].trigger('click')
+    await flushPromises()
+
+    const previewToggle = wrapper.get('.markdown-preview-toggle')
+    expect(previewToggle.attributes('aria-pressed')).toBe('true')
+    expect(wrapper.find('.split-preview-pane').exists()).toBe(true)
+    await previewToggle.trigger('click')
+    await flushPromises()
+    expect(previewToggle.attributes('aria-pressed')).toBe('false')
+    expect(wrapper.find('.split-preview-pane').exists()).toBe(false)
+    expect(wrapper.find('.markdown-source-editor').exists()).toBe(true)
     wrapper.unmount()
   })
 
@@ -97,7 +115,7 @@ describe('NoteEditor article modes', () => {
     wrapper.notesStore.notes.push(second)
 
     await wrapper.get('.editor-mode-trigger').trigger('click')
-    await wrapper.findAll('[role="menuitemradio"]')[2].trigger('click')
+    await wrapper.findAll('[role="menuitemradio"]')[1].trigger('click')
     await flushPromises()
     const source = wrapper.findComponent(MarkdownSourceEditor)
     const exactDraft = '# 新稿\n\n\n保留空行\n'
@@ -109,7 +127,7 @@ describe('NoteEditor article modes', () => {
     expect(first.contentHtml).toContain('<h1>新稿</h1>')
     expect(first.contentText).toContain('保留空行')
     expect(JSON.parse(localStorage.getItem('tiny-note-browser-state')).notes[0].contentMarkdown).toBe(exactDraft)
-    expect(wrapper.get('.editor-mode-trigger').text()).toContain('富文本')
+    expect(wrapper.get('.editor-mode-trigger').text()).toContain('Markdown')
     wrapper.unmount()
   })
 
@@ -149,7 +167,7 @@ describe('NoteEditor article modes', () => {
     localStorage.setItem('tiny-note-browser-state', JSON.stringify({ notes: [active] }))
     const wrapper = await mountEditor(active)
     await wrapper.get('.editor-mode-trigger').trigger('click')
-    await wrapper.findAll('[role="menuitemradio"]')[2].trigger('click')
+    await wrapper.findAll('[role="menuitemradio"]')[1].trigger('click')
     await flushPromises()
     vi.useFakeTimers()
 
@@ -167,6 +185,31 @@ describe('NoteEditor article modes', () => {
     wrapper.unmount()
   })
 
+  it('keeps an incomplete Markdown HTML fragment editable and saved', async () => {
+    const active = note('note-incomplete-markdown')
+    localStorage.setItem('tiny-note-browser-state', JSON.stringify({ notes: [active] }))
+    const wrapper = await mountEditor(active)
+    await wrapper.get('.editor-mode-trigger').trigger('click')
+    await wrapper.findAll('[role="menuitemradio"]')[1].trigger('click')
+    await flushPromises()
+    vi.useFakeTimers()
+
+    const source = wrapper.findComponent(MarkdownSourceEditor)
+    const draft = '<span style="color: #dc2626">尚未闭合'
+    source.vm.view.dispatch({ changes: { from: 0, to: source.vm.view.state.doc.length, insert: draft } })
+    await vi.advanceTimersByTimeAsync(150)
+
+    expect(active.contentMarkdown).toBe(draft)
+    expect(wrapper.find('.markdown-parse-error').exists()).toBe(false)
+    expect(wrapper.get('.split-preview-pane').text()).toContain('尚未闭合')
+
+    await vi.advanceTimersByTimeAsync(800)
+    expect(JSON.parse(localStorage.getItem('tiny-note-browser-state')).notes[0].contentMarkdown).toBe(draft)
+
+    vi.useRealTimers()
+    wrapper.unmount()
+  })
+
   it('keeps the current non-rich mode for AI replacement and disables insertion', async () => {
     const active = note('note-ai')
     localStorage.setItem('tiny-note-browser-state', JSON.stringify({
@@ -175,7 +218,7 @@ describe('NoteEditor article modes', () => {
     }))
     const wrapper = await mountEditor(active, { proposalId: 'proposal-ai' })
     await wrapper.get('.editor-mode-trigger').trigger('click')
-    await wrapper.findAll('[role="menuitemradio"]')[2].trigger('click')
+    await wrapper.findAll('[role="menuitemradio"]')[1].trigger('click')
     await flushPromises()
 
     expect(wrapper.get('.ai-output-action.insert').attributes('disabled')).toBeDefined()
@@ -183,7 +226,7 @@ describe('NoteEditor article modes', () => {
     await flushPromises()
     expect(active.contentMarkdown).toBe('# AI 新版')
     expect(active.contentHtml).toContain('<h1>AI 新版</h1>')
-    expect(wrapper.get('.editor-mode-trigger').text()).toContain('纯源码')
+    expect(wrapper.get('.editor-mode-trigger').text()).toContain('Markdown')
     expect(wrapper.findComponent(MarkdownSourceEditor).text()).toContain('# AI 新版')
     wrapper.unmount()
   })
@@ -193,7 +236,7 @@ describe('NoteEditor article modes', () => {
     legacy.contentMarkdown = ''
     const wrapper = await mountEditor(legacy)
     await wrapper.get('.editor-mode-trigger').trigger('click')
-    await wrapper.findAll('[role="menuitemradio"]')[2].trigger('click')
+    await wrapper.findAll('[role="menuitemradio"]')[1].trigger('click')
     await flushPromises()
 
     const source = wrapper.findComponent(MarkdownSourceEditor)
@@ -207,6 +250,45 @@ describe('NoteEditor article modes', () => {
     wrapper.unmount()
   })
 
+  it('renders source edits in preview and restores them in instant editing', async () => {
+    const wrapper = await mountEditor()
+    await wrapper.get('.editor-mode-trigger').trigger('click')
+    await wrapper.findAll('[role="menuitemradio"]')[1].trigger('click')
+    await flushPromises()
+
+    const source = wrapper.findComponent(MarkdownSourceEditor)
+    source.vm.view.dispatch({
+      changes: {
+        from: 0,
+        to: source.vm.view.state.doc.length,
+        insert: '## 源码标题\n\n- [x] 已完成\n\n**加粗内容**'
+      }
+    })
+    await new Promise(resolve => setTimeout(resolve, 180))
+    expect(wrapper.get('.split-preview-pane').html()).toContain('<h2>源码标题</h2>')
+    expect(wrapper.get('.split-preview-pane').text()).toContain('已完成')
+
+    await wrapper.get('.editor-mode-trigger').trigger('click')
+    await wrapper.findAll('[role="menuitemradio"]')[0].trigger('click')
+    await flushPromises()
+    expect(wrapper.get('.note-prose').html()).toContain('<h2>源码标题</h2>')
+    expect(wrapper.get('.note-prose').html()).toContain('<strong>加粗内容</strong>')
+    wrapper.unmount()
+  })
+
+  it('keeps the note title separate from Markdown body normalization', async () => {
+    const active = note('note-title')
+    const wrapper = await mountEditor(active)
+    expect(wrapper.get('.title-input').element.value).toBe('四种模式')
+
+    wrapper.vm.editor.commands.setContent('<h2>正文标题</h2><p>正文</p>')
+    await flushPromises()
+    expect(active.title).toBe('四种模式')
+    expect(active.contentMarkdown).toContain('## 正文标题')
+    expect(active.contentMarkdown.startsWith('# 四种模式')).toBe(false)
+    wrapper.unmount()
+  })
+
   it('renders Markdown pasted into the rich editor', async () => {
     const wrapper = await mountEditor()
     await wrapper.get('.note-prose').trigger('paste', {
@@ -217,6 +299,12 @@ describe('NoteEditor article modes', () => {
     await flushPromises()
     expect(wrapper.get('.note-prose').element.innerHTML).toContain('<h1>粘贴标题</h1>')
     expect(wrapper.get('.note-prose').element.innerHTML).toContain('<strong>加粗内容</strong>')
+    expect(wrapper.get('.markdown-paste-notice').text()).toContain('已按 Markdown 渲染')
+
+    await wrapper.get('.markdown-paste-source').trigger('click')
+    await flushPromises()
+    expect(wrapper.get('.editor-mode-trigger').text()).toContain('Markdown')
+    expect(wrapper.findComponent(MarkdownSourceEditor).text()).toContain('# 粘贴标题')
     wrapper.unmount()
   })
 
@@ -278,8 +366,9 @@ describe('NoteEditor article modes', () => {
     legacy.contentHtml = '<h1 data-note-title="true">文档标题</h1><table><tbody><tr><th><h1 data-note-title="true"><strong>表头</strong></h1></th></tr><tr><td><h1 data-note-title="true">正文单元格</h1></td></tr></tbody></table>'
     const wrapper = await mountEditor(legacy)
 
-    expect(wrapper.findAll('.note-prose > h1[data-note-title]')).toHaveLength(1)
+    expect(wrapper.findAll('.note-prose > h1[data-note-title]')).toHaveLength(0)
     expect(wrapper.findAll('.note-prose table [data-note-title]')).toHaveLength(0)
+    expect(wrapper.get('.title-input').element.value).toBe('四种模式')
     expect(wrapper.get('.note-prose th > p').text()).toBe('表头')
     expect(wrapper.get('.note-prose td > p').text()).toBe('正文单元格')
     wrapper.unmount()

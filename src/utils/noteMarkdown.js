@@ -4,9 +4,8 @@ import { marked } from 'marked'
 export const DEFAULT_NOTE_MODE = 'rich'
 
 export const NOTE_MODES = Object.freeze([
-  { id: 'rich', label: '富文本', description: '使用格式工具直接编辑' },
-  { id: 'split', label: '源码 + 预览', description: '同时编辑 Markdown 并查看效果' },
-  { id: 'source', label: '纯源码', description: '仅编辑 Markdown 源码' },
+  { id: 'rich', label: '即时编辑', description: '像 Notion 一样输入并立即呈现格式' },
+  { id: 'markdown', label: 'Markdown', description: '编辑源码，可打开实时预览' },
   { id: 'read', label: '阅读', description: '隐藏编辑工具，专注阅读' }
 ])
 

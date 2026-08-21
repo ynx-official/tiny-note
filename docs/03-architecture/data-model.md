@@ -2,7 +2,7 @@
 
 最后更新：2026-08-21
 
-SQLite 核心表：`notebooks`、`notes`、`knowledge_bases`、`model_profiles`、`settings`、`chat_conversations`、`chat_messages`。`notes` 原子保存三种正文表示：`content_markdown` 是用户原始 Markdown，`content_html` 是经过白名单清洗的 TipTap 渲染内容，`content_text` 是搜索与 AI 使用的纯文本。三个字段均为非空文本；旧库通过 `PRAGMA table_info` 检测后执行兼容 `ALTER TABLE`，Markdown 初始默认空字符串。
+SQLite 核心表：`notebooks`、`notes`、`knowledge_bases`、`model_profiles`、`settings`、`chat_conversations`、`chat_messages`。`notes.title` 是独立元数据，不自动写入正文 H1。正文原子保存三种表示：`content_markdown` 是 Markdown 模式中的用户源码（即时编辑产生正文变更后可规范化为语义等价写法），`content_html` 是经过白名单清洗的 TipTap 渲染内容，`content_text` 是搜索与 AI 使用的纯文本。三个字段均为非空文本；旧库通过 `PRAGMA table_info` 检测后执行兼容 `ALTER TABLE`，Markdown 初始默认空字符串。
 
 `note_revisions` 同样保存 `content_markdown`、`content_html` 和 `content_text`，因此 AI 应用前快照与版本恢复不会丢失源码。复制、导入、Agent 创建笔记及 AI 应用必须在一次逻辑操作中同步三种表示。旧记录保持可读，Markdown 在首次实际源码编辑或保存时延迟回填。
 
