@@ -246,8 +246,9 @@ body, button, input, select, textarea { font-family: -apple-system, BlinkMacSyst
 :root[data-theme=dark] .note-sidebar .note-items::-webkit-scrollbar-thumb { background:rgba(255,255,255,.15); }
 :root[data-theme=dark] .note-sidebar .note-items::-webkit-scrollbar-thumb:hover { background:rgba(255,255,255,.25); }
 .note-sidebar .note-list-empty { padding:28px 10px; color:var(--text-secondary); text-align:center; font-size:12px; }
-.note-editor-area { min-width:0; flex:1; position:relative; overflow:auto; background:var(--bg-primary); }
-.sidebar-expand-btn { position:absolute; z-index:4; top:64px; left:8px; width:30px; height:30px; border:1px solid var(--border-color); border-radius:8px; background:var(--bg-primary); color:var(--text-primary); box-shadow:0 2px 8px rgba(0,0,0,.08); font-size:22px; }
+.note-editor-area { min-width:0; flex:1; position:relative; overflow:auto; background:var(--bg-primary); transition:padding-left .25s cubic-bezier(.4,0,.2,1); }
+.note-editor-area.sidebar-collapsed { padding-left:60px; }
+.sidebar-expand-btn { position:absolute; z-index:4; top:12px; left:12px; width:32px; height:32px; border:1px solid var(--border-color); border-radius:8px; background:var(--bg-primary); color:var(--text-primary); box-shadow:0 2px 8px rgba(0,0,0,.08); font-size:22px; }
 
 /* Friday shell details: platform controls, persistent two-tab strip and bottom rail tools. */
 .brand { min-width:204px; padding-left:8px; gap:9px; }
@@ -428,7 +429,7 @@ body, button, input, select, textarea { font-family: -apple-system, BlinkMacSyst
 .kb-sidebar .kb-add-button:hover { background:var(--bg-hover); color:var(--text-primary); }
 .kb-sidebar .kb-row { padding-left:30px; font-size:14px; }
 .kb-sidebar .kb-row.active { background:var(--accent-light); }
-.kb-expand { top:64px; left:8px; }
+.kb-expand { top:12px; left:12px; }
 .kb-main .main-header { display:flex; align-items:center; justify-content:space-between; }
 .kb-main .header-left { display:flex; align-items:center; min-width:0; gap:4px; }
 .kb-main .nav-btn { width:32px; height:32px; display:grid; place-items:center; border-radius:7px; color:var(--text-primary); opacity:.7; }
