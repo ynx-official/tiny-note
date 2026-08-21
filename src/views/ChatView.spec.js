@@ -151,4 +151,69 @@ describe('ChatView Agent approval', () => {
     expect(wrapper.get('[data-testid="agent-tool-summary"]').text()).toContain('1 个操作需审批')
     wrapper.unmount()
   })
+
+  it('keeps the tool timeline after the user stops an agent run', async () => {
+    const wrapper = await mountPendingApproval()
+
+    await wrapper.get('.chat-page-send.is-stop').trigger('click')
+    await flushPromises()
+
+    const assistantSave = testState.invoke.mock.calls.find(([command, args]) =>
+      command === 'chat_add_message' && args.role === 'assistant'
+    )
+    expect(assistantSave?.[1]).toMatchObject({
+      content: '已停止 Agent 执行。',
+      agentRunId: 'run-1'
+    })
+    expect(wrapper.text()).toContain('创建笔记')
+    wrapper.unmount()
+  })
+
+  it('keeps the tool timeline when an agent run fails', async () => {
+    const wrapper = await mountPendingApproval()
+
+    await testState.channels[0].onmessage({ type: 'error', message: '工具连接中断' })
+    await flushPromises()
+
+    const assistantSave = testState.invoke.mock.calls.find(([command, args]) =>
+      command === 'chat_add_message' && args.role === 'assistant'
+    )
+    expect(assistantSave?.[1]).toMatchObject({
+      content: 'Agent 执行失败：工具连接中断',
+      agentRunId: 'run-1'
+    })
+    expect(wrapper.text()).toContain('创建笔记')
+    wrapper.unmount()
+  })
+
+  it('restores the saved tool timeline when reopening a conversation', async () => {
+    const fallbackInvoke = testState.invoke.getMockImplementation()
+    testState.route.query = { id: 'conversation-1' }
+    testState.invoke.mockImplementation(async (command, args = {}) => {
+      if (command === 'chat_get') return {
+        conversation: { id: 'conversation-1', title: '历史任务', mode: 'agent', modelProfileId: 'model-1' },
+        messages: [
+          { id: 'message-1', role: 'user', content: '读取项目笔记', references: [] },
+          { id: 'message-2', role: 'assistant', content: '已读取。', references: [], agentRunId: 'run-history' }
+        ]
+      }
+      if (command === 'agent_get_run') return {
+        id: args.runId,
+        steps: [{ id: 'step-1', kind: 'tool', toolCallId: 'call-history', toolName: 'get_note', arguments: { noteId: 'note-1' }, output: '{"title":"项目"}', status: 'completed' }]
+      }
+      if (command === 'agent_get_pending_run') return null
+      return fallbackInvoke(command, args)
+    })
+
+    const wrapper = mount(ChatView, {
+      attachTo: window.document.body,
+      global: { plugins: [createPinia()], stubs: { MarkdownMessage: true } }
+    })
+    await flushPromises()
+
+    expect(wrapper.text()).toContain('读取笔记')
+    expect(wrapper.text()).toContain('已完成')
+    expect(wrapper.text()).toContain('note-1')
+    wrapper.unmount()
+  })
 })

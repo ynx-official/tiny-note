@@ -13,9 +13,13 @@ const browserMemorySeed = [
   { fileName: 'Agent.md', nameKey: 'Agent', description: '经验与技巧', content: '# 经验与技巧\n\n> 记录 Tiny Note 助手在工作中积累的可复用经验。\n\n## 工具使用经验\n- （待补充）\n' }
 ]
 const browserSkillSeed = [
-  { name: 'knowledge-research', description: '检索并汇总 Tiny Note 本地知识，保留来源和不确定性。', fileName: 'knowledge-research/SKILL.md', builtin: true, content: '---\nname: knowledge-research\ndescription: 检索并汇总 Tiny Note 本地知识，保留来源和不确定性。\n---\n\n# 知识调研\n\n先检索，再汇总并保留来源。\n' },
-  { name: 'note-organizer', description: '将零散材料整理为结构清晰、便于后续维护的笔记。', fileName: 'note-organizer/SKILL.md', builtin: true, content: '---\nname: note-organizer\ndescription: 将零散材料整理为结构清晰、便于后续维护的笔记。\n---\n\n# 笔记整理\n\n保持结构清晰，不添加未知事实。\n' }
+  { name: 'knowledge-research', description: '检索、创建、更新或删除 Tiny Note 知识库，并基于已索引资料生成可追溯答案。', fileName: 'knowledge-research/SKILL.md', builtin: true, content: '---\nname: knowledge-research\ndescription: 检索、创建、更新或删除 Tiny Note 知识库，并基于已索引资料生成可追溯答案。\n---\n\n# 知识库管理与调研\n\n## 工具对应关系\n\n- 新建：`create_knowledge_base`\n- 查看目录：`list_knowledge_bases`\n- 检索正文：`retrieve_knowledge`\n- 修改信息：`update_knowledge_base`\n- 删除：`delete_knowledge_base`\n\n更新或删除前先列出知识库并确认唯一 ID。删除成功表示记录和索引已删除，受管目录已移入系统回收站。当前 Agent 工具不直接修改知识库内的单个文件。\n' },
+  { name: 'note-organizer', description: '使用 Tiny Note 工具创建、查找、读取、修改或删除笔记，并保持内容结构清晰。', fileName: 'note-organizer/SKILL.md', builtin: true, content: '---\nname: note-organizer\ndescription: 使用 Tiny Note 工具创建、查找、读取、修改或删除笔记，并保持内容结构清晰。\n---\n\n# 笔记管理与整理\n\n## 工具对应关系\n\n- 新建：`create_note`\n- 搜索：`search_notes`\n- 读取：`get_note`\n- 修改：`update_note`，只生成待审阅提案\n- 删除：`delete_note`，移入最近删除\n\n修改或删除前先搜索并读取，使用精确笔记 ID；只有工具成功后才能报告完成。\n' }
 ]
+const browserLegacySkillContent = {
+  'knowledge-research': '---\nname: knowledge-research\ndescription: 检索并汇总 Tiny Note 本地知识，保留来源和不确定性。\n---\n\n# 知识调研\n\n先检索，再汇总并保留来源。\n',
+  'note-organizer': '---\nname: note-organizer\ndescription: 将零散材料整理为结构清晰、便于后续维护的笔记。\n---\n\n# 笔记整理\n\n保持结构清晰，不添加未知事实。\n'
+}
 const browserAgentToolDefaults = [
   ['list_knowledge_bases', '列出现有知识库及索引概况', false], ['get_current_time', '获取本机当前时间', false],
   ['list_mcp_tools', '列出已发现的 MCP 工具', false], ['call_mcp_tool', '调用外部 MCP 工具', true],
@@ -24,7 +28,9 @@ const browserAgentToolDefaults = [
   ['retrieve_knowledge', '检索笔记和文本知识库', false], ['list_agent_files', '浏览 Agent 工作区', false],
   ['read_agent_file', '读取 Agent 工作区文本文件', false], ['write_agent_file', '写入 Agent 工作区文本文件', true],
   ['read_skill', '读取 Agent 技能', false], ['write_skill', '创建或更新 Agent 技能', true],
-  ['create_note', '创建笔记', true], ['update_note', '生成笔记修改提案', true], ['update_memory', '更新 Agent 记忆', true]
+  ['create_note', '创建笔记', true], ['update_note', '生成笔记修改提案', true], ['delete_note', '将笔记移入最近删除', true],
+  ['create_knowledge_base', '创建知识库', true], ['update_knowledge_base', '更新知识库信息', true], ['delete_knowledge_base', '删除知识库并移入回收站', true],
+  ['update_memory', '更新 Agent 记忆', true]
 ]
 function browserAgentTools(state) {
   const policies = state.agentToolPolicies || {}
@@ -55,6 +61,7 @@ export async function invoke(command, args = {}) {
   if (!state.libraryFiles) state.libraryFiles = []
   if (!state.memories) state.memories = browserMemorySeed.map(file => ({ ...file, updatedAt: new Date().toISOString() }))
   if (!state.agentSkills) state.agentSkills = browserSkillSeed.map(skill => ({ ...skill, updatedAt: new Date().toISOString() }))
+  else state.agentSkills.forEach(skill => { const replacement = browserSkillSeed.find(seed => seed.name === skill.name); if (replacement && skill.content === browserLegacySkillContent[skill.name]) Object.assign(skill, replacement, { updatedAt: new Date().toISOString() }) })
   if (!state.agentToolPolicies) state.agentToolPolicies = {}
   if (!state.mcpServers) state.mcpServers = []
   if (!state.usageRecords) state.usageRecords = []

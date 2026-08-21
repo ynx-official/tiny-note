@@ -45,6 +45,7 @@ const agentTools = ref([])
 const approvalBusy = ref(false)
 const approvalError = ref('')
 const titlesGenerating = new Set()
+let responseFinalizing = false
 const fromHome = computed(() => route.query.from === 'home')
 const selectedModel = computed(() => models.value.find(model => model.id === selectedModelId.value) || models.value.find(model => model.isDefault) || models.value[0] || null)
 const agentApprovalCount = computed(() => agentTools.value.filter(tool => tool.requireApproval).length)
@@ -94,13 +95,31 @@ async function pushResponse(content) {
   messages.value.push(saved)
 }
 async function completeResponse() {
+  if (responseFinalizing) return
+  responseFinalizing = true
   const content = streamingText.value === '正在思考…' ? '模型没有返回内容，请换个问法再试。' : streamingText.value
   streamingText.value = ''
   try {
     await pushResponse(content)
     if (pendingSummary.value && content.trim()) await createNoteFromText(content, `${conversationTitle.value === '新对话' ? '对话总结' : conversationTitle.value} · 总结`)
     if (messages.value.filter(message => message.role === 'assistant').length === 1) generateTitle()
-  } catch (cause) { error.value = cause?.message || '回复保存失败' } finally { busy.value = false; responseSources.value = []; responseProposal.value = null; pendingSummary.value = false; agentSegments.value = []; currentAgentRunId.value = ''; pendingApproval.value = null; approvalBusy.value = false; approvalError.value = '' }
+  } catch (cause) { error.value = cause?.message || '回复保存失败' } finally { busy.value = false; responseSources.value = []; responseProposal.value = null; pendingSummary.value = false; agentSegments.value = []; currentAgentRunId.value = ''; pendingApproval.value = null; approvalBusy.value = false; approvalError.value = ''; responseFinalizing = false }
+}
+function markActiveAgentSteps(status) {
+  agentSegments.value = agentSegments.value.map(segment =>
+    segment.status === 'running' || segment.status === 'awaiting_approval'
+      ? { ...segment, status }
+      : segment
+  )
+}
+async function retainInterruptedAgentRun(status, message) {
+  if (currentMode.value !== 'agent' || !currentAgentRunId.value) return false
+  markActiveAgentSteps(status)
+  pendingSummary.value = false
+  pendingApproval.value = null
+  streamingText.value = message
+  await completeResponse()
+  return true
 }
 function ensureContextConsent() {
   const modelId = selectedModel.value?.id
@@ -185,8 +204,14 @@ function createResponseChannel() {
     }
     if (event.type === 'sources') responseSources.value = event.sources || []
     if (event.type === 'editProposal') responseProposal.value = event.proposal
-    if (event.type === 'error') { error.value = event.message || '模型请求失败'; streamingText.value = ''; busy.value = false; pendingApproval.value = null }
-    if (event.type === 'cancelled') { streamingText.value = ''; busy.value = false; pendingApproval.value = null }
+    if (event.type === 'error') {
+      const message = event.message || '模型请求失败'
+      error.value = message
+      if (!await retainInterruptedAgentRun('error', `Agent 执行失败：${message}`)) { streamingText.value = ''; busy.value = false; pendingApproval.value = null }
+    }
+    if (event.type === 'cancelled') {
+      if (!await retainInterruptedAgentRun('cancelled', '已停止 Agent 执行。')) { streamingText.value = ''; busy.value = false; pendingApproval.value = null }
+    }
     if (event.type === 'completed') { if (!streamingText.value && event.content) streamingText.value = event.content; await completeResponse() }
   }
   return channel
@@ -257,7 +282,11 @@ async function sendMessage(value, messageReferences = references.value) {
       const editMode = targetNotes.length === 1 && isNoteEditIntent(message)
       await invoke('note_ai_stream', { request: { requestId: requestId.value, action: 'custom', mode: editMode ? 'edit' : 'chat', text: assistantContext(), instruction: message, references: contextAllowed ? messageReferenceCopies : [], autoRetrieve: contextAllowed, targetNoteId: targetNotes.length === 1 ? targetNotes[0].noteId : null, modelProfileId: selectedModel.value?.id || null, thinkingMode: thinkingMode.value, source: 'chat', conversationId: conversationId.value }, onEvent: channel })
     }
-  } catch (cause) { error.value = cause?.message || cause?.code || '模型请求失败'; streamingText.value = ''; busy.value = false }
+  } catch (cause) {
+    const message = cause?.message || cause?.code || (typeof cause === 'string' ? cause : '') || '模型请求失败'
+    error.value = message
+    if (!await retainInterruptedAgentRun('error', `Agent 执行失败：${message}`)) { streamingText.value = ''; busy.value = false }
+  }
 }
 function submit() { if (!busy.value) sendMessage(draft.value) }
 function summarizeConversation() {
@@ -267,6 +296,7 @@ function summarizeConversation() {
 async function stop() {
   if (!busy.value || !requestId.value) return
   if (window.__TAURI_INTERNALS__) { try { await invoke(currentMode.value === 'agent' ? 'agent_cancel' : 'note_ai_cancel', { requestId: requestId.value }) } catch {} }
+  if (await retainInterruptedAgentRun('cancelled', '已停止 Agent 执行。')) return
   busy.value = false
   streamingText.value = ''
   pendingApproval.value = null
@@ -416,7 +446,10 @@ async function selectMode(mode) {
 }
 
 function toolLabel(name) {
-  return ({ list_knowledge_bases: '读取知识库目录', retrieve_knowledge: '检索知识库', search_notes: '搜索笔记', get_note: '读取笔记', get_current_time: '获取当前时间', create_note: '创建笔记', update_note: '生成修改提案', update_memory: '更新记忆', list_agent_files: '浏览工作区', read_agent_file: '读取工作区文件', write_agent_file: '写入工作区文件', read_skill: '读取技能', write_skill: '更新技能', list_mcp_tools: '查找 MCP 工具', call_mcp_tool: '调用 MCP 工具', delegate_task: '委派子 Agent', run_sandbox_script: '运行隔离脚本' })[name] || name || '调用工具'
+  return ({ create_knowledge_base: '创建知识库', list_knowledge_bases: '读取知识库目录', update_knowledge_base: '更新知识库', delete_knowledge_base: '删除知识库', retrieve_knowledge: '检索知识库', search_notes: '搜索笔记', get_note: '读取笔记', get_current_time: '获取当前时间', create_note: '创建笔记', update_note: '生成修改提案', delete_note: '删除笔记', update_memory: '更新记忆', list_agent_files: '浏览工作区', read_agent_file: '读取工作区文件', write_agent_file: '写入工作区文件', read_skill: '读取技能', write_skill: '更新技能', list_mcp_tools: '查找 MCP 工具', call_mcp_tool: '调用 MCP 工具', delegate_task: '委派子 Agent', run_sandbox_script: '运行隔离脚本' })[name] || name || '调用工具'
+}
+function toolStatusLabel(status) {
+  return ({ completed: '已完成', error: '失败', rejected: '已拒绝', cancelled: '已停止', awaiting_approval: '待确认', running: '执行中' })[status] || status || '执行中'
 }
 
 function formatToolDetail(value) {
@@ -439,8 +472,8 @@ function formatToolDetail(value) {
         <div v-if="message.role === 'assistant'" class="chat-page-assistant-head"><span class="chat-page-avatar"><Sparkles :size="13" /></span><strong>周五</strong></div>
         <div v-if="message.agentSegments?.length" class="agent-timeline">
           <details v-for="segment in message.agentSegments" :key="segment.id" class="agent-tool-step">
-            <summary><span class="agent-tool-icon"><CheckCircle2 v-if="segment.status === 'completed'" :size="14" /><X v-else-if="segment.status === 'error' || segment.status === 'rejected' || segment.status === 'cancelled'" :size="14" /><Wrench v-else-if="segment.status === 'awaiting_approval'" :size="14" /><LoaderCircle v-else class="is-spinning" :size="14" /></span><span>{{ toolLabel(segment.toolName) }}</span><small v-if="segment.status === 'awaiting_approval'">待确认</small><ChevronDown :size="13" /></summary>
-            <div><strong>参数</strong><pre>{{ formatToolDetail(segment.arguments) }}</pre><strong>结果</strong><pre>{{ formatToolDetail(segment.output) }}</pre></div>
+            <summary><span class="agent-tool-icon"><CheckCircle2 v-if="segment.status === 'completed'" :size="14" /><X v-else-if="segment.status === 'error' || segment.status === 'rejected' || segment.status === 'cancelled'" :size="14" /><Wrench v-else-if="segment.status === 'awaiting_approval'" :size="14" /><LoaderCircle v-else class="is-spinning" :size="14" /></span><span>{{ toolLabel(segment.toolName) }}</span><small>{{ toolStatusLabel(segment.status) }}</small><ChevronDown :size="13" /></summary>
+            <div><strong>参数</strong><pre>{{ formatToolDetail(segment.arguments) }}</pre><strong v-if="segment.output">结果</strong><pre v-if="segment.output">{{ formatToolDetail(segment.output) }}</pre></div>
           </details>
         </div>
         <div v-if="message.role === 'user'" class="chat-page-bubble">{{ message.content }}</div>
@@ -449,7 +482,7 @@ function formatToolDetail(value) {
         <button v-if="message.proposalId" type="button" class="chat-review-proposal" @click="reviewProposal(message.proposalId)">在文章中审阅修改</button>
         <div v-if="message.role === 'assistant'" class="chat-page-message-actions"><button type="button" title="复制" @click="copyMessage(message.content)"><Copy :size="14" /></button><button type="button" title="保存这条回复为笔记" @click="saveAssistantAsNote(message)"><Save :size="14" /></button></div>
       </article>
-      <article v-if="busy" class="chat-page-message is-assistant"><div class="chat-page-assistant-head"><span class="chat-page-avatar"><Sparkles :size="13" /></span><strong>周五</strong><small v-if="currentMode === 'agent'" class="agent-mode-badge">Agent</small></div><div v-if="agentSegments.length" class="agent-timeline"><details v-for="segment in agentSegments" :key="segment.id" class="agent-tool-step"><summary><span class="agent-tool-icon"><CheckCircle2 v-if="segment.status === 'completed'" :size="14" /><X v-else-if="segment.status === 'error' || segment.status === 'rejected' || segment.status === 'cancelled'" :size="14" /><Wrench v-else-if="segment.status === 'awaiting_approval'" :size="14" /><LoaderCircle v-else class="is-spinning" :size="14" /></span><span>{{ toolLabel(segment.toolName) }}</span><small v-if="segment.status === 'awaiting_approval'">待确认</small><ChevronDown :size="13" /></summary><div><strong>参数</strong><pre>{{ formatToolDetail(segment.arguments) }}</pre><strong v-if="segment.output">结果</strong><pre v-if="segment.output">{{ formatToolDetail(segment.output) }}</pre></div></details></div><MarkdownMessage :content="streamingText || (pendingApproval ? '等待你确认操作…' : agentSegments.length ? '正在分析工具结果…' : '正在思考…')" streaming /></article>
+      <article v-if="busy" class="chat-page-message is-assistant"><div class="chat-page-assistant-head"><span class="chat-page-avatar"><Sparkles :size="13" /></span><strong>周五</strong><small v-if="currentMode === 'agent'" class="agent-mode-badge">Agent</small></div><div v-if="agentSegments.length" class="agent-timeline"><details v-for="segment in agentSegments" :key="segment.id" class="agent-tool-step"><summary><span class="agent-tool-icon"><CheckCircle2 v-if="segment.status === 'completed'" :size="14" /><X v-else-if="segment.status === 'error' || segment.status === 'rejected' || segment.status === 'cancelled'" :size="14" /><Wrench v-else-if="segment.status === 'awaiting_approval'" :size="14" /><LoaderCircle v-else class="is-spinning" :size="14" /></span><span>{{ toolLabel(segment.toolName) }}</span><small>{{ toolStatusLabel(segment.status) }}</small><ChevronDown :size="13" /></summary><div><strong>参数</strong><pre>{{ formatToolDetail(segment.arguments) }}</pre><strong v-if="segment.output">结果</strong><pre v-if="segment.output">{{ formatToolDetail(segment.output) }}</pre></div></details></div><MarkdownMessage :content="streamingText || (pendingApproval ? '等待你确认操作…' : agentSegments.length ? '正在分析工具结果…' : '正在思考…')" streaming /></article>
       <div v-if="error" class="chat-page-error">{{ error }} <button type="button" @click="router.push('/settings')">打开模型设置</button></div>
       <div v-if="savedNote" class="chat-page-saved"><FileText :size="15" /><span>已保存为「{{ savedNote.title }}」</span><button type="button" @click="openSavedNote">打开笔记</button><button type="button" class="is-close" title="关闭" @click="savedNote = null"><X :size="13" /></button></div>
     </main>
