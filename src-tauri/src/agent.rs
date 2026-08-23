@@ -421,7 +421,7 @@ fn tool_specs() -> Vec<Value> {
             "type": "function",
             "function": {
                 "name": "create_note_in_knowledge_base",
-                "description": "创建一篇默认归入未分类的新笔记，并在指定知识库根目录建立可检索的 .note 引用。",
+                "description": "创建一篇默认归入未分类、并直接归属指定知识库的新笔记。",
                 "parameters": {
                     "type":"object",
                     "properties":{
@@ -438,7 +438,7 @@ fn tool_specs() -> Vec<Value> {
             "type": "function",
             "function": {
                 "name": "move_note_to_knowledge_base",
-                "description": "将指定笔记的 .note 引用从一个知识库移动到另一个知识库；笔记正文及其未分类归属不变。",
+                "description": "将指定笔记直接从一个知识库移动到另一个知识库；笔记正文及笔记本归属不变。",
                 "parameters": {
                     "type":"object",
                     "properties":{
@@ -670,7 +670,7 @@ pub fn list_tools() -> Vec<AgentToolDto> {
         },
         AgentToolDto {
             name: "create_note_in_knowledge_base",
-            description: "在知识库中新建笔记引用",
+            description: "在知识库中新建笔记",
             require_approval: true,
             default_require_approval: true,
         },
@@ -1470,7 +1470,7 @@ fn approval_description(name: &str) -> &'static str {
     match name {
         "create_note" => "Agent 请求创建一篇本地笔记",
         "create_note_in_knowledge_base" => "Agent 请求创建一篇本地笔记并加入指定知识库",
-        "move_note_to_knowledge_base" => "Agent 请求把笔记引用移动到另一个知识库",
+        "move_note_to_knowledge_base" => "Agent 请求把笔记移动到另一个知识库",
         "update_note" => "Agent 请求生成一份笔记修改提案",
         "delete_note" => "Agent 请求将一篇笔记移入最近删除",
         "create_knowledge_base" => "Agent 请求创建一个本地知识库",
@@ -1878,29 +1878,16 @@ fn execute_tool(
             let title = required_string(arguments, "title")?;
             let content = required_string(arguments, "contentMarkdown")?;
             let notebook_id = arguments.get("notebookId").and_then(Value::as_str).map(str::trim).filter(|value| !value.is_empty());
-            let (id, resolved_notebook_id, _) = create_note_record(state, &title, &content, notebook_id)?;
+            let (id, resolved_notebook_id, _) = create_note_record(state, &title, &content, notebook_id, None)?;
             Ok(ToolExecution { output: json!({"id":id,"title":title,"notebookId":resolved_notebook_id,"created":true}).to_string(), sources: Vec::new(), truncated: false, proposal: None })
         }
         "create_note_in_knowledge_base" => {
             let knowledge_base_id = required_string(arguments, "knowledgeBaseId")?;
             let title = required_string(arguments, "title")?;
             let content = required_string(arguments, "contentMarkdown")?;
-            let root = knowledge_base_root_for_agent(state, &knowledge_base_id)?;
-            let (id, notebook_id, timestamp) = create_note_record(state, &title, &content, None)?;
-            let reference = match write_note_reference(&root, &id, &title, &timestamp) {
-                Ok(path) => path,
-                Err(error) => {
-                    rollback_created_note(state, &id);
-                    return Err(error);
-                }
-            };
-            if search::rebuild_all(state).is_err() {
-                let _ = fs::remove_file(&reference);
-                rollback_created_note(state, &id);
-                return Err("笔记和知识库引用已回滚：建立搜索索引失败".into());
-            }
-            let relative_path = relative_library_path(&root, &reference)?;
-            Ok(ToolExecution { output: json!({"id":id,"title":title,"notebookId":notebook_id,"knowledgeBaseId":knowledge_base_id,"relativePath":relative_path,"created":true}).to_string(), sources: Vec::new(), truncated: false, proposal: None })
+            let _ = knowledge_base_root_for_agent(state, &knowledge_base_id)?;
+            let (id, notebook_id, _) = create_note_record(state, &title, &content, None, Some(&knowledge_base_id))?;
+            Ok(ToolExecution { output: json!({"id":id,"title":title,"notebookId":notebook_id,"knowledgeBaseId":knowledge_base_id,"created":true}).to_string(), sources: Vec::new(), truncated: false, proposal: None })
         }
         "move_note_to_knowledge_base" => {
             let note_id = required_string(arguments, "noteId")?;
@@ -1911,20 +1898,17 @@ fn execute_tool(
                 .query_row("SELECT EXISTS(SELECT 1 FROM notes WHERE id=?1 AND deleted_at IS NULL)", params![note_id], |row| row.get::<_, bool>(0))
                 .map_err(|_| "读取笔记失败".to_string())?;
             if !note_exists { return Err("笔记不存在或已删除".into()); }
-            let source_root = knowledge_base_root_for_agent(state, &source_id)?;
-            let target_root = knowledge_base_root_for_agent(state, &target_id)?;
-            let source = find_note_reference(&source_root, &note_id)?;
-            let source_relative_path = relative_library_path(&source_root, &source)?;
-            let file_name = source.file_name().ok_or_else(|| "笔记引用文件名无效".to_string())?;
-            let target = collision_safe_file(&target_root, file_name)?;
-            fs::rename(&source, &target).map_err(|_| "移动笔记引用失败".to_string())?;
-            if search::rebuild_all(state).is_err() {
-                let _ = fs::rename(&target, &source);
-                let _ = search::rebuild_all(state);
-                return Err("移动已回滚：更新知识库索引失败".into());
+            let current_source = state.db.lock().map_err(|_| "数据库暂时不可用".to_string())?
+                .query_row("SELECT knowledge_base_id FROM notes WHERE id=?1 AND deleted_at IS NULL", params![note_id], |row| row.get::<_, Option<String>>(0))
+                .map_err(|_| "读取笔记归属失败".to_string())?;
+            if current_source.as_deref() != Some(source_id.as_str()) {
+                return Err("笔记不属于指定的来源知识库".into());
             }
-            let relative_path = relative_library_path(&target_root, &target)?;
-            Ok(ToolExecution { output: json!({"noteId":note_id,"sourceKnowledgeBaseId":source_id,"targetKnowledgeBaseId":target_id,"sourceRelativePath":source_relative_path,"relativePath":relative_path,"moved":true}).to_string(), sources: Vec::new(), truncated: false, proposal: None })
+            let _ = knowledge_base_root_for_agent(state, &target_id)?;
+            state.db.lock().map_err(|_| "数据库暂时不可用".to_string())?
+                .execute("UPDATE notes SET knowledge_base_id=?2,updated_at=?3 WHERE id=?1", params![note_id, target_id, now()])
+                .map_err(|_| "移动笔记失败".to_string())?;
+            Ok(ToolExecution { output: json!({"noteId":note_id,"sourceKnowledgeBaseId":source_id,"targetKnowledgeBaseId":target_id,"moved":true}).to_string(), sources: Vec::new(), truncated: false, proposal: None })
         }
         "update_note" => {
             let id = required_string(arguments, "id")?;
@@ -2025,6 +2009,7 @@ fn create_note_record(
     title: &str,
     content: &str,
     notebook_id: Option<&str>,
+    knowledge_base_id: Option<&str>,
 ) -> Result<(String, String, String), String> {
     let id = Uuid::new_v4().to_string();
     let timestamp = now();
@@ -2057,8 +2042,8 @@ fn create_note_record(
         },
     };
     conn.execute(
-        "INSERT INTO notes(id,notebook_id,title,content_html,content_text,content_markdown,created_at,updated_at) VALUES(?1,?2,?3,?4,?5,?6,?7,?7)",
-        params![id,resolved_notebook_id,title,html,text,content,timestamp],
+        "INSERT INTO notes(id,notebook_id,knowledge_base_id,title,content_html,content_text,content_markdown,created_at,updated_at) VALUES(?1,?2,?3,?4,?5,?6,?7,?8,?8)",
+        params![id,resolved_notebook_id,knowledge_base_id,title,html,text,content,timestamp],
     )
     .map_err(|_| "创建笔记失败，请确认笔记本仍然存在".to_string())?;
     if search::index_note(&conn, &id).is_err() {
@@ -2068,6 +2053,7 @@ fn create_note_record(
     Ok((id, resolved_notebook_id, timestamp))
 }
 
+#[allow(dead_code)]
 fn rollback_created_note(state: &AppState, id: &str) {
     if let Ok(conn) = state.db.lock() {
         let _ = conn.execute("DELETE FROM notes WHERE id=?1", params![id]);
@@ -2075,6 +2061,7 @@ fn rollback_created_note(state: &AppState, id: &str) {
     }
 }
 
+#[allow(dead_code)]
 fn note_reference_file_name(title: &str) -> String {
     let cleaned = title
         .chars()
@@ -2094,6 +2081,7 @@ fn note_reference_file_name(title: &str) -> String {
     )
 }
 
+#[allow(dead_code)]
 fn write_note_reference(
     root: &Path,
     note_id: &str,
@@ -2114,6 +2102,7 @@ fn write_note_reference(
     Ok(target)
 }
 
+#[allow(dead_code)]
 fn collision_safe_file(root: &Path, file_name: &std::ffi::OsStr) -> Result<PathBuf, String> {
     let original = Path::new(file_name);
     let stem = original
@@ -2133,6 +2122,7 @@ fn collision_safe_file(root: &Path, file_name: &std::ffi::OsStr) -> Result<PathB
     Ok(candidate)
 }
 
+#[allow(dead_code)]
 fn find_note_reference(root: &Path, note_id: &str) -> Result<PathBuf, String> {
     let mut matches = Vec::new();
     for entry in WalkDir::new(root)
@@ -2171,6 +2161,7 @@ fn find_note_reference(root: &Path, note_id: &str) -> Result<PathBuf, String> {
     }
 }
 
+#[allow(dead_code)]
 fn relative_library_path(root: &Path, path: &Path) -> Result<String, String> {
     path.strip_prefix(root)
         .map(|value| value.to_string_lossy().replace('\\', "/"))
@@ -3048,8 +3039,7 @@ mod tests {
         .unwrap();
         let output = serde_json::from_str::<Value>(&created.output).unwrap();
         let note_id = output["id"].as_str().unwrap();
-        let source_path = output["relativePath"].as_str().unwrap();
-        assert!(source_root.join(source_path).is_file());
+        assert_eq!(output["knowledgeBaseId"], "source");
         let notebook_id: Option<String> = state
             .db
             .lock()
@@ -3081,10 +3071,18 @@ mod tests {
             "",
         ).unwrap();
         let moved_output = serde_json::from_str::<Value>(&moved.output).unwrap();
-        assert!(!source_root.join(source_path).exists());
-        assert!(target_root
-            .join(moved_output["relativePath"].as_str().unwrap())
-            .is_file());
+        assert_eq!(moved_output["targetKnowledgeBaseId"], "target");
+        let current_base: String = state
+            .db
+            .lock()
+            .unwrap()
+            .query_row(
+                "SELECT knowledge_base_id FROM notes WHERE id=?1",
+                params![note_id],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(current_base, "target");
     }
 
     #[test]

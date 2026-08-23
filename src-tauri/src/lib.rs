@@ -93,6 +93,7 @@ pub struct AppState {
 pub struct NoteDto {
     pub id: String,
     pub notebook_id: Option<String>,
+    pub knowledge_base_id: Option<String>,
     pub title: String,
     pub content_html: String,
     pub content_text: String,
@@ -291,6 +292,7 @@ pub struct BalanceDto {
 pub struct CreateNote {
     pub title: Option<String>,
     pub notebook_id: Option<String>,
+    pub knowledge_base_id: Option<String>,
     pub content_html: Option<String>,
     pub content_text: Option<String>,
     pub content_markdown: Option<String>,
@@ -301,6 +303,7 @@ pub struct CreateNote {
 pub struct UpdateNote {
     pub title: String,
     pub notebook_id: Option<String>,
+    pub knowledge_base_id: Option<String>,
     pub content_html: String,
     pub content_text: String,
     pub content_markdown: String,
@@ -474,6 +477,32 @@ fn init_database(conn: &Connection) -> Result<(), AppError> {
             .map_err(AppError::db)?;
         columns
     };
+    let note_columns = {
+        let mut statement = conn
+            .prepare("PRAGMA table_info(notes)")
+            .map_err(AppError::db)?;
+        let columns = statement
+            .query_map([], |row| row.get::<_, String>(1))
+            .map_err(AppError::db)?
+            .collect::<Result<Vec<_>, _>>()
+            .map_err(AppError::db)?;
+        columns
+    };
+    if !note_columns
+        .iter()
+        .any(|column| column == "knowledge_base_id")
+    {
+        conn.execute(
+            "ALTER TABLE notes ADD COLUMN knowledge_base_id TEXT REFERENCES knowledge_bases(id) ON DELETE SET NULL",
+            [],
+        )
+        .map_err(AppError::db)?;
+    }
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_notes_knowledge_base ON notes(knowledge_base_id, deleted_at, updated_at)",
+        [],
+    )
+    .map_err(AppError::db)?;
     if !chat_columns.iter().any(|column| column == "sources_json") {
         conn.execute(
             "ALTER TABLE chat_messages ADD COLUMN sources_json TEXT NOT NULL DEFAULT '[]'",
@@ -534,8 +563,60 @@ fn app_state(app: &tauri::AppHandle) -> Result<AppState, AppError> {
         cancels: Arc::new(Mutex::new(HashMap::new())),
     };
     ensure_default_kbs(&state)?;
+    migrate_note_knowledge_base_links(&state)?;
     search::rebuild_all(&state)?;
     Ok(state)
+}
+
+fn migrate_note_knowledge_base_links(state: &AppState) -> Result<(), AppError> {
+    let roots = {
+        let conn = state
+            .db
+            .lock()
+            .map_err(|_| AppError::db("database lock poisoned"))?;
+        let mut statement = conn
+            .prepare("SELECT id,root_path FROM knowledge_bases")
+            .map_err(AppError::db)?;
+        let roots = statement
+            .query_map([], |row| {
+                Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
+            })
+            .map_err(AppError::db)?;
+        roots.collect::<Result<Vec<_>, _>>().map_err(AppError::db)?
+    };
+    let mut links = Vec::new();
+    for (knowledge_base_id, root_path) in roots {
+        for entry in WalkDir::new(root_path).into_iter().filter_map(Result::ok) {
+            if !entry.file_type().is_file()
+                || entry.path().extension().and_then(|x| x.to_str()) != Some("note")
+            {
+                continue;
+            }
+            let Ok(value) = serde_json::from_str::<serde_json::Value>(
+                &fs::read_to_string(entry.path()).map_err(AppError::fs)?,
+            ) else {
+                continue;
+            };
+            if value.get("format").and_then(|x| x.as_str()) != Some("tiny-note-reference") {
+                continue;
+            }
+            if let Some(note_id) = value.get("noteId").and_then(|x| x.as_str()) {
+                links.push((note_id.to_string(), knowledge_base_id.clone()));
+            }
+        }
+    }
+    let conn = state
+        .db
+        .lock()
+        .map_err(|_| AppError::db("database lock poisoned"))?;
+    for (note_id, knowledge_base_id) in links {
+        conn.execute(
+            "UPDATE notes SET knowledge_base_id=?2 WHERE id=?1 AND knowledge_base_id IS NULL",
+            params![note_id, knowledge_base_id],
+        )
+        .map_err(AppError::db)?;
+    }
+    Ok(())
 }
 
 fn ensure_default_kbs(state: &AppState) -> Result<(), AppError> {
@@ -615,13 +696,14 @@ fn note_from_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<NoteDto> {
     Ok(NoteDto {
         id: row.get(0)?,
         notebook_id: row.get(1)?,
-        title: row.get(2)?,
-        content_html: row.get(3)?,
-        content_text: row.get(4)?,
-        content_markdown: row.get(5)?,
-        deleted_at: row.get(6)?,
-        created_at: row.get(7)?,
-        updated_at: row.get(8)?,
+        knowledge_base_id: row.get(2)?,
+        title: row.get(3)?,
+        content_html: row.get(4)?,
+        content_text: row.get(5)?,
+        content_markdown: row.get(6)?,
+        deleted_at: row.get(7)?,
+        created_at: row.get(8)?,
+        updated_at: row.get(9)?,
     })
 }
 
@@ -835,6 +917,7 @@ pub mod commands {
         state: State<'_, AppState>,
         search: Option<String>,
         deleted: bool,
+        knowledge_base_id: Option<String>,
     ) -> Result<Vec<NoteDto>, AppError> {
         let conn = state
             .db
@@ -842,14 +925,14 @@ pub mod commands {
             .map_err(|_| AppError::db("database lock poisoned"))?;
         let pattern = format!("%{}%", search.unwrap_or_default());
         let sql = if deleted {
-            "SELECT id,notebook_id,title,content_html,content_text,content_markdown,deleted_at,created_at,updated_at FROM notes WHERE deleted_at IS NOT NULL AND (title LIKE ?1 OR content_text LIKE ?1) ORDER BY updated_at DESC"
+            "SELECT id,notebook_id,knowledge_base_id,title,content_html,content_text,content_markdown,deleted_at,created_at,updated_at FROM notes WHERE deleted_at IS NOT NULL AND (?2 IS NULL OR knowledge_base_id=?2) AND (title LIKE ?1 OR content_text LIKE ?1) ORDER BY updated_at DESC"
         } else {
-            "SELECT id,notebook_id,title,content_html,content_text,content_markdown,deleted_at,created_at,updated_at FROM notes WHERE deleted_at IS NULL AND (title LIKE ?1 OR content_text LIKE ?1) ORDER BY updated_at DESC"
+            "SELECT id,notebook_id,knowledge_base_id,title,content_html,content_text,content_markdown,deleted_at,created_at,updated_at FROM notes WHERE deleted_at IS NULL AND (?2 IS NULL OR knowledge_base_id=?2) AND (title LIKE ?1 OR content_text LIKE ?1) ORDER BY updated_at DESC"
         };
         let result = conn
             .prepare(sql)
             .map_err(AppError::db)?
-            .query_map(params![pattern], note_from_row)
+            .query_map(params![pattern, knowledge_base_id], note_from_row)
             .map_err(AppError::db)?
             .collect::<Result<Vec<_>, _>>()
             .map_err(AppError::db);
@@ -862,7 +945,7 @@ pub mod commands {
             .db
             .lock()
             .map_err(|_| AppError::db("database lock poisoned"))?;
-        conn.query_row("SELECT id,notebook_id,title,content_html,content_text,content_markdown,deleted_at,created_at,updated_at FROM notes WHERE id=?1", params![id], note_from_row).optional().map_err(AppError::db)?.ok_or_else(|| AppError::not_found("note_not_found", "Note not found"))
+        conn.query_row("SELECT id,notebook_id,knowledge_base_id,title,content_html,content_text,content_markdown,deleted_at,created_at,updated_at FROM notes WHERE id=?1", params![id], note_from_row).optional().map_err(AppError::db)?.ok_or_else(|| AppError::not_found("note_not_found", "Note not found"))
     }
 
     #[tauri::command]
@@ -877,7 +960,7 @@ pub mod commands {
             .db
             .lock()
             .map_err(|_| AppError::db("database lock poisoned"))?;
-        conn.execute("INSERT INTO notes (id,notebook_id,title,content_html,content_text,content_markdown,created_at,updated_at) VALUES (?1,?2,?3,?4,?5,?6,?7,?7)", params![id, input.notebook_id, title, html, text, markdown, t]).map_err(AppError::db)?;
+        conn.execute("INSERT INTO notes (id,notebook_id,knowledge_base_id,title,content_html,content_text,content_markdown,created_at,updated_at) VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?8)", params![id, input.notebook_id, input.knowledge_base_id, title, html, text, markdown, t]).map_err(AppError::db)?;
         search::index_note(&conn, &id)?;
         drop(conn);
         note_get(state, id)
@@ -894,7 +977,7 @@ pub mod commands {
             .lock()
             .map_err(|_| AppError::db("database lock poisoned"))?;
         let t = now();
-        let changed = conn.execute("UPDATE notes SET notebook_id=?2,title=?3,content_html=?4,content_text=?5,content_markdown=?6,updated_at=?7 WHERE id=?1", params![id, input.notebook_id, input.title, input.content_html, input.content_text, input.content_markdown, t]).map_err(AppError::db)?;
+        let changed = conn.execute("UPDATE notes SET notebook_id=?2,knowledge_base_id=?3,title=?4,content_html=?5,content_text=?6,content_markdown=?7,updated_at=?8 WHERE id=?1", params![id, input.notebook_id, input.knowledge_base_id, input.title, input.content_html, input.content_text, input.content_markdown, t]).map_err(AppError::db)?;
         if changed == 0 {
             return Err(AppError::not_found("note_not_found", "Note not found"));
         }
@@ -937,7 +1020,7 @@ pub mod commands {
             .db
             .lock()
             .map_err(|_| AppError::db("database lock poisoned"))?;
-        conn.execute("INSERT INTO notes (id,notebook_id,title,content_html,content_text,content_markdown,created_at,updated_at) VALUES (?1,?2,?3,?4,?5,?6,?7,?7)", params![new_id, source.notebook_id, title, source.content_html, source.content_text, source.content_markdown, t]).map_err(AppError::db)?;
+        conn.execute("INSERT INTO notes (id,notebook_id,knowledge_base_id,title,content_html,content_text,content_markdown,created_at,updated_at) VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?8)", params![new_id, source.notebook_id, source.knowledge_base_id, title, source.content_html, source.content_text, source.content_markdown, t]).map_err(AppError::db)?;
         search::index_note(&conn, &new_id)?;
         drop(conn);
         note_get(state, new_id)
@@ -964,6 +1047,47 @@ pub mod commands {
         } else {
             Ok(())
         }
+    }
+
+    #[tauri::command]
+    pub fn note_move_to_knowledge_base(
+        state: State<'_, AppState>,
+        id: String,
+        knowledge_base_id: Option<String>,
+    ) -> Result<NoteDto, AppError> {
+        if let Some(ref knowledge_base_id) = knowledge_base_id {
+            let exists: bool = state
+                .db
+                .lock()
+                .map_err(|_| AppError::db("database lock poisoned"))?
+                .query_row(
+                    "SELECT EXISTS(SELECT 1 FROM knowledge_bases WHERE id=?1)",
+                    params![knowledge_base_id],
+                    |row| row.get(0),
+                )
+                .map_err(AppError::db)?;
+            if !exists {
+                return Err(AppError::not_found(
+                    "knowledge_base_not_found",
+                    "Knowledge base not found",
+                ));
+            }
+        }
+        let conn = state
+            .db
+            .lock()
+            .map_err(|_| AppError::db("database lock poisoned"))?;
+        let changed = conn
+            .execute(
+                "UPDATE notes SET knowledge_base_id=?2,updated_at=?3 WHERE id=?1 AND deleted_at IS NULL",
+                params![id, knowledge_base_id, now()],
+            )
+            .map_err(AppError::db)?;
+        if changed == 0 {
+            return Err(AppError::not_found("note_not_found", "Note not found"));
+        }
+        drop(conn);
+        note_get(state, id)
     }
 
     #[tauri::command]
@@ -1274,6 +1398,11 @@ pub mod commands {
             .db
             .lock()
             .map_err(|_| AppError::db("database lock poisoned"))?;
+        conn.execute(
+            "UPDATE notes SET knowledge_base_id=NULL WHERE knowledge_base_id=?1",
+            params![id],
+        )
+        .map_err(AppError::db)?;
         conn.execute("DELETE FROM knowledge_bases WHERE id=?1", params![id])
             .map_err(AppError::db)?;
         conn.execute(
@@ -1329,6 +1458,9 @@ pub mod commands {
                 .extension()
                 .and_then(|x| x.to_str())
                 .map(str::to_lowercase);
+            if ext.as_deref() == Some("note") && meta_is_legacy_note_reference(path) {
+                continue;
+            }
             let index_status = if meta.is_file() {
                 let conn = state
                     .db
@@ -1361,6 +1493,19 @@ pub mod commands {
                 .then(a.name.to_lowercase().cmp(&b.name.to_lowercase()))
         });
         Ok(out)
+    }
+
+    fn meta_is_legacy_note_reference(path: &Path) -> bool {
+        fs::read_to_string(path)
+            .ok()
+            .and_then(|content| serde_json::from_str::<serde_json::Value>(&content).ok())
+            .and_then(|value| {
+                value
+                    .get("format")
+                    .and_then(|format| format.as_str())
+                    .map(|format| format == "tiny-note-reference")
+            })
+            .unwrap_or(false)
     }
 
     #[tauri::command]
@@ -1687,7 +1832,7 @@ pub mod commands {
             .map_err(AppError::db)?;
         transaction.commit().map_err(AppError::db)?;
         search::index_note(&conn, &proposal.note_id)?;
-        conn.query_row("SELECT id,notebook_id,title,content_html,content_text,content_markdown,deleted_at,created_at,updated_at FROM notes WHERE id=?1", params![proposal.note_id], note_from_row).map_err(AppError::db)
+        conn.query_row("SELECT id,notebook_id,knowledge_base_id,title,content_html,content_text,content_markdown,deleted_at,created_at,updated_at FROM notes WHERE id=?1", params![proposal.note_id], note_from_row).map_err(AppError::db)
     }
 
     #[tauri::command]
@@ -1751,7 +1896,7 @@ pub mod commands {
         transaction.execute("UPDATE notes SET title=?2,content_html=?3,content_text=?4,content_markdown=?5,updated_at=?6 WHERE id=?1", params![revision.note_id,revision.title,revision.content_html,revision.content_text,revision.content_markdown,timestamp]).map_err(AppError::db)?;
         transaction.commit().map_err(AppError::db)?;
         search::index_note(&conn, &revision.note_id)?;
-        conn.query_row("SELECT id,notebook_id,title,content_html,content_text,content_markdown,deleted_at,created_at,updated_at FROM notes WHERE id=?1", params![revision.note_id], note_from_row).map_err(AppError::db)
+        conn.query_row("SELECT id,notebook_id,knowledge_base_id,title,content_html,content_text,content_markdown,deleted_at,created_at,updated_at FROM notes WHERE id=?1", params![revision.note_id], note_from_row).map_err(AppError::db)
     }
 
     #[tauri::command]
@@ -2986,6 +3131,7 @@ pub fn run() {
             commands::note_delete,
             commands::note_copy,
             commands::note_move,
+            commands::note_move_to_knowledge_base,
             commands::note_restore,
             commands::note_purge,
             commands::note_purge_expired,
@@ -3128,7 +3274,7 @@ mod tests {
         .unwrap();
         let note = c
             .query_row(
-                "SELECT id,notebook_id,title,content_html,content_text,content_markdown,deleted_at,created_at,updated_at FROM notes WHERE id='markdown-note'",
+                "SELECT id,notebook_id,knowledge_base_id,title,content_html,content_text,content_markdown,deleted_at,created_at,updated_at FROM notes WHERE id='markdown-note'",
                 [],
                 note_from_row,
             )

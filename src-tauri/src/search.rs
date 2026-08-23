@@ -229,7 +229,7 @@ fn replace_document(conn: &Connection, document: IndexedDocument<'_>) -> Result<
 pub fn index_note(conn: &Connection, note_id: &str) -> Result<(), AppError> {
     let note = conn
         .query_row(
-            "SELECT title,content_text,deleted_at,updated_at FROM notes WHERE id=?1",
+            "SELECT title,content_text,deleted_at,updated_at,knowledge_base_id FROM notes WHERE id=?1",
             params![note_id],
             |row| {
                 Ok((
@@ -237,6 +237,7 @@ pub fn index_note(conn: &Connection, note_id: &str) -> Result<(), AppError> {
                     row.get::<_, String>(1)?,
                     row.get::<_, Option<String>>(2)?,
                     row.get::<_, String>(3)?,
+                    row.get::<_, Option<String>>(4)?,
                 ))
             },
         )
@@ -244,13 +245,13 @@ pub fn index_note(conn: &Connection, note_id: &str) -> Result<(), AppError> {
         .map_err(AppError::db)?;
     let document_id = format!("note:{note_id}");
     match note {
-        Some((title, content, None, updated_at)) => replace_document(
+        Some((title, content, None, updated_at, knowledge_base_id)) => replace_document(
             conn,
             IndexedDocument {
                 document_id: &document_id,
                 source_type: "note",
                 source_id: note_id,
-                knowledge_base_id: None,
+                knowledge_base_id: knowledge_base_id.as_deref(),
                 relative_path: None,
                 title: &title,
                 content: &content,
@@ -335,6 +336,22 @@ fn index_library_file(
         .replace('\\', "/");
     if relative == ".tiny-note.json" || path.is_dir() {
         return Ok(());
+    }
+    if path.extension().and_then(|value| value.to_str()) == Some("note") {
+        if let Ok(raw) = fs::read_to_string(path) {
+            if serde_json::from_str::<serde_json::Value>(&raw)
+                .ok()
+                .and_then(|value| {
+                    value
+                        .get("format")
+                        .and_then(|format| format.as_str())
+                        .map(|format| format == "tiny-note-reference")
+                })
+                == Some(true)
+            {
+                return Ok(());
+            }
+        }
     }
     let document_id = format!("file:{kb_id}:{relative}");
     let title = path

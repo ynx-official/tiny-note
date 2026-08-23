@@ -349,7 +349,7 @@ onBeforeUnmount(() => {
         <div class="note-items">
           <button v-for="note in list" :key="note.id" class="note-item" :class="{ active: note.id === store.activeId }" @click="selectNote(note.id)" @contextmenu.prevent.stop="openContextMenu($event, note)">
             <span class="note-title">{{ note.title || t('untitled') }}</span>
-            <span class="note-meta"><span>{{ new Date(note.updatedAt).toLocaleDateString() }}</span><span>{{ store.notebooks.find(book => book.id === note.notebookId)?.name || t('uncategorized') }}</span></span>
+            <span class="note-meta"><span>{{ new Date(note.updatedAt).toLocaleDateString() }}</span><span>{{ store.notebooks.find(book => book.id === note.notebookId)?.name || t('uncategorized') }}</span><span v-if="note.knowledgeBaseId">{{ library.bases.find(base => base.id === note.knowledgeBaseId)?.name || '知识库' }}</span></span>
           </button>
           <div v-if="!list.length" class="note-list-empty">{{ t('emptyNotes') }}</div>
         </div>

@@ -17,11 +17,6 @@ function compareEntries(a, b, sortBy, direction) {
   return String(a.relativePath || '').localeCompare(String(b.relativePath || ''), undefined, { numeric: true, sensitivity: 'base' })
 }
 
-function noteReferenceFileName(note) {
-  const title = String(note?.title || '未命名笔记').replace(/[<>:"/\\|?*\u0000-\u001F]/g, '').trim()
-  return `${title || '未命名笔记'}.note`
-}
-
 export const useLibraryStore = defineStore('library', {
   state: () => ({
     bases: [],
@@ -172,19 +167,8 @@ export const useLibraryStore = defineStore('library', {
     },
     async addNoteReference(knowledgeBaseId, note) {
       if (!knowledgeBaseId || !note?.id) throw new Error('缺少知识库或笔记信息')
-      const content = JSON.stringify({
-        format: 'tiny-note-reference',
-        version: 1,
-        noteId: note.id,
-        title: note.title || '未命名笔记',
-        updatedAt: note.updatedAt || null
-      }, null, 2)
-      const result = await invoke('library_write_file', {
-        knowledgeBaseId,
-        relativePath: noteReferenceFileName(note),
-        content
-      })
-      if (this.activeId === knowledgeBaseId && this.path === '') await this.loadEntries()
+      const result = await invoke('note_move_to_knowledge_base', { id: note.id, knowledgeBaseId })
+      if (result) Object.assign(note, result)
       return result
     }
   }

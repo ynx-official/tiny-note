@@ -1,14 +1,18 @@
 <script setup>
 import { computed, onMounted, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
+import { useRouter } from 'vue-router'
 import {
-  Folder, File, Plus, Search, Grid2X2, List, Upload, Trash2, Eye, ChevronLeft,
+  Folder, File, FileText, Plus, Search, Grid2X2, List, Upload, Trash2, Eye, ChevronLeft,
   ChevronRight, SlidersHorizontal, PanelLeftClose, PanelLeftOpen, Pencil,
   FolderOpen, X, ArrowDownAZ, HardDrive, Clock3
 } from 'lucide-vue-next'
 import { useLibraryStore } from '../stores/library'
+import { useNotesStore } from '../stores/notes'
 
 const store = useLibraryStore()
+const notesStore = useNotesStore()
+const router = useRouter()
 const { t } = useI18n()
 const creating = ref(false)
 const name = ref('')
@@ -22,6 +26,7 @@ const importing = ref(false)
 const dropActive = ref(false)
 const importInput = ref(null)
 const entries = computed(() => store.entries)
+const knowledgeNotes = computed(() => notesStore.notes.filter(note => note.knowledgeBaseId === store.activeId))
 const personalBases = computed(() => store.bases.filter(base => base.category === 'personal'))
 const localBases = computed(() => store.bases.filter(base => base.category === 'local'))
 
@@ -29,7 +34,7 @@ watch(query, async value => {
   store.search = value
   await store.loadEntries()
 })
-onMounted(() => store.load())
+onMounted(() => Promise.all([store.load(), notesStore.load()]))
 
 async function create() {
   if (name.value.trim()) {
@@ -81,6 +86,7 @@ function openEntry(entry) {
   else store.openPreview(entry.relativePath)
 }
 function selectBase(id) { store.selectBase(id) }
+function openNote(note) { router.push({ path: '/notes', query: { note: note.id } }) }
 </script>
 
 <template>
@@ -143,8 +149,13 @@ function selectBase(id) { store.selectBase(id) }
       <div v-if="dropActive" class="drop-hint"><Upload :size="20" /><strong>松开以导入文件</strong><span>文件将保存到当前文件夹</span></div>
       <div v-if="!store.active" class="empty-state"><div class="empty-icon">⌂</div><h2>{{ t('chooseKb') }}</h2></div>
       <div v-else-if="store.loading && !entries.length" class="empty-state"><div class="empty-icon loading-dot">···</div><h2>正在读取文件</h2></div>
-      <div v-else-if="!entries.length" class="empty-state"><div class="empty-icon">⌁</div><h2>{{ t('noFiles') }}</h2><p>点击右上角导入，或将文件拖到此处</p></div>
+      <div v-else-if="!entries.length && !knowledgeNotes.length" class="empty-state"><div class="empty-icon">⌁</div><h2>{{ t('noFiles') }}</h2><p>点击右上角导入，或将文件拖到此处</p></div>
       <div v-else :class="['file-grid', view]">
+        <article v-for="note in knowledgeNotes" :key="`note:${note.id}`" class="file-card note-file-card" tabindex="0" @dblclick="openNote(note)" @keydown.enter="openNote(note)">
+          <div class="file-icon file"><FileText :size="23" /></div>
+          <div class="file-info"><strong>{{ note.title || t('untitled') }}</strong><small>笔记 · {{ new Date(note.updatedAt).toLocaleDateString() }}</small></div>
+          <div class="file-card-actions"><button class="file-action" title="打开笔记" @click.stop="openNote(note)"><Eye :size="14" /></button></div>
+        </article>
         <article v-for="entry in entries" :key="entry.relativePath" class="file-card" tabindex="0" @dblclick="openEntry(entry)" @keydown.enter="openEntry(entry)">
           <div class="file-icon" :class="entry.kind"><FolderOpen v-if="entry.kind === 'folder'" :size="23" /><File v-else :size="23" /></div>
           <div class="file-info"><strong>{{ entry.name }}</strong><small>{{ entry.kind === 'folder' ? '文件夹' : `${Math.max(1, Math.round(entry.size / 1024))} KB` }}<span v-if="entry.kind === 'file'" class="file-index-status" :class="`is-${entry.indexStatus || 'pending'}`"> · {{ ({ indexed: '已索引', failed: '索引失败', unsupported: '不支持', pending: '待索引' })[entry.indexStatus || 'pending'] }}</span></small><em v-if="query && entry.relativePath !== entry.name">{{ entry.relativePath }}</em></div>
