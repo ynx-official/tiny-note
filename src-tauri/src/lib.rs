@@ -2933,6 +2933,7 @@ pub fn run() {
             let state =
                 app_state(app.handle()).map_err(|e| Box::new(e) as Box<dyn std::error::Error>)?;
             app.manage(state);
+
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
