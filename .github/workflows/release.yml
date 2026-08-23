@@ -4,7 +4,6 @@ on:
   push:
     tags:
       - tiny-note-v*
-  workflow_dispatch:
 
 permissions:
   contents: write
@@ -16,22 +15,10 @@ concurrency:
 jobs:
   preflight:
     runs-on: ubuntu-22.04
-    env:
-      UPDATER_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
-      UPDATER_PUBLIC_KEY: ${{ secrets.TAURI_UPDATER_PUBKEY }}
     steps:
       - uses: actions/checkout@v4
       - name: Validate release version
         run: node scripts/check-release-version.mjs "$GITHUB_REF_NAME"
-        if: github.event_name == 'push'
-      - name: Validate project versions for manual releases
-        run: node scripts/check-release-version.mjs
-        if: github.event_name == 'workflow_dispatch'
-      - name: Require updater signing keys
-        shell: bash
-        run: |
-          test -n "$UPDATER_PRIVATE_KEY" || { echo "Missing TAURI_SIGNING_PRIVATE_KEY"; exit 1; }
-          test -n "$UPDATER_PUBLIC_KEY" || { echo "Missing TAURI_UPDATER_PUBKEY"; exit 1; }
 
   release:
     needs: preflight
@@ -69,10 +56,6 @@ jobs:
       - uses: tauri-apps/tauri-action@v0.6.2
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
-          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
-          TAURI_CONFIG: >-
-            {"bundle":{"createUpdaterArtifacts":true},"plugins":{"updater":{"pubkey":"${{ secrets.TAURI_UPDATER_PUBKEY }}","endpoints":["https://github.com/ynx-official/tiny-note/releases/latest/download/latest.json"],"windows":{"installMode":"passive"}}}}
           APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
           APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
           APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
@@ -84,9 +67,21 @@ jobs:
           args: ${{ matrix.args }}
           tagName: tiny-note-v__VERSION__
           releaseName: Tiny Note v__VERSION__
-          releaseBody: Signed installers for Windows, macOS, and Linux. The generated latest.json powers in-app updates.
+          releaseBody: Installers for Windows, macOS, and Linux. The generated update-manifest.json powers SHA-256 verified in-app updates.
           releaseDraft: false
           prerelease: false
           generateReleaseNotes: true
-          updaterJsonPreferNsis: true
-          uploadUpdaterJson: true
+
+  publish-manifest:
+    needs: release
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: 22 }
+      - name: Generate and upload update manifest
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
+          GITHUB_REF_NAME: ${{ github.ref_name }}
+        run: npm run release:manifest

@@ -12,32 +12,17 @@
 | macOS | Intel x86_64 | DMG | `.app.tar.gz` + `.sig` |
 | macOS | Apple Silicon aarch64 | DMG | `.app.tar.gz` + `.sig` |
 
-普通 push/PR 由 `Tiny Note CI` 执行测试、lint、Rust 检查和四组无更新签名的安装包构建，并把产物保存为 workflow artifacts。正式发布只由 `tiny-note-v*` tag 或手动运行 `Release Tiny Note` 触发。CI 和 Release 均使用仓库锁定的 npm 依赖与项目内 Tauri CLI；Release 矩阵串行上传，避免多个平台同时重写 `latest.json`。
+普通 push/PR 由 `Tiny Note CI` 执行测试、lint、Rust 检查和四组安装包构建，并把产物保存为 workflow artifacts。正式发布由 `tiny-note-v*` tag 触发。CI 和 Release 均使用仓库锁定的 npm 依赖与项目内 Tauri CLI；Release 矩阵串行上传，随后生成 `update-manifest.json`。
 
 ## 在线升级方案
 
-应用使用 Tauri 2 updater：设置页“关于”中由用户手动检查更新、确认下载并安装，安装完成后再由用户选择重启。更新元数据来自：
+应用使用 TinyShell 风格的自定义更新器：设置页“关于”中由用户手动检查更新，Rust 从 GitHub Release 获取清单，按当前平台选择安装包，下载后校验 SHA-256，再打开安装包供系统安装。更新元数据来自：
 
 ```text
-https://github.com/ynx-official/tiny-note/releases/latest/download/latest.json
+https://github.com/ynx-official/tiny-note/releases/latest/download/update-manifest.json
 ```
 
-正式发布流水线通过固定版本的 `tauri-action` 聚合各平台签名产物并生成 `latest.json`。更新包必须通过 Tauri updater 公钥校验，不能关闭签名验证。GitHub Release 必须是非草稿、非 prerelease，才能被 `/releases/latest/` 稳定发现。
-
-## 首次启用更新签名
-
-密钥属于发布敏感凭据，必须由仓库维护者在安全设备上生成并备份；不要把私钥、密码或 `.env` 提交到仓库。
-
-```powershell
-New-Item -ItemType Directory -Force "$env:USERPROFILE\.tauri" | Out-Null
-npx tauri signer generate -w "$env:USERPROFILE\.tauri\tiny-note.key"
-```
-
-把生成结果配置到 GitHub Actions Secrets：
-
-- `TAURI_SIGNING_PRIVATE_KEY`：`tiny-note.key` 私钥文件的完整内容。
-- `TAURI_SIGNING_PRIVATE_KEY_PASSWORD`：生成密钥时输入的密码。
-- `TAURI_UPDATER_PUBKEY`：`tiny-note.key.pub` 的完整内容；公钥本身可公开，但流水线统一从 Secret 注入。
+Release 流水线通过固定版本的 `tauri-action` 上传各平台安装包，再由 `scripts/update-manifest.mjs` 下载已发布资产、计算 SHA-256 并上传清单。GitHub Release 必须是非草稿、非 prerelease，才能被 `/releases/latest/` 稳定发现。该方案不需要 Tauri updater 签名 Secrets。
 
 私钥一旦用于首个正式版本，就必须长期安全保留。丢失私钥后，已安装的旧版本无法信任用新密钥签发的更新。
 
@@ -52,15 +37,15 @@ npx tauri signer generate -w "$env:USERPROFILE\.tauri\tiny-note.key"
 - `APPLE_PASSWORD`
 - `APPLE_TEAM_ID`
 
-Windows updater 签名只保证 Tiny Note 校验更新来源；若要避免 SmartScreen 未知发布者提示，仍需另行配置 Authenticode 代码签名证书。
+SHA-256 校验可以发现下载损坏或资产被替换，但不等同于发布者签名；若要提高供应链防护，后续仍可增加 Tauri 签名或平台代码签名。
 
 ## 发布步骤
 
 1. 同步修改 `package.json`、`src-tauri/Cargo.toml`、`src-tauri/tauri.conf.json` 的 SemVer。
 2. 本地运行 `node scripts/check-release-version.mjs` 和相关验证。
 3. 创建并 push 完全匹配的 tag，例如 `tiny-note-v0.2.0`。
-4. 等待四个 release matrix job 完成，确认 Release 包含各平台安装包、`.sig` 文件和 `latest.json`。
-5. 从上一版本安装包中执行一次真实“检查更新 → 下载 → 安装 → 重启”验收。没有这一步证据时，不应把在线升级标记为生产验证完成。
+4. 等待四个 release matrix job 和 `publish-manifest` 完成，确认 Release 包含各平台安装包和 `update-manifest.json`。
+5. 从上一版本安装包中执行一次真实“检查更新 → 下载 → 校验 → 打开安装包”验收。
 
 ## Linux CI 依赖
 

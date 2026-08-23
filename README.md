@@ -49,4 +49,4 @@ AI 未配置模型时使用离线演示流；配置模型后请求只从 Rust �
 
 笔记与知识库页面采用 Friday 前端的页面骨架、间距、状态和样式变量迁移，数据与桌面能力仍由 Tiny Note 自己的 Tauri/Rust 层提供。
 
-设置页“关于”已接入 Tauri 2 签名在线升级。正式发布前仍需配置 updater 私钥；公开 macOS 分发还需 Developer ID 签名与公证，Windows 公开分发建议配置 Authenticode。
+设置页“关于”已接入 GitHub Release 在线升级：客户端下载后校验 SHA-256，再打开对应平台安装包。该方案不需要个人开发者配置 Tauri updater 私钥；公开 macOS 分发仍建议配置 Developer ID 签名与公证，Windows 公开分发建议配置 Authenticode。

@@ -1,6 +1,6 @@
 {
   "name": "tiny-note",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "private": true,
   "type": "module",
   "scripts": {
@@ -12,7 +12,8 @@
     "tauri:build": "tauri build",
     "test:unit": "vitest run",
     "test:unit:watch": "vitest",
-    "lint": "eslint ."
+    "lint": "eslint .",
+    "release:manifest": "node scripts/update-manifest.mjs"
   },
   "pnpm": {
     "onlyBuiltDependencies": [
@@ -24,7 +25,6 @@
     "@tauri-apps/plugin-dialog": "^2.4.0",
     "@tauri-apps/plugin-opener": "^2.5.0",
     "@tauri-apps/plugin-process": "^2.3.1",
-    "@tauri-apps/plugin-updater": "^2.10.1",
     "@tiptap/core": "3.30.2",
     "@tiptap/extension-code-block-lowlight": "3.30.2",
     "@tiptap/extension-color": "3.30.2",

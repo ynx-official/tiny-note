@@ -22,6 +22,7 @@ mod agent_mcp;
 mod agent_script;
 mod agent_skills;
 mod search;
+mod update;
 
 #[derive(Debug, Error, Clone)]
 pub enum AppError {
@@ -2928,7 +2929,6 @@ pub mod commands {
 pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_process::init())
-        .plugin(tauri_plugin_updater::Builder::new().build())
         .setup(|app| {
             let state =
                 app_state(app.handle()).map_err(|e| Box::new(e) as Box<dyn std::error::Error>)?;
@@ -3006,7 +3006,9 @@ pub fn run() {
             agent_mcp::agent_mcp_list,
             agent_mcp::agent_mcp_upsert,
             agent_mcp::agent_mcp_delete,
-            agent_mcp::agent_mcp_refresh
+            agent_mcp::agent_mcp_refresh,
+            update::app_update_check,
+            update::app_update_download
         ])
         .run(tauri::generate_context!())
         .expect("error while running Tiny Note");
