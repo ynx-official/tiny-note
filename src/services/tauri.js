@@ -13,9 +13,35 @@ const browserMemorySeed = [
   { fileName: 'Agent.md', nameKey: 'Agent', description: '经验与技巧', content: '# 经验与技巧\n\n> 记录 Tiny Note 助手在工作中积累的可复用经验。\n\n## 工具使用经验\n- （待补充）\n' }
 ]
 const browserSkillSeed = [
-  { name: 'knowledge-research', description: '检索并汇总 Tiny Note 本地知识，保留来源和不确定性。', fileName: 'knowledge-research/SKILL.md', builtin: true, content: '---\nname: knowledge-research\ndescription: 检索并汇总 Tiny Note 本地知识，保留来源和不确定性。\n---\n\n# 知识调研\n\n先检索，再汇总并保留来源。\n' },
-  { name: 'note-organizer', description: '将零散材料整理为结构清晰、便于后续维护的笔记。', fileName: 'note-organizer/SKILL.md', builtin: true, content: '---\nname: note-organizer\ndescription: 将零散材料整理为结构清晰、便于后续维护的笔记。\n---\n\n# 笔记整理\n\n保持结构清晰，不添加未知事实。\n' }
+  { name: 'knowledge-research', description: '检索和管理 Tiny Note 知识库，并在知识库中新建或移动笔记引用。', fileName: 'knowledge-research/SKILL.md', builtin: true, content: '---\nname: knowledge-research\ndescription: 检索和管理 Tiny Note 知识库，并在知识库中新建或移动笔记引用。\n---\n\n# 知识库管理与调研\n\n知识库保存文件和 `.note` 引用；笔记本负责“全部笔记 / 未分类”等归类。\n\n- 在知识库新建笔记：`create_note_in_knowledge_base`\n- 移动到其他知识库：`move_note_to_knowledge_base`\n- 查看目录：`list_knowledge_bases`\n- 检索正文：`retrieve_knowledge`\n\n先确认唯一的笔记 ID、来源知识库 ID 和目标知识库 ID。移动的是引用，不改变笔记正文或笔记本归属。\n' },
+  { name: 'note-organizer', description: '创建、查找、读取、修改、移动或删除 Tiny Note 笔记，并保持归类清晰。', fileName: 'note-organizer/SKILL.md', builtin: true, content: '---\nname: note-organizer\ndescription: 创建、查找、读取、修改、移动或删除 Tiny Note 笔记，并保持归类清晰。\n---\n\n# 笔记管理与整理\n\nAI 生成文章未指定笔记本时默认归入“未分类”，并显示在“全部笔记”中。\n\n- 新建普通笔记：`create_note`\n- 在知识库新建：`create_note_in_knowledge_base`\n- 移动知识库引用：`move_note_to_knowledge_base`\n- 搜索和读取：`search_notes`、`get_note`\n- 修改和删除：`update_note`、`delete_note`\n' }
 ]
+const browserLegacySkillContent = {
+  'knowledge-research': [
+    '---\nname: knowledge-research\ndescription: 检索并汇总 Tiny Note 本地知识，保留来源和不确定性。\n---\n\n# 知识调研\n\n先检索，再汇总并保留来源。\n',
+    '---\nname: knowledge-research\ndescription: 检索、创建、更新或删除 Tiny Note 知识库，并基于已索引资料生成可追溯答案。\n---\n\n# 知识库管理与调研\n\n## 工具对应关系\n\n- 新建：`create_knowledge_base`\n- 查看目录：`list_knowledge_bases`\n- 检索正文：`retrieve_knowledge`\n- 修改信息：`update_knowledge_base`\n- 删除：`delete_knowledge_base`\n\n更新或删除前先列出知识库并确认唯一 ID。删除成功表示记录和索引已删除，受管目录已移入系统回收站。当前 Agent 工具不直接修改知识库内的单个文件。\n'
+  ],
+  'note-organizer': [
+    '---\nname: note-organizer\ndescription: 将零散材料整理为结构清晰、便于后续维护的笔记。\n---\n\n# 笔记整理\n\n保持结构清晰，不添加未知事实。\n',
+    '---\nname: note-organizer\ndescription: 使用 Tiny Note 工具创建、查找、读取、修改或删除笔记，并保持内容结构清晰。\n---\n\n# 笔记管理与整理\n\n## 工具对应关系\n\n- 新建：`create_note`\n- 搜索：`search_notes`\n- 读取：`get_note`\n- 修改：`update_note`，只生成待审阅提案\n- 删除：`delete_note`，移入最近删除\n\n修改或删除前先搜索并读取，使用精确笔记 ID；只有工具成功后才能报告完成。\n'
+  ]
+}
+const browserAgentToolDefaults = [
+  ['list_knowledge_bases', '列出现有知识库及索引概况', false], ['get_current_time', '获取本机当前时间', false],
+  ['list_mcp_tools', '列出已发现的 MCP 工具', false], ['call_mcp_tool', '调用外部 MCP 工具', true],
+  ['delegate_task', '委派独立子任务', true], ['run_sandbox_script', '执行隔离计算脚本', true],
+  ['search_notes', '搜索未删除笔记', false], ['get_note', '读取指定笔记', false],
+  ['retrieve_knowledge', '检索笔记和文本知识库', false], ['list_agent_files', '浏览 Agent 工作区', false],
+  ['read_agent_file', '读取 Agent 工作区文本文件', false], ['write_agent_file', '写入 Agent 工作区文本文件', true],
+  ['read_skill', '读取 Agent 技能', false], ['write_skill', '创建或更新 Agent 技能', true],
+  ['create_note', '创建笔记', true], ['create_note_in_knowledge_base', '在知识库中新建笔记引用', true], ['move_note_to_knowledge_base', '移动笔记到其他知识库', true], ['update_note', '生成笔记修改提案', true], ['delete_note', '将笔记移入最近删除', true],
+  ['create_knowledge_base', '创建知识库', true], ['update_knowledge_base', '更新知识库信息', true], ['delete_knowledge_base', '删除知识库并移入回收站', true],
+  ['update_memory', '更新 Agent 记忆', true]
+]
+function browserAgentTools(state) {
+  const policies = state.agentToolPolicies || {}
+  return browserAgentToolDefaults.map(([name, description, defaultRequireApproval]) => ({ name, description, defaultRequireApproval, requireApproval: Object.hasOwn(policies, name) ? policies[name] : defaultRequireApproval }))
+}
 function ensureLibraryParents(state, knowledgeBaseId, relativePath, now) {
   const parts = normalizeRelativePath(relativePath).split('/').filter(Boolean)
   parts.pop()
@@ -35,28 +61,33 @@ export async function invoke(command, args = {}) {
   if (window.__TAURI_INTERNALS__) return tauriInvoke(command, args)
   const state = browserState()
   if (!state.notes) state.notes = []
+  state.notes.forEach(note => { if (typeof note.contentMarkdown !== 'string') note.contentMarkdown = '' })
   if (!state.notebooks) state.notebooks = [{ id: 'uncategorized', name: '未分类', description: '', createdAt: new Date().toISOString(), updatedAt: new Date().toISOString() }]
   if (!state.kbs) state.kbs = [{ id: 'personal-demo', category: 'personal', name: '我的笔记', description: '', rootPath: '', createdAt: new Date().toISOString(), updatedAt: new Date().toISOString() }, { id: 'local-demo', category: 'local', name: '我的书籍', description: '', rootPath: '', createdAt: new Date().toISOString(), updatedAt: new Date().toISOString() }]
   if (!state.libraryFiles) state.libraryFiles = []
   if (!state.memories) state.memories = browserMemorySeed.map(file => ({ ...file, updatedAt: new Date().toISOString() }))
   if (!state.agentSkills) state.agentSkills = browserSkillSeed.map(skill => ({ ...skill, updatedAt: new Date().toISOString() }))
+  else state.agentSkills.forEach(skill => { const replacement = browserSkillSeed.find(seed => seed.name === skill.name); if (replacement && browserLegacySkillContent[skill.name]?.includes(skill.content)) Object.assign(skill, replacement, { updatedAt: new Date().toISOString() }) })
+  if (!state.agentToolPolicies) state.agentToolPolicies = {}
   if (!state.mcpServers) state.mcpServers = []
   if (!state.usageRecords) state.usageRecords = []
   if (!state.chatConversations) state.chatConversations = []
   if (!state.chatMessages) state.chatMessages = []
   if (!state.editProposals) state.editProposals = []
   if (!state.noteRevisions) state.noteRevisions = []
+  state.noteRevisions.forEach(revision => { if (typeof revision.contentMarkdown !== 'string') revision.contentMarkdown = '' })
   const now = new Date().toISOString()
   let result
   if (command === 'chat_list') result = state.chatConversations.map(conversation => { const messages = state.chatMessages.filter(message => message.conversationId === conversation.id); return { ...conversation, messageCount: messages.length, preview: messages.at(-1)?.content || '' } }).sort((a, b) => b.updatedAt.localeCompare(a.updatedAt))
   else if (command === 'chat_create') { result = { id: crypto.randomUUID(), title: '新对话', modelProfileId: args.modelProfileId || null, mode: args.mode || 'chat', messageCount: 0, preview: '', createdAt: now, updatedAt: now }; state.chatConversations.unshift(result) }
+  else if (command === 'chat_set_mode') { const conversation = state.chatConversations.find(item => item.id === args.id); if (!conversation) throw new Error('对话不存在'); if (!['chat', 'memoryless', 'agent'].includes(args.mode)) throw new Error('无效的对话模式'); conversation.mode = args.mode; conversation.updatedAt = now; result = { ...conversation } }
   else if (command === 'chat_get') { const conversation = state.chatConversations.find(item => item.id === args.id); result = conversation ? { conversation: { ...conversation, messageCount: state.chatMessages.filter(message => message.conversationId === conversation.id).length, preview: state.chatMessages.filter(message => message.conversationId === conversation.id).at(-1)?.content || '' }, messages: state.chatMessages.filter(message => message.conversationId === conversation.id) } : null }
   else if (command === 'chat_add_message') { const conversation = state.chatConversations.find(item => item.id === args.conversationId); result = { id: crypto.randomUUID(), conversationId: args.conversationId, role: args.role, content: args.content, references: args.references || [], sources: args.sources || [], proposalId: args.proposalId || null, agentRunId: args.agentRunId || null, createdAt: now }; state.chatMessages.push(result); if (conversation) conversation.updatedAt = now }
   else if (command === 'chat_delete') { state.chatConversations = state.chatConversations.filter(item => item.id !== args.id); state.chatMessages = state.chatMessages.filter(item => item.conversationId !== args.id); result = null }
   else if (command === 'chat_generate_title') { const conversation = state.chatConversations.find(item => item.id === args.conversationId); const firstRound = state.chatMessages.filter(item => item.conversationId === args.conversationId).slice(0, 2); const first = firstRound.find(item => item.role === 'user'); const compact = String(first?.content || '').replace(/\s+/g, ' ').trim(); result = firstRound.length < 2 ? '新对话' : (compact.length > 24 ? compact.slice(0, 24) + '…' : (compact || '新对话')); if (conversation?.title === '新对话' && result !== '新对话') { conversation.title = result; conversation.updatedAt = now } }
   else if (command === 'note_list') result = state.notes.filter(n => Boolean(n.deletedAt) === Boolean(args.deleted) && (!args.search || `${n.title} ${n.contentText}`.toLowerCase().includes(args.search.toLowerCase())))
   else if (command === 'note_get') result = state.notes.find(n => n.id === args.id)
-  else if (command === 'note_create') { result = { id: crypto.randomUUID(), notebookId: args.input?.notebookId || 'uncategorized', title: args.input?.title || '未命名笔记', contentHtml: args.input?.contentHtml || '', contentText: args.input?.contentText || '', deletedAt: null, createdAt: now, updatedAt: now }; state.notes.unshift(result) }
+  else if (command === 'note_create') { result = { id: crypto.randomUUID(), notebookId: args.input?.notebookId || 'uncategorized', title: args.input?.title || '未命名笔记', contentHtml: args.input?.contentHtml || '', contentText: args.input?.contentText || '', contentMarkdown: args.input?.contentMarkdown || '', deletedAt: null, createdAt: now, updatedAt: now }; state.notes.unshift(result) }
   else if (command === 'note_update') { const n = state.notes.find(n => n.id === args.id); if (n) Object.assign(n, args.input, { updatedAt: now }); result = n }
   else if (command === 'note_delete') { const n = state.notes.find(n => n.id === args.id); if (n) n.deletedAt = now; result = null }
   else if (command === 'note_copy') { const n = state.notes.find(n => n.id === args.id); result = n ? { ...n, id: crypto.randomUUID(), title: `${n.title} 副本`, createdAt: now, updatedAt: now } : null; if (result) state.notes.unshift(result) }
@@ -149,12 +180,12 @@ export async function invoke(command, args = {}) {
   else if (command === 'note_edit_apply') {
     const proposal = state.editProposals.find(item => item.id === args.proposalId)
     const note = state.notes.find(item => item.id === proposal?.noteId)
-    if (note) { state.noteRevisions.unshift({ id: crypto.randomUUID(), noteId: note.id, title: note.title, contentHtml: note.contentHtml, contentText: note.contentText, reason: 'ai_edit', createdAt: now }); Object.assign(note, { contentHtml: args.contentHtml, contentText: args.contentText, updatedAt: now }); if (proposal) proposal.status = 'applied' }
+    if (note) { state.noteRevisions.unshift({ id: crypto.randomUUID(), noteId: note.id, title: note.title, contentHtml: note.contentHtml, contentText: note.contentText, contentMarkdown: note.contentMarkdown, reason: 'ai_edit', createdAt: now }); Object.assign(note, { contentHtml: args.contentHtml, contentText: args.contentText, contentMarkdown: args.contentMarkdown, updatedAt: now }); if (proposal) proposal.status = 'applied' }
     result = note
   }
   else if (command === 'note_revision_list') result = state.noteRevisions.filter(item => item.noteId === args.noteId)
   else if (command === 'note_revision_get') result = state.noteRevisions.find(item => item.id === args.id)
-  else if (command === 'note_revision_restore') { const revision = state.noteRevisions.find(item => item.id === args.id); const note = state.notes.find(item => item.id === revision?.noteId); if (revision && note) Object.assign(note, { title: revision.title, contentHtml: revision.contentHtml, contentText: revision.contentText, updatedAt: now }); result = note }
+  else if (command === 'note_revision_restore') { const revision = state.noteRevisions.find(item => item.id === args.id); const note = state.notes.find(item => item.id === revision?.noteId); if (revision && note) { state.noteRevisions.unshift({ id: crypto.randomUUID(), noteId: note.id, title: note.title, contentHtml: note.contentHtml, contentText: note.contentText, contentMarkdown: note.contentMarkdown, reason: 'revision_restore', createdAt: now }); Object.assign(note, { title: revision.title, contentHtml: revision.contentHtml, contentText: revision.contentText, contentMarkdown: revision.contentMarkdown, updatedAt: now }) } result = note }
   else if (command === 'settings_get') result = state.settings || { theme: 'system', language: 'zh-CN', fimEnabled: false }
   else if (command === 'settings_update') { state.settings = args.settings; result = state.settings }
   else if (command === 'memory_list') result = state.memories
@@ -202,24 +233,17 @@ export async function invoke(command, args = {}) {
   else if (command === 'usage_clear') { state.usageRecords = []; result = null }
   else if (command === 'agent_get_pending_run' || command === 'agent_get_run') result = null
   else if (command === 'agent_cancel' || command === 'agent_resume') result = null
-  else if (command === 'agent_list_tools') result = [
-    { name: 'get_current_time', description: '获取本机当前时间', requireApproval: false },
-    { name: 'list_mcp_tools', description: '列出已发现的 MCP 工具', requireApproval: false },
-    { name: 'call_mcp_tool', description: '调用外部 MCP 工具', requireApproval: true },
-    { name: 'delegate_task', description: '委派独立子任务', requireApproval: true },
-    { name: 'run_sandbox_script', description: '执行隔离计算脚本', requireApproval: true },
-    { name: 'search_notes', description: '搜索未删除笔记', requireApproval: false },
-    { name: 'get_note', description: '读取指定笔记', requireApproval: false },
-    { name: 'retrieve_knowledge', description: '检索笔记和文本知识库', requireApproval: false },
-    { name: 'list_agent_files', description: '浏览 Agent 工作区', requireApproval: false },
-    { name: 'read_agent_file', description: '读取 Agent 工作区文本文件', requireApproval: false },
-    { name: 'write_agent_file', description: '写入 Agent 工作区文本文件', requireApproval: true },
-    { name: 'read_skill', description: '读取 Agent 技能', requireApproval: false },
-    { name: 'write_skill', description: '创建或更新 Agent 技能', requireApproval: true },
-    { name: 'create_note', description: '创建笔记', requireApproval: true },
-    { name: 'update_note', description: '生成笔记修改提案', requireApproval: true },
-    { name: 'update_memory', description: '更新 Agent 记忆', requireApproval: true }
-  ]
+  else if (command === 'agent_list_tools') result = browserAgentTools(state)
+  else if (command === 'agent_tool_policy_update') {
+    const request = args.request || args
+    const known = new Set(browserAgentToolDefaults.map(([name]) => name))
+    if (!request.toolNames?.length || request.toolNames.some(name => !known.has(name))) throw new Error('工具审批策略无效')
+    for (const name of request.toolNames) {
+      if (request.requireApproval === null || request.requireApproval === undefined) delete state.agentToolPolicies[name]
+      else state.agentToolPolicies[name] = Boolean(request.requireApproval)
+    }
+    result = browserAgentTools(state)
+  }
   else if (command === 'model_list') result = state.models || []
   else if (command === 'model_fetch_models') {
     // Keep the browser fallback aligned with the Tauri DTO shape while

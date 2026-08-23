@@ -21,22 +21,25 @@ Vite 实时预览地址为 `http://localhost:1420/#/notes`，修改 Vue/CSS 后�
 
 ```bash
 npm run test:unit
+npm run lint
 npm run build
 cd src-tauri
+cargo fmt --check
 cargo test
+cargo clippy --all-targets --all-features -- -D warnings
 ```
 
-Windows x64 NSIS 安装包由 `npm run tauri:build` 生成在：
-`src-tauri/target/release/bundle/nsis/Tiny Note_0.1.0_x64-setup.exe`。
+本地 `npm run tauri:build` 会生成当前系统支持的安装包。CI 覆盖 Windows x64 NSIS、Linux x64 AppImage/DEB，以及 macOS Intel/Apple Silicon DMG；完整发布和在线升级流程见 [构建说明](docs/05-operations/build.md)。
 
 ## 当前实现
 
-- SQLite 笔记/笔记本、800ms 自动保存、搜索、复制/移动、最近删除恢复和 Markdown/TXT 导入。
-- TipTap 编辑器：常用格式、表格、任务列表、代码、图片 URL、Markdown 导出和系统打印。
+- SQLite 笔记/笔记本、三表示（原始 Markdown、安全 HTML、纯文本）原子保存、800ms 自动保存、搜索、复制/移动、最近删除恢复和 Markdown/TXT 导入。
+- TipTap 提供 Notion 式即时编辑，Markdown 快捷输入和粘贴立即呈现格式；处理后的源码可切到 CodeMirror 6 继续编辑，并通过固定版本的 `@tiptap/markdown` 与即时编辑双向同步。
+- 文章主模式为即时编辑、Markdown、阅读；Markdown 内可开关实时预览，分栏支持 30%–70% 拖拽、窄宽度上下布局和双向滚动联动。阅读模式锁定独立标题与正文，但保留选择、复制、目录、知识库和全文助理。
 - 个人/本地知识库、文件夹、相对路径安全校验、文本导入、递归名称搜索、预览和系统回收站。
 - 主题/语言、SQLite 模型配置（包含 API Key）、OpenAI-compatible SSE、停止/插入/替换/复制/放弃和默认关闭的 FIM。
 - 首页对话模式与笔记 AI 共用 OpenAI-compatible SSE；首页请求按 `chat` 来源写入用量统计，笔记 AI 按 `note_ai` 来源统计。模型返回的 prompt、completion、reasoning 和 total token 会记录到本地 SQLite。
-- Agent 模式已经接入：Rust 负责 OpenAI-compatible Tool Calling 循环、运行状态、审批恢复和工具审计；当前提供知识检索、笔记搜索/读取、笔记创建/修改提案、记忆更新、SANDBOX 文件工具、按需加载的本地 Skills、stdio MCP 工具桥接、隔离式子 Agent 和纯计算脚本沙箱，前端展示可恢复的工具调用时间线和参数级审批。
+- Agent 模式已经接入：Rust 负责 OpenAI-compatible Tool Calling 循环、运行状态、审批恢复、工具审计和用户审批策略；当前提供笔记增删改查（修改为待审阅提案、删除进入最近删除）、知识库元数据增删改查与内容检索、记忆更新、SANDBOX 文件工具、按需加载的本地 Skills、stdio MCP 工具桥接、隔离式子 Agent 和纯计算脚本沙箱。设置页可按单个工具或业务分类批量切换“每次审批/无需审批”并恢复系统默认，真实执行始终由 Rust 读取当前策略。
 
 AI 未配置模型时使用离线演示流；配置模型后请求只从 Rust 发出，API Key 不返回前端。
 
@@ -46,4 +49,4 @@ AI 未配置模型时使用离线演示流；配置模型后请求只从 Rust �
 
 笔记与知识库页面采用 Friday 前端的页面骨架、间距、状态和样式变量迁移，数据与桌面能力仍由 Tiny Note 自己的 Tauri/Rust 层提供。
 
-正式 macOS 分发仍需代码签名与公证；首版构建产物用于开发和内部测试。
+设置页“关于”已接入 Tauri 2 签名在线升级。正式发布前仍需配置 updater 私钥；公开 macOS 分发还需 Developer ID 签名与公证，Windows 公开分发建议配置 Authenticode。

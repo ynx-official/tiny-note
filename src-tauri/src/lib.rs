@@ -95,6 +95,7 @@ pub struct NoteDto {
     pub title: String,
     pub content_html: String,
     pub content_text: String,
+    pub content_markdown: String,
     pub deleted_at: Option<String>,
     pub created_at: String,
     pub updated_at: String,
@@ -291,6 +292,7 @@ pub struct CreateNote {
     pub notebook_id: Option<String>,
     pub content_html: Option<String>,
     pub content_text: Option<String>,
+    pub content_markdown: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -300,6 +302,7 @@ pub struct UpdateNote {
     pub notebook_id: Option<String>,
     pub content_html: String,
     pub content_text: String,
+    pub content_markdown: String,
 }
 
 #[derive(Debug, Deserialize)]
@@ -393,7 +396,7 @@ fn now() -> String {
 fn init_database(conn: &Connection) -> Result<(), AppError> {
     conn.execute_batch("PRAGMA foreign_keys = ON;
       CREATE TABLE IF NOT EXISTS notebooks (id TEXT PRIMARY KEY, name TEXT NOT NULL, description TEXT NOT NULL DEFAULT '', created_at TEXT NOT NULL, updated_at TEXT NOT NULL);
-      CREATE TABLE IF NOT EXISTS notes (id TEXT PRIMARY KEY, notebook_id TEXT REFERENCES notebooks(id) ON DELETE SET NULL, title TEXT NOT NULL, content_html TEXT NOT NULL, content_text TEXT NOT NULL, deleted_at TEXT, created_at TEXT NOT NULL, updated_at TEXT NOT NULL);
+      CREATE TABLE IF NOT EXISTS notes (id TEXT PRIMARY KEY, notebook_id TEXT REFERENCES notebooks(id) ON DELETE SET NULL, title TEXT NOT NULL, content_html TEXT NOT NULL, content_text TEXT NOT NULL, content_markdown TEXT NOT NULL DEFAULT '', deleted_at TEXT, created_at TEXT NOT NULL, updated_at TEXT NOT NULL);
       CREATE INDEX IF NOT EXISTS idx_notes_deleted_updated ON notes(deleted_at, updated_at);
       CREATE TABLE IF NOT EXISTS knowledge_bases (id TEXT PRIMARY KEY, category TEXT NOT NULL CHECK(category IN ('personal','local')), name TEXT NOT NULL, description TEXT NOT NULL DEFAULT '', cover TEXT, root_path TEXT NOT NULL, created_at TEXT NOT NULL, updated_at TEXT NOT NULL);
       CREATE TABLE IF NOT EXISTS model_profiles (id TEXT PRIMARY KEY, name TEXT NOT NULL, provider TEXT NOT NULL, base_url TEXT NOT NULL, model TEXT NOT NULL, api_key TEXT NOT NULL DEFAULT '', is_default INTEGER NOT NULL DEFAULT 0);
@@ -486,6 +489,28 @@ fn init_database(conn: &Connection) -> Result<(), AppError> {
             .map_err(AppError::db)?;
     }
     search::init_schema(conn)?;
+    for table in ["notes", "note_revisions"] {
+        let columns = {
+            let mut statement = conn
+                .prepare(&format!("PRAGMA table_info({table})"))
+                .map_err(AppError::db)?;
+            let result = statement
+                .query_map([], |row| row.get::<_, String>(1))
+                .map_err(AppError::db)?
+                .collect::<Result<Vec<_>, _>>()
+                .map_err(AppError::db)?;
+            result
+        };
+        if !columns.iter().any(|column| column == "content_markdown") {
+            conn.execute(
+                &format!(
+                    "ALTER TABLE {table} ADD COLUMN content_markdown TEXT NOT NULL DEFAULT ''"
+                ),
+                [],
+            )
+            .map_err(AppError::db)?;
+        }
+    }
     let count: i64 = conn
         .query_row("SELECT COUNT(*) FROM notebooks", [], |r| r.get(0))
         .map_err(AppError::db)?;
@@ -592,9 +617,10 @@ fn note_from_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<NoteDto> {
         title: row.get(2)?,
         content_html: row.get(3)?,
         content_text: row.get(4)?,
-        deleted_at: row.get(5)?,
-        created_at: row.get(6)?,
-        updated_at: row.get(7)?,
+        content_markdown: row.get(5)?,
+        deleted_at: row.get(6)?,
+        created_at: row.get(7)?,
+        updated_at: row.get(8)?,
     })
 }
 
@@ -656,6 +682,37 @@ pub mod commands {
             params![id, model_profile_id, mode, timestamp],
         )
         .map_err(AppError::db)?;
+        let sql = format!("{CHAT_CONVERSATION_SELECT} WHERE c.id=?1");
+        conn.query_row(&sql, params![id], chat_conversation_from_row)
+            .map_err(AppError::db)
+    }
+
+    #[tauri::command]
+    pub fn chat_set_mode(
+        state: State<'_, AppState>,
+        id: String,
+        mode: String,
+    ) -> Result<ChatConversationDto, AppError> {
+        if !matches!(mode.as_str(), "chat" | "memoryless" | "agent") {
+            return Err(AppError::invalid("invalid_chat_mode", "Invalid chat mode"));
+        }
+        let timestamp = now();
+        let conn = state
+            .db
+            .lock()
+            .map_err(|_| AppError::db("database lock poisoned"))?;
+        let changed = conn
+            .execute(
+                "UPDATE chat_conversations SET mode=?2,updated_at=?3 WHERE id=?1",
+                params![id, mode, timestamp],
+            )
+            .map_err(AppError::db)?;
+        if changed == 0 {
+            return Err(AppError::not_found(
+                "chat_not_found",
+                "Conversation not found",
+            ));
+        }
         let sql = format!("{CHAT_CONVERSATION_SELECT} WHERE c.id=?1");
         conn.query_row(&sql, params![id], chat_conversation_from_row)
             .map_err(AppError::db)
@@ -784,9 +841,9 @@ pub mod commands {
             .map_err(|_| AppError::db("database lock poisoned"))?;
         let pattern = format!("%{}%", search.unwrap_or_default());
         let sql = if deleted {
-            "SELECT id,notebook_id,title,content_html,content_text,deleted_at,created_at,updated_at FROM notes WHERE deleted_at IS NOT NULL AND (title LIKE ?1 OR content_text LIKE ?1) ORDER BY updated_at DESC"
+            "SELECT id,notebook_id,title,content_html,content_text,content_markdown,deleted_at,created_at,updated_at FROM notes WHERE deleted_at IS NOT NULL AND (title LIKE ?1 OR content_text LIKE ?1) ORDER BY updated_at DESC"
         } else {
-            "SELECT id,notebook_id,title,content_html,content_text,deleted_at,created_at,updated_at FROM notes WHERE deleted_at IS NULL AND (title LIKE ?1 OR content_text LIKE ?1) ORDER BY updated_at DESC"
+            "SELECT id,notebook_id,title,content_html,content_text,content_markdown,deleted_at,created_at,updated_at FROM notes WHERE deleted_at IS NULL AND (title LIKE ?1 OR content_text LIKE ?1) ORDER BY updated_at DESC"
         };
         let result = conn
             .prepare(sql)
@@ -804,7 +861,7 @@ pub mod commands {
             .db
             .lock()
             .map_err(|_| AppError::db("database lock poisoned"))?;
-        conn.query_row("SELECT id,notebook_id,title,content_html,content_text,deleted_at,created_at,updated_at FROM notes WHERE id=?1", params![id], note_from_row).optional().map_err(AppError::db)?.ok_or_else(|| AppError::not_found("note_not_found", "Note not found"))
+        conn.query_row("SELECT id,notebook_id,title,content_html,content_text,content_markdown,deleted_at,created_at,updated_at FROM notes WHERE id=?1", params![id], note_from_row).optional().map_err(AppError::db)?.ok_or_else(|| AppError::not_found("note_not_found", "Note not found"))
     }
 
     #[tauri::command]
@@ -814,11 +871,12 @@ pub mod commands {
         let title = input.title.unwrap_or_else(|| "未命名笔记".into());
         let html = input.content_html.unwrap_or_default();
         let text = input.content_text.unwrap_or_default();
+        let markdown = input.content_markdown.unwrap_or_default();
         let conn = state
             .db
             .lock()
             .map_err(|_| AppError::db("database lock poisoned"))?;
-        conn.execute("INSERT INTO notes (id,notebook_id,title,content_html,content_text,created_at,updated_at) VALUES (?1,?2,?3,?4,?5,?6,?6)", params![id, input.notebook_id, title, html, text, t]).map_err(AppError::db)?;
+        conn.execute("INSERT INTO notes (id,notebook_id,title,content_html,content_text,content_markdown,created_at,updated_at) VALUES (?1,?2,?3,?4,?5,?6,?7,?7)", params![id, input.notebook_id, title, html, text, markdown, t]).map_err(AppError::db)?;
         search::index_note(&conn, &id)?;
         drop(conn);
         note_get(state, id)
@@ -835,7 +893,7 @@ pub mod commands {
             .lock()
             .map_err(|_| AppError::db("database lock poisoned"))?;
         let t = now();
-        let changed = conn.execute("UPDATE notes SET notebook_id=?2,title=?3,content_html=?4,content_text=?5,updated_at=?6 WHERE id=?1", params![id, input.notebook_id, input.title, input.content_html, input.content_text, t]).map_err(AppError::db)?;
+        let changed = conn.execute("UPDATE notes SET notebook_id=?2,title=?3,content_html=?4,content_text=?5,content_markdown=?6,updated_at=?7 WHERE id=?1", params![id, input.notebook_id, input.title, input.content_html, input.content_text, input.content_markdown, t]).map_err(AppError::db)?;
         if changed == 0 {
             return Err(AppError::not_found("note_not_found", "Note not found"));
         }
@@ -878,7 +936,7 @@ pub mod commands {
             .db
             .lock()
             .map_err(|_| AppError::db("database lock poisoned"))?;
-        conn.execute("INSERT INTO notes (id,notebook_id,title,content_html,content_text,created_at,updated_at) VALUES (?1,?2,?3,?4,?5,?6,?6)", params![new_id, source.notebook_id, title, source.content_html, source.content_text, t]).map_err(AppError::db)?;
+        conn.execute("INSERT INTO notes (id,notebook_id,title,content_html,content_text,content_markdown,created_at,updated_at) VALUES (?1,?2,?3,?4,?5,?6,?7,?7)", params![new_id, source.notebook_id, title, source.content_html, source.content_text, source.content_markdown, t]).map_err(AppError::db)?;
         search::index_note(&conn, &new_id)?;
         drop(conn);
         note_get(state, new_id)
@@ -1541,6 +1599,7 @@ pub mod commands {
         expected_updated_at: String,
         content_html: String,
         content_text: String,
+        content_markdown: String,
     ) -> Result<NoteDto, AppError> {
         let mut conn = state
             .db
@@ -1557,11 +1616,11 @@ pub mod commands {
             ));
         }
         let current = conn.query_row(
-            "SELECT title,content_html,content_text,updated_at FROM notes WHERE id=?1 AND deleted_at IS NULL",
-            params![proposal.note_id], |row| Ok((row.get::<_, String>(0)?,row.get::<_, String>(1)?,row.get::<_, String>(2)?,row.get::<_, String>(3)?)),
+            "SELECT title,content_html,content_text,content_markdown,updated_at FROM notes WHERE id=?1 AND deleted_at IS NULL",
+            params![proposal.note_id], |row| Ok((row.get::<_, String>(0)?,row.get::<_, String>(1)?,row.get::<_, String>(2)?,row.get::<_, String>(3)?,row.get::<_, String>(4)?)),
         ).optional().map_err(AppError::db)?.ok_or_else(|| AppError::not_found("note_not_found", "Note not found"))?;
-        if current.3 != expected_updated_at
-            || current.3 != proposal.base_updated_at
+        if current.4 != expected_updated_at
+            || current.4 != proposal.base_updated_at
             || search::content_hash(&current.2) != proposal.base_content_hash
         {
             conn.execute(
@@ -1576,12 +1635,12 @@ pub mod commands {
         }
         let timestamp = now();
         let transaction = conn.transaction().map_err(AppError::db)?;
-        transaction.execute("INSERT INTO note_revisions(id,note_id,title,content_html,content_text,reason,created_at) VALUES(?1,?2,?3,?4,?5,'ai_edit',?6)",
-            params![Uuid::new_v4().to_string(),proposal.note_id,current.0,current.1,current.2,timestamp]).map_err(AppError::db)?;
+        transaction.execute("INSERT INTO note_revisions(id,note_id,title,content_html,content_text,content_markdown,reason,created_at) VALUES(?1,?2,?3,?4,?5,?6,'ai_edit',?7)",
+            params![Uuid::new_v4().to_string(),proposal.note_id,current.0,current.1,current.2,current.3,timestamp]).map_err(AppError::db)?;
         transaction
             .execute(
-                "UPDATE notes SET content_html=?2,content_text=?3,updated_at=?4 WHERE id=?1",
-                params![proposal.note_id, content_html, content_text, timestamp],
+                "UPDATE notes SET content_html=?2,content_text=?3,content_markdown=?4,updated_at=?5 WHERE id=?1",
+                params![proposal.note_id, content_html, content_text, content_markdown, timestamp],
             )
             .map_err(AppError::db)?;
         transaction
@@ -1592,7 +1651,7 @@ pub mod commands {
             .map_err(AppError::db)?;
         transaction.commit().map_err(AppError::db)?;
         search::index_note(&conn, &proposal.note_id)?;
-        conn.query_row("SELECT id,notebook_id,title,content_html,content_text,deleted_at,created_at,updated_at FROM notes WHERE id=?1", params![proposal.note_id], note_from_row).map_err(AppError::db)
+        conn.query_row("SELECT id,notebook_id,title,content_html,content_text,content_markdown,deleted_at,created_at,updated_at FROM notes WHERE id=?1", params![proposal.note_id], note_from_row).map_err(AppError::db)
     }
 
     #[tauri::command]
@@ -1604,7 +1663,7 @@ pub mod commands {
             .db
             .lock()
             .map_err(|_| AppError::db("database lock poisoned"))?;
-        let revisions = conn.prepare("SELECT id,note_id,title,content_html,content_text,reason,created_at FROM note_revisions WHERE note_id=?1 ORDER BY created_at DESC")
+        let revisions = conn.prepare("SELECT id,note_id,title,content_html,content_text,content_markdown,reason,created_at FROM note_revisions WHERE note_id=?1 ORDER BY created_at DESC")
             .map_err(AppError::db)?.query_map(params![note_id], search::revision_from_row).map_err(AppError::db)?
             .collect::<Result<Vec<_>, _>>().map_err(AppError::db)?;
         Ok(revisions)
@@ -1619,7 +1678,7 @@ pub mod commands {
             .db
             .lock()
             .map_err(|_| AppError::db("database lock poisoned"))?;
-        conn.query_row("SELECT id,note_id,title,content_html,content_text,reason,created_at FROM note_revisions WHERE id=?1", params![id], search::revision_from_row)
+        conn.query_row("SELECT id,note_id,title,content_html,content_text,content_markdown,reason,created_at FROM note_revisions WHERE id=?1", params![id], search::revision_from_row)
             .optional().map_err(AppError::db)?.ok_or_else(|| AppError::not_found("revision_not_found", "Revision not found"))
     }
 
@@ -1632,17 +1691,18 @@ pub mod commands {
             .db
             .lock()
             .map_err(|_| AppError::db("database lock poisoned"))?;
-        let revision = conn.query_row("SELECT id,note_id,title,content_html,content_text,reason,created_at FROM note_revisions WHERE id=?1", params![id], search::revision_from_row)
+        let revision = conn.query_row("SELECT id,note_id,title,content_html,content_text,content_markdown,reason,created_at FROM note_revisions WHERE id=?1", params![id], search::revision_from_row)
             .optional().map_err(AppError::db)?.ok_or_else(|| AppError::not_found("revision_not_found", "Revision not found"))?;
         let current = conn
             .query_row(
-                "SELECT title,content_html,content_text FROM notes WHERE id=?1",
+                "SELECT title,content_html,content_text,content_markdown FROM notes WHERE id=?1",
                 params![revision.note_id],
                 |row| {
                     Ok((
                         row.get::<_, String>(0)?,
                         row.get::<_, String>(1)?,
                         row.get::<_, String>(2)?,
+                        row.get::<_, String>(3)?,
                     ))
                 },
             )
@@ -1651,11 +1711,11 @@ pub mod commands {
             .ok_or_else(|| AppError::not_found("note_not_found", "Note not found"))?;
         let timestamp = now();
         let transaction = conn.transaction().map_err(AppError::db)?;
-        transaction.execute("INSERT INTO note_revisions(id,note_id,title,content_html,content_text,reason,created_at) VALUES(?1,?2,?3,?4,?5,'revision_restore',?6)", params![Uuid::new_v4().to_string(),revision.note_id,current.0,current.1,current.2,timestamp]).map_err(AppError::db)?;
-        transaction.execute("UPDATE notes SET title=?2,content_html=?3,content_text=?4,updated_at=?5 WHERE id=?1", params![revision.note_id,revision.title,revision.content_html,revision.content_text,timestamp]).map_err(AppError::db)?;
+        transaction.execute("INSERT INTO note_revisions(id,note_id,title,content_html,content_text,content_markdown,reason,created_at) VALUES(?1,?2,?3,?4,?5,?6,'revision_restore',?7)", params![Uuid::new_v4().to_string(),revision.note_id,current.0,current.1,current.2,current.3,timestamp]).map_err(AppError::db)?;
+        transaction.execute("UPDATE notes SET title=?2,content_html=?3,content_text=?4,content_markdown=?5,updated_at=?6 WHERE id=?1", params![revision.note_id,revision.title,revision.content_html,revision.content_text,revision.content_markdown,timestamp]).map_err(AppError::db)?;
         transaction.commit().map_err(AppError::db)?;
         search::index_note(&conn, &revision.note_id)?;
-        conn.query_row("SELECT id,notebook_id,title,content_html,content_text,deleted_at,created_at,updated_at FROM notes WHERE id=?1", params![revision.note_id], note_from_row).map_err(AppError::db)
+        conn.query_row("SELECT id,notebook_id,title,content_html,content_text,content_markdown,deleted_at,created_at,updated_at FROM notes WHERE id=?1", params![revision.note_id], note_from_row).map_err(AppError::db)
     }
 
     #[tauri::command]
@@ -2212,13 +2272,25 @@ pub mod commands {
             if let Err(message) = result {
                 let _ = on_event.send(AiEvent::Error {
                     request_id: id.clone(),
-                    code: "ai_request_failed".into(),
+                    code: ai_error_code(&message).into(),
                     message,
                 });
             }
             let _ = cancels.lock().map(|mut m| m.remove(&id));
         });
         Ok(())
+    }
+
+    pub(super) fn ai_error_code(error: &str) -> &str {
+        if !error.is_empty()
+            && error
+                .bytes()
+                .all(|byte| byte.is_ascii_lowercase() || byte.is_ascii_digit() || byte == b'_')
+        {
+            error
+        } else {
+            "ai_request_failed"
+        }
     }
 
     fn usage_i64(value: Option<&serde_json::Value>) -> i64 {
@@ -2246,6 +2318,72 @@ pub mod commands {
             "generate_table" => "Organize the selected text into a concise Markdown table. Do not add unsupported facts.",
             _ => "Perform the requested writing action while preserving the source meaning and factual content.",
         }
+    }
+
+    pub(super) fn build_ai_request_body(
+        model: &str,
+        provider: &str,
+        prompt: &str,
+        thinking_mode: Option<&str>,
+    ) -> serde_json::Value {
+        let mut body = serde_json::json!({
+            "model": model,
+            "stream": true,
+            "stream_options": { "include_usage": true },
+            "messages": [
+                { "role": "system", "content": "You are Tiny Note writing assistant." },
+                { "role": "user", "content": prompt }
+            ]
+        });
+        let thinking_type = match thinking_mode {
+            Some("deep") => Some("enabled"),
+            Some("fast" | "disabled") => Some("disabled"),
+            _ => None,
+        };
+        let provider = provider.to_lowercase();
+        if let Some(thinking_type) = thinking_type {
+            if provider.contains("qwen") || provider.contains("千问") {
+                body["enable_thinking"] = serde_json::json!(thinking_type == "enabled");
+            } else if ["deepseek", "zhipu", "智谱", "kimi", "doubao", "豆包"]
+                .iter()
+                .any(|name| provider.contains(name))
+            {
+                body["thinking"] = serde_json::json!({ "type": thinking_type });
+            }
+        }
+        body
+    }
+
+    pub(super) fn build_ai_context(
+        note_context: &str,
+        request_text: &str,
+        selected_text: Option<&str>,
+        retrieved_context: &str,
+    ) -> String {
+        let mut sections = Vec::new();
+        if let Some(selection) = selected_text.filter(|text| !text.trim().is_empty()) {
+            sections.push(format!(
+                "Selected text to process (the only rewrite target):\n{}",
+                selection.trim()
+            ));
+        } else {
+            if !request_text.trim().is_empty() {
+                sections.push(format!("Text to process:\n{}", request_text.trim()));
+            }
+            if !note_context.trim().is_empty() {
+                sections.push(format!(
+                    "Current note (reference only; do not rewrite the whole note):\n{}",
+                    note_context.trim()
+                ));
+            }
+            if !retrieved_context.trim().is_empty() {
+                sections.push(format!(
+                    "Retrieved context (reference only):\n{}",
+                    retrieved_context.trim()
+                ));
+            }
+        }
+        sections.join("\n\n---\n\n")
     }
 
     fn record_usage(
@@ -2406,15 +2544,19 @@ pub mod commands {
         } else {
             String::new()
         };
-        let bounded_context = [target_context, request.text.clone(), source_context]
-            .into_iter()
-            .filter(|value| !value.trim().is_empty())
-            .collect::<Vec<_>>()
-            .join("\n\n---\n\n");
+        let bounded_context = build_ai_context(
+            &target_context,
+            &request.text,
+            request
+                .selection
+                .as_ref()
+                .map(|selection| selection.text.as_str()),
+            &source_context,
+        );
         let action_instruction = writing_action_instruction(&request.action);
         let prompt = if request.mode.as_deref() == Some("edit") {
             format!(
-                "User instruction: {}\nWriting action: {}\n{}\nReturn only the complete proposed replacement in Markdown, without commentary.\n\n{}",
+                "User instruction: {}\nWriting action: {}\n{}\nRewrite only the explicitly marked text to process. Treat the current note and retrieved context as reference only. Return only the complete proposed replacement in Markdown, without commentary.\n\n{}",
                 request.instruction.clone().unwrap_or_default(), action_instruction, thinking_hint, bounded_context
             )
         } else if request.action == "custom" {
@@ -2426,11 +2568,12 @@ pub mod commands {
             )
         } else {
             format!(
-                "{}\n{}\nReturn only the proposed replacement in Markdown, without commentary.\n\n{}",
+                "{}\n{}\nApply the instruction only to the explicitly marked text to process. Treat the current note and retrieved context as reference only. Return only the result in Markdown, without commentary.\n\n{}",
                 thinking_hint, action_instruction, bounded_context
             )
         };
-        let body = serde_json::json!({ "model": model, "stream": true, "stream_options": { "include_usage": true }, "messages": [{"role":"system","content":"You are Tiny Note writing assistant."},{"role":"user","content":prompt}] });
+        let body =
+            build_ai_request_body(&model, &provider, &prompt, request.thinking_mode.as_deref());
         let response = reqwest::Client::new()
             .post(endpoint)
             .bearer_auth(key)
@@ -2784,6 +2927,8 @@ pub mod commands {
 
 pub fn run() {
     tauri::Builder::default()
+        .plugin(tauri_plugin_process::init())
+        .plugin(tauri_plugin_updater::Builder::new().build())
         .setup(|app| {
             let state =
                 app_state(app.handle()).map_err(|e| Box::new(e) as Box<dyn std::error::Error>)?;
@@ -2793,6 +2938,7 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             commands::chat_list,
             commands::chat_create,
+            commands::chat_set_mode,
             commands::chat_get,
             commands::chat_add_message,
             commands::chat_delete,
@@ -2852,6 +2998,7 @@ pub fn run() {
             agent::agent_get_run,
             agent::agent_get_pending_run,
             agent::agent_list_tools,
+            agent::agent_tool_policy_update,
             agent_skills::agent_skill_list,
             agent_skills::agent_skill_read,
             agent_skills::agent_skill_upsert,
@@ -2889,6 +3036,84 @@ mod tests {
             .query_row("SELECT COUNT(*) FROM notebooks", [], |r| r.get(0))
             .unwrap();
         assert_eq!(n, 1);
+    }
+    #[test]
+    fn migration_adds_markdown_columns_to_existing_note_tables() {
+        let c = Connection::open_in_memory().unwrap();
+        c.execute_batch(
+            "CREATE TABLE notes (
+                id TEXT PRIMARY KEY,
+                notebook_id TEXT,
+                title TEXT NOT NULL,
+                content_html TEXT NOT NULL,
+                content_text TEXT NOT NULL,
+                deleted_at TEXT,
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL
+            );
+            CREATE TABLE note_revisions (
+                id TEXT PRIMARY KEY,
+                note_id TEXT NOT NULL,
+                title TEXT NOT NULL,
+                content_html TEXT NOT NULL,
+                content_text TEXT NOT NULL,
+                reason TEXT NOT NULL DEFAULT 'ai_edit',
+                created_at TEXT NOT NULL
+            );",
+        )
+        .unwrap();
+
+        init_database(&c).unwrap();
+
+        for table in ["notes", "note_revisions"] {
+            let markdown_columns: i64 = c
+                .query_row(
+                    &format!(
+                        "SELECT COUNT(*) FROM pragma_table_info('{table}') WHERE name='content_markdown'"
+                    ),
+                    [],
+                    |row| row.get(0),
+                )
+                .unwrap();
+            assert_eq!(markdown_columns, 1, "missing content_markdown on {table}");
+        }
+    }
+    #[test]
+    fn note_and_revision_rows_preserve_markdown_alongside_html_and_text() {
+        let c = Connection::open_in_memory().unwrap();
+        init_database(&c).unwrap();
+        let timestamp = now();
+        c.execute(
+            "INSERT INTO notes(id,notebook_id,title,content_html,content_text,content_markdown,created_at,updated_at) VALUES('markdown-note',NULL,'指南','<h1>指南</h1>','指南','# 指南',?1,?1)",
+            params![timestamp],
+        )
+        .unwrap();
+        let note = c
+            .query_row(
+                "SELECT id,notebook_id,title,content_html,content_text,content_markdown,deleted_at,created_at,updated_at FROM notes WHERE id='markdown-note'",
+                [],
+                note_from_row,
+            )
+            .unwrap();
+        assert_eq!(note.content_html, "<h1>指南</h1>");
+        assert_eq!(note.content_text, "指南");
+        assert_eq!(note.content_markdown, "# 指南");
+
+        c.execute(
+            "INSERT INTO note_revisions(id,note_id,title,content_html,content_text,content_markdown,reason,created_at) VALUES('revision-1','markdown-note','指南','<p>旧版</p>','旧版','旧版源码','ai_edit',?1)",
+            params![timestamp],
+        )
+        .unwrap();
+        let revision = c
+            .query_row(
+                "SELECT id,note_id,title,content_html,content_text,content_markdown,reason,created_at FROM note_revisions WHERE id='revision-1'",
+                [],
+                search::revision_from_row,
+            )
+            .unwrap();
+        assert_eq!(revision.content_html, "<p>旧版</p>");
+        assert_eq!(revision.content_text, "旧版");
+        assert_eq!(revision.content_markdown, "旧版源码");
     }
     #[test]
     fn migration_creates_usage_records() {
@@ -2950,6 +3175,19 @@ mod tests {
         assert_eq!(message_run_link, 1);
     }
     #[test]
+    fn migration_creates_agent_tool_policy_table() {
+        let c = Connection::open_in_memory().unwrap();
+        init_database(&c).unwrap();
+        let exists: i64 = c
+            .query_row(
+                "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='agent_tool_policies'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(exists, 1);
+    }
+    #[test]
     fn title_request_disables_deepseek_thinking() {
         let body = commands::chat_title_request_body(
             "deepseek-v4-flash",
@@ -2992,6 +3230,51 @@ mod tests {
         assert!(expand.contains("do not invent facts"));
         assert!(polish.contains("clarity, flow, wording"));
         assert_ne!(expand, polish);
+    }
+    #[test]
+    fn quick_note_ai_disables_provider_thinking() {
+        let deepseek = commands::build_ai_request_body(
+            "deepseek-v4-flash",
+            "DeepSeek",
+            "prompt",
+            Some("disabled"),
+        );
+        assert_eq!(deepseek["thinking"]["type"], "disabled");
+
+        let qwen = commands::build_ai_request_body("qwen-plus", "Qwen", "prompt", Some("disabled"));
+        assert_eq!(qwen["enable_thinking"], false);
+    }
+    #[test]
+    fn writing_context_sends_only_the_selection_when_present() {
+        let context = commands::build_ai_context(
+            "整篇笔记包含选中文字和其他段落",
+            "旧的请求文本",
+            Some("具体选中文字"),
+            "[1] 检索参考",
+        );
+        assert_eq!(
+            context,
+            "Selected text to process (the only rewrite target):\n具体选中文字"
+        );
+    }
+    #[test]
+    fn writing_context_keeps_note_context_without_a_selection() {
+        let context = commands::build_ai_context("整篇笔记", "整篇笔记", None, "[1] 检索参考");
+        assert!(context.contains("Text to process:\n整篇笔记"));
+        assert!(context
+            .contains("Current note (reference only; do not rewrite the whole note):\n整篇笔记"));
+        assert!(context.contains("Retrieved context (reference only):\n[1] 检索参考"));
+    }
+    #[test]
+    fn ai_error_codes_preserve_known_failures() {
+        assert_eq!(
+            commands::ai_error_code("api_key_not_configured"),
+            "api_key_not_configured"
+        );
+        assert_eq!(
+            commands::ai_error_code("unexpected provider response"),
+            "ai_request_failed"
+        );
     }
     #[test]
     fn memory_files_are_allowlisted() {

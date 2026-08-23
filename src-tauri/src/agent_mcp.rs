@@ -139,6 +139,10 @@ pub fn call_tool(
         "tools/call",
         json!({"name":tool_name,"arguments":arguments}),
     )?;
+    parse_tool_result(&result)
+}
+
+fn parse_tool_result(result: &Value) -> Result<String, String> {
     let text = result
         .get("content")
         .and_then(Value::as_array)
@@ -151,7 +155,15 @@ pub fn call_tool(
         })
         .filter(|value| !value.is_empty())
         .unwrap_or_else(|| result.to_string());
-    Ok(text.chars().take(MAX_MCP_OUTPUT_CHARS).collect())
+    let truncated = text.chars().take(MAX_MCP_OUTPUT_CHARS).collect::<String>();
+    if result
+        .get("isError")
+        .and_then(Value::as_bool)
+        .unwrap_or(false)
+    {
+        return Err(format!("MCP 工具执行失败: {truncated}"));
+    }
+    Ok(truncated)
 }
 
 fn discover(server: &McpServer) -> Result<Vec<McpTool>, String> {
@@ -381,5 +393,22 @@ mod tests {
     fn rejects_path_like_server_ids() {
         assert!(validate_id("../outside").is_err());
         assert!(validate_id("safe_server-1").is_ok());
+    }
+
+    #[test]
+    fn respects_mcp_tool_error_results() {
+        let error = parse_tool_result(&json!({
+            "content": [{"type":"text","text":"日历服务拒绝访问"}],
+            "isError": true
+        }))
+        .unwrap_err();
+        assert!(error.contains("日历服务拒绝访问"));
+
+        let output = parse_tool_result(&json!({
+            "content": [{"type":"text","text":"真实工具结果"}],
+            "isError": false
+        }))
+        .unwrap();
+        assert_eq!(output, "真实工具结果");
     }
 }

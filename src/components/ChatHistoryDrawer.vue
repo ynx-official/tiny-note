@@ -16,6 +16,7 @@ async function load() {
   try { conversations.value = await invoke('chat_list') } catch (cause) { error.value = cause?.message || '历史记录读取失败' } finally { loading.value = false }
 }
 function openConversation(id) { emit('open', id); visible.value = false }
+function modeLabel(mode) { return mode === 'agent' ? 'Tiny Agent' : '对话' }
 async function remove(event, id) {
   event.stopPropagation()
   if (!window.confirm('确定删除这条对话及全部消息吗？')) return
@@ -44,7 +45,7 @@ onUnmounted(() => { document.removeEventListener('keydown', handleEscape); windo
         <div v-else-if="!conversations.length" class="history-state"><MessageSquare :size="25" /><strong>还没有历史对话</strong><small>发送第一条消息后会自动保存在这里</small></div>
         <div v-for="conversation in conversations" v-else :key="conversation.id" class="history-row" role="button" tabindex="0" @click="openConversation(conversation.id)" @keydown.enter="openConversation(conversation.id)">
           <span class="history-row-main"><strong>{{ conversation.title || '新对话' }}</strong><small>{{ conversation.preview || '暂无消息' }}</small></span>
-          <span class="history-row-meta"><time>{{ formatTime(conversation.updatedAt) }}</time><button type="button" title="删除对话" @click="remove($event, conversation.id)"><Trash2 :size="13" /></button></span>
+          <span class="history-row-meta"><span class="history-mode-badge" :class="{ 'is-agent': conversation.mode === 'agent' }">{{ modeLabel(conversation.mode) }}</span><time>{{ formatTime(conversation.updatedAt) }}</time><button type="button" title="删除对话" @click="remove($event, conversation.id)"><Trash2 :size="13" /></button></span>
         </div>
       </div>
     </section>

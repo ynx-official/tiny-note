@@ -1,6 +1,7 @@
 <script setup>
 import { nextTick, ref, watch } from 'vue'
 import { BookOpen, Copy, FileText, Send, Sparkles, Square, X } from 'lucide-vue-next'
+import MarkdownMessage from './MarkdownMessage.vue'
 
 const props = defineProps({
   note: { type: Object, default: null },
@@ -64,7 +65,7 @@ watch(() => [props.messages.length, props.streamingText, props.busy], scrollToBo
         <div v-else class="tiny-note-assistant-response">
           <span class="tiny-note-response-avatar"><Sparkles :size="14" /></span>
           <div class="tiny-note-response-content">
-            <div class="tiny-note-response-text">{{ message.content }}</div>
+            <MarkdownMessage class="tiny-note-response-markdown" :content="message.content" />
             <div v-if="message.sources?.length" class="tiny-note-assistant-sources"><span v-for="(source, sourceIndex) in message.sources" :key="source.id" :title="source.snippet">[{{ sourceIndex + 1 }}] {{ source.title }}<small v-if="source.truncated">已截取</small></span></div>
             <div v-if="message.proposal" class="tiny-note-assistant-proposal-state">修改建议已在文章中打开，请审阅后应用。</div>
             <button v-if="message.content" class="tiny-note-copy-response" type="button" title="复制" @click="emit('copy', message.content)"><Copy :size="13" /></button>
@@ -74,7 +75,10 @@ watch(() => [props.messages.length, props.streamingText, props.busy], scrollToBo
 
       <div v-if="busy" class="tiny-note-assistant-response is-streaming">
         <span class="tiny-note-response-avatar"><Sparkles :size="14" /></span>
-        <div class="tiny-note-response-content"><div class="tiny-note-response-text">{{ streamingText || '正在思考…' }}<span v-if="!streamingText" class="tiny-note-thinking-dots">•••</span></div></div>
+        <div class="tiny-note-response-content">
+          <MarkdownMessage v-if="streamingText" class="tiny-note-response-markdown" :content="streamingText" streaming />
+          <div v-else class="tiny-note-response-text">正在思考…<span class="tiny-note-thinking-dots">•••</span></div>
+        </div>
       </div>
     </div>
 

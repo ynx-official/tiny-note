@@ -28,7 +28,8 @@ const referenceFileBaseId = ref(null)
 const references = ref([])
 const selectedModelId = ref('')
 const thinkingMode = ref('fast')
-const chatMode = ref('chat')
+const chatMode = ref('agent')
+const modeMenuOpen = ref(false)
 const modelMenuOpen = ref(false)
 const personalBases = computed(() => library.bases.filter(item => item.category === 'personal'))
 const localBases = computed(() => library.bases.filter(item => item.category === 'local'))
@@ -83,7 +84,12 @@ function closeReferenceMenu() {
 }
 function closeMenus() {
   closeReferenceMenu()
+  modeMenuOpen.value = false
   modelMenuOpen.value = false
+}
+function selectChatMode(mode) {
+  chatMode.value = mode
+  modeMenuOpen.value = false
 }
 function selectModel(model) {
   selectedModelId.value = model.id
@@ -174,9 +180,15 @@ onMounted(async () => {
         <textarea v-model="draft" rows="1" :placeholder="copy.placeholder" @keydown.enter.exact.prevent="openChat" />
         <div class="home-composer-actions">
           <div class="home-composer-left">
-            <button class="home-select-button" type="button" :title="chatMode === 'agent' ? '切换为对话模式' : '切换为 Agent 模式'" @click="chatMode = chatMode === 'agent' ? 'chat' : 'agent'"><Wrench v-if="chatMode === 'agent'" :size="16" /><MessageSquare v-else :size="16" /><span>{{ chatMode === 'agent' ? 'Agent 模式' : copy.noteMode }}</span><ChevronDown :size="13" /></button>
+            <div class="home-mode-anchor" @click.stop>
+              <button class="home-select-button" type="button" :class="{ active: modeMenuOpen }" title="选择对话模式" @click="modeMenuOpen = !modeMenuOpen; modelMenuOpen = false; referenceMenuOpen = false"><Wrench v-if="chatMode === 'agent'" :size="16" /><MessageSquare v-else :size="16" /><span>{{ chatMode === 'agent' ? 'Tiny Agent' : copy.noteMode }}</span><ChevronDown :size="13" :class="{ expanded: modeMenuOpen }" /></button>
+              <div v-if="modeMenuOpen" class="home-mode-menu">
+                <button type="button" class="home-mode-option" :class="{ active: chatMode === 'agent' }" @click="selectChatMode('agent')"><Wrench :size="15" /><span><b>Tiny Agent</b><small>可自主调用工具完成任务</small></span><span v-if="chatMode === 'agent'" class="home-mode-check">✓</span></button>
+                <button type="button" class="home-mode-option" :class="{ active: chatMode === 'chat' }" @click="selectChatMode('chat')"><MessageSquare :size="15" /><span><b>{{ copy.noteMode }}</b><small>进行普通对话</small></span><span v-if="chatMode === 'chat'" class="home-mode-check">✓</span></button>
+              </div>
+            </div>
             <div class="home-model-anchor" @click.stop>
-              <button class="home-select-button" type="button" :class="{ active: modelMenuOpen }" @click="modelMenuOpen = !modelMenuOpen; referenceMenuOpen = false"><Globe2 :size="16" /><span>{{ modelButtonLabel }}</span><ChevronDown :size="13" :class="{ expanded: modelMenuOpen }" /></button>
+              <button class="home-select-button" type="button" :class="{ active: modelMenuOpen }" @click="modelMenuOpen = !modelMenuOpen; modeMenuOpen = false; referenceMenuOpen = false"><Globe2 :size="16" /><span>{{ modelButtonLabel }}</span><ChevronDown :size="13" :class="{ expanded: modelMenuOpen }" /></button>
               <div v-if="modelMenuOpen" class="home-model-menu">
                 <div class="home-thinking-row"><span><Sparkles :size="15" />思考模式</span><div class="home-thinking-tabs"><button type="button" :class="{ active: thinkingMode === 'fast' }" @click="thinkingMode = 'fast'"><span>快速</span></button><button type="button" :class="{ active: thinkingMode === 'deep' }" @click="thinkingMode = 'deep'"><span>深度</span></button></div></div>
                 <div class="home-model-divider"></div>

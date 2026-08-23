@@ -12,9 +12,13 @@ function escapeHtml(value) {
 
 const renderer = new Renderer()
 
+renderer.blockquote = function ({ tokens }) {
+  return `<blockquote class="markdown-blockquote">\n${this.parser.parse(tokens)}</blockquote>\n`
+}
+
 renderer.code = ({ text, lang }) => {
   const language = String(lang || '').trim().split(/\s+/)[0].replace(/[^\w+-]/g, '')
-  const label = language || 'text'
+  const label = language || 'auto'
   return `<div class="markdown-code-block"><div class="markdown-code-header"><span>${escapeHtml(label)}</span><button type="button" class="markdown-code-copy" title="复制代码" aria-label="复制代码">复制</button></div><pre><code class="language-${escapeHtml(language)}">${escapeHtml(text)}</code></pre></div>`
 }
 

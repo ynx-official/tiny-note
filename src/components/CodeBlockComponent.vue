@@ -158,6 +158,8 @@ async function handleCopy() {
   padding: 8px 16px;
   overflow-x: auto;
   background: transparent;
+  scrollbar-width: thin;
+  scrollbar-color: rgba(0, 0, 0, .12) transparent;
 }
 .code-block-component pre code {
   display: block;
@@ -171,15 +173,19 @@ async function handleCopy() {
   word-wrap: normal !important;
   overflow-wrap: normal !important;
 }
-.code-block-component pre::-webkit-scrollbar { height: 6px; }
-.code-block-component pre::-webkit-scrollbar-track { border-radius: 3px; background: #e0e0e0; }
-.code-block-component pre::-webkit-scrollbar-thumb { border-radius: 3px; background: #bbb; }
+.code-block-component pre::-webkit-scrollbar { height: 4px; }
+.code-block-component pre::-webkit-scrollbar-track { background: transparent; }
+.code-block-component pre::-webkit-scrollbar-thumb { border-radius: 999px; background: rgba(0, 0, 0, .12); }
+.code-block-component pre::-webkit-scrollbar-thumb:hover { background: rgba(0, 0, 0, .24); }
 
 [data-theme='dark'] .code-block-component { border-color: #3f3f46; background: #242428; }
 [data-theme='dark'] .language-select { background-color: #242428; color: #c7c7cc; }
 [data-theme='dark'] .line-numbers { border-color: #3f3f46; }
 [data-theme='dark'] .line-number { color: #777780; }
 [data-theme='dark'] .code-block-component pre code { color: #e5e7eb; }
+[data-theme='dark'] .code-block-component pre { scrollbar-color: rgba(255, 255, 255, .14) transparent; }
+[data-theme='dark'] .code-block-component pre::-webkit-scrollbar-thumb { background: rgba(255, 255, 255, .14); }
+[data-theme='dark'] .code-block-component pre::-webkit-scrollbar-thumb:hover { background: rgba(255, 255, 255, .28); }
 [data-theme='dark'] .code-action-btn { color: #a8a29e; }
 [data-theme='dark'] .code-action-btn:hover { background: #333338; color: #fff; }
 </style>

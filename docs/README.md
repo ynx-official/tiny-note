@@ -5,6 +5,7 @@
 - [PRD](01-requirements/prd.md)
 - [故事地图](01-requirements/story-map.md)
 - [业务规则](01-requirements/business-rules.md)
+- [文章编辑体验需求](01-requirements/editor-modes.md)
 - [验收标准](01-requirements/acceptance/mvp.md)
 - [设计系统](02-design/design-system.md)
 - [架构概览](03-architecture/overview.md)

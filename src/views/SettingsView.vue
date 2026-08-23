@@ -2,9 +2,11 @@
 import { computed, onMounted, ref, watch } from 'vue'
 import { storeToRefs } from 'pinia'
 import { useI18n } from 'vue-i18n'
-import { Check, ChevronDown, ChevronRight, Cpu, Globe2, Info, Languages, Moon, Monitor, Palette, Plus, RefreshCw, Search, Sparkles, Sun, Trash2, X } from 'lucide-vue-next'
+import { Check, ChevronDown, ChevronRight, Cpu, Globe2, Info, Languages, Moon, Monitor, Palette, Plus, RefreshCw, Search, Sparkles, Sun, Trash2, Wrench, X } from 'lucide-vue-next'
 import { invoke } from '../services/tauri'
+import { appUpdater } from '../services/appUpdater'
 import { useAppStore } from '../stores/app'
+import AgentToolsCatalog from '../components/AgentToolsCatalog.vue'
 import doubaoIcon from '../assets/providers/doubao.png'
 import qwenIcon from '../assets/providers/qwen.png'
 import zhipuIcon from '../assets/providers/zhipu.png'
@@ -32,6 +34,11 @@ const balanceStates = ref({})
 const balanceRefreshingAll = ref(false)
 const indexStatus = ref(null)
 const indexBusy = ref(false)
+const appVersion = ref('0.1.0')
+const updateStatus = ref('idle')
+const updateInfo = ref(null)
+const updateProgress = ref(null)
+const updateError = ref('')
 
 const providerOptions = [
   { key: 'doubao', label: '豆包', mark: '豆', icon: doubaoIcon, baseUrl: 'https://ark.cn-beijing.volces.com/api/v3' },
@@ -56,6 +63,7 @@ const currentLanguageLabel = computed(() => languageOptions.value.find(option =>
 const settingsSections = computed(() => [
   { id: 'appearance', label: t('appearance'), description: t('appearanceHint'), icon: Palette },
   { id: 'ai', label: t('aiWriting'), description: t('aiWritingHint'), icon: Sparkles },
+  { id: 'agent-tools', label: locale.value === 'zh-CN' ? 'Agent 工具' : 'Agent tools', description: locale.value === 'zh-CN' ? '查看可用能力和强制审批策略' : 'Inspect available capabilities and approval policies', icon: Wrench },
   { id: 'models', label: t('models'), description: t('modelsHint'), icon: Cpu },
   { id: 'about', label: t('about'), description: t('aboutHint'), icon: Info }
 ])
@@ -76,6 +84,22 @@ const balanceModels = computed(() => {
     if (!current || (model.isDefault && !current.isDefault)) byProvider.set(provider, model)
   }
   return [...byProvider.values()]
+})
+const updateButtonLabel = computed(() => {
+  const chinese = locale.value === 'zh-CN'
+  if (updateStatus.value === 'checking') return chinese ? '检查中…' : 'Checking…'
+  if (updateStatus.value === 'available') return chinese ? '下载并安装' : 'Download and install'
+  if (updateStatus.value === 'downloading') return updateProgress.value == null ? (chinese ? '下载中…' : 'Downloading…') : `${updateProgress.value}%`
+  if (updateStatus.value === 'ready') return chinese ? '重启完成更新' : 'Restart to update'
+  return chinese ? '检查更新' : 'Check for updates'
+})
+const updateMessage = computed(() => {
+  const chinese = locale.value === 'zh-CN'
+  if (updateStatus.value === 'latest') return chinese ? '当前已是最新版本。' : 'You are up to date.'
+  if (updateStatus.value === 'unsupported') return chinese ? '浏览器预览不支持在线升级，请在桌面应用中检查。' : 'Updates are only available in the desktop app.'
+  if (updateStatus.value === 'ready') return chinese ? '更新已安装，重启后生效。' : 'The update is installed and ready.'
+  if (updateStatus.value === 'error') return updateError.value
+  return ''
 })
 
 function emptyDraft() {
@@ -278,9 +302,44 @@ async function rebuildSearchIndex() {
   try { indexStatus.value = await invoke('search_index_rebuild') } finally { indexBusy.value = false }
 }
 
+async function checkForUpdates() {
+  updateStatus.value = 'checking'
+  updateInfo.value = null
+  updateError.value = ''
+  try {
+    const result = await appUpdater.check()
+    if (!result.supported) updateStatus.value = 'unsupported'
+    else if (!result.available) updateStatus.value = 'latest'
+    else { updateInfo.value = result; updateStatus.value = 'available' }
+  } catch (error) {
+    updateError.value = error?.message || (locale.value === 'zh-CN' ? '检查更新失败，请稍后重试。' : 'Unable to check for updates.')
+    updateStatus.value = 'error'
+  }
+}
+
+async function installUpdate() {
+  updateStatus.value = 'downloading'
+  updateProgress.value = 0
+  updateError.value = ''
+  try {
+    await appUpdater.downloadAndInstall(progress => { updateProgress.value = progress })
+    updateStatus.value = 'ready'
+  } catch (error) {
+    updateError.value = error?.message || (locale.value === 'zh-CN' ? '更新安装失败，请稍后重试。' : 'Unable to install the update.')
+    updateStatus.value = 'error'
+  }
+}
+
+async function handleUpdateAction() {
+  if (updateStatus.value === 'available') return installUpdate()
+  if (updateStatus.value === 'ready') return appUpdater.relaunch()
+  return checkForUpdates()
+}
+
 onMounted(async () => {
   await appStore.initialize()
   locale.value = settings.value.language
+  try { appVersion.value = await appUpdater.currentVersion(appVersion.value) } catch { /* keep the bundled fallback */ }
   await refreshIndexStatus()
 })
 
@@ -387,9 +446,26 @@ watch(filteredSections, sections => {
             </div>
           </section>
 
+          <section v-else-if="activeSectionId === 'agent-tools'" class="settings-detail-section settings-agent-tools-section">
+            <div class="settings-section-kicker">工具与权限</div>
+            <AgentToolsCatalog />
+          </section>
+
           <section v-else class="settings-detail-section settings-about-section">
             <div class="settings-section-kicker">{{ t('about') }}</div>
-            <div class="settings-setting-row"><div class="settings-setting-copy"><strong>{{ t('appName') }}</strong><span>{{ t('localFirstHint') }}</span></div><span class="settings-value">v0.1.0</span></div>
+            <div class="settings-setting-row"><div class="settings-setting-copy"><strong>{{ t('appName') }}</strong><span>{{ t('localFirstHint') }}</span></div><span class="settings-value">v{{ appVersion }}</span></div>
+            <div class="settings-setting-row settings-update-row">
+              <div class="settings-setting-copy">
+                <strong>{{ locale === 'zh-CN' ? '软件更新' : 'Software update' }}</strong>
+                <span v-if="updateInfo">{{ locale === 'zh-CN' ? `发现 Tiny Note v${updateInfo.version}` : `Tiny Note v${updateInfo.version} is available` }}</span>
+                <span v-else>{{ locale === 'zh-CN' ? '通过签名的 GitHub Release 获取三平台更新。' : 'Signed updates are delivered through GitHub Releases.' }}</span>
+                <small v-if="updateMessage" :class="{ error: updateStatus === 'error' }" role="status">{{ updateMessage }}</small>
+                <small v-if="updateInfo?.body" class="settings-update-notes">{{ updateInfo.body }}</small>
+              </div>
+              <button type="button" class="settings-action-button" :class="{ primary: updateStatus === 'available' || updateStatus === 'ready' }" :disabled="updateStatus === 'checking' || updateStatus === 'downloading' || updateStatus === 'unsupported'" @click="handleUpdateAction">
+                <RefreshCw :size="14" :class="{ spinning: updateStatus === 'checking' || updateStatus === 'downloading' }" />{{ updateButtonLabel }}
+              </button>
+            </div>
             <div class="settings-setting-row"><div class="settings-setting-copy"><strong>{{ t('localFirst') }}</strong><span>{{ t('noteScope') }}</span></div><Globe2 :size="17" class="settings-value-icon" /></div>
           </section>
         </div>

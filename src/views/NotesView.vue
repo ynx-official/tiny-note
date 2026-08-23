@@ -16,7 +16,7 @@ const showDeleted = ref(false)
 const searchMode = ref(false)
 const query = ref('')
 const sidebarCollapsed = ref(false)
-const sidebarWidth = ref(200)
+const sidebarWidth = ref(260)
 const isResizing = ref(false)
 const notebookMenu = ref(false)
 const newNoteMenu = ref(false)
@@ -251,7 +251,7 @@ const tocHeadings = computed(() => {
   if (!html || typeof document === 'undefined') return []
   const container = document.createElement('div')
   container.innerHTML = html
-  return Array.from(container.querySelectorAll('h1, h2, h3'))
+  return Array.from(container.querySelectorAll('h1:not([data-note-title]), h2, h3'))
     .map((element, index) => ({ level: Number(element.tagName.slice(1)), text: element.textContent?.trim() || '', index }))
     .filter(heading => heading.text)
 })
@@ -265,16 +265,19 @@ function toggleToc() {
 }
 function closeToc() { tocVisible.value = false }
 function scrollToHeading(index) {
-  const scrollContainer = document.querySelector('.note-editor-area')
-  const editorContent = scrollContainer?.querySelector('.editor-content')
-  if (!scrollContainer || !editorContent) return
-  const headings = editorContent.querySelectorAll('h1, h2, h3')
+  const editorPanel = document.querySelector('.note-editor-area .note-editor-shell > .editor-panel')
+  const previewPane = editorPanel?.querySelector('.split-preview-pane')
+  const renderPane = editorPanel?.querySelector('.editor-render-pane')
+  const activeScroller = previewPane || renderPane || editorPanel
+  const editorContent = activeScroller?.querySelector('.editor-content')
+  if (!activeScroller || !editorContent) return
+  const headings = editorContent.querySelectorAll('h1:not([data-note-title]), h2, h3')
   const target = headings[index]
   if (!target) return
-  const containerRect = scrollContainer.getBoundingClientRect()
+  const containerRect = activeScroller.getBoundingClientRect()
   const targetRect = target.getBoundingClientRect()
-  scrollContainer.scrollTo({ top: targetRect.top - containerRect.top + scrollContainer.scrollTop - containerRect.height / 3, behavior: 'smooth' })
-  closeToc()
+  const nextTop = targetRect.top - containerRect.top + activeScroller.scrollTop - activeScroller.clientHeight / 3
+  activeScroller.scrollTo({ top: Math.max(0, nextTop), behavior: 'smooth' })
 }
 function onResizeStart(event) {
   event.preventDefault()
@@ -395,7 +398,7 @@ onBeforeUnmount(() => {
       </div>
     </Teleport>
 
-    <aside v-if="tocVisible && !showDeleted" class="toc-overlay" aria-label="目录">
+    <aside v-if="tocVisible && !showDeleted" class="toc-overlay" :style="{ width: sidebarWidth + 'px' }" aria-label="目录">
       <div class="toc-header"><strong>目录</strong><button class="toc-close" title="关闭目录" aria-label="关闭目录" @click="closeToc">×</button></div>
       <div class="toc-list">
         <button v-for="heading in tocHeadings" :key="`${heading.index}-${heading.text}`" class="toc-item" :class="`toc-level-${heading.level}`" @click="scrollToHeading(heading.index)">
