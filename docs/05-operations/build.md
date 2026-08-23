@@ -1,6 +1,6 @@
 # 构建、发布与在线升级（Review）
 
-最后更新：2026-08-21  
+最后更新：2026-08-23
 关联配置：`.github/workflows/ci.yml`、`.github/workflows/release.yml`、`src-tauri/tauri.conf.json`
 
 ## 产物矩阵
@@ -41,11 +41,12 @@ SHA-256 校验可以发现下载损坏或资产被替换，但不等同于发布
 
 ## 发布步骤
 
-1. 同步修改 `package.json`、`src-tauri/Cargo.toml`、`src-tauri/tauri.conf.json` 的 SemVer。
-2. 本地运行 `node scripts/check-release-version.mjs` 和相关验证。
-3. 创建并 push 完全匹配的 tag，例如 `tiny-note-v0.2.0`。
-4. 等待四个 release matrix job 和 `publish-manifest` 完成，确认 Release 包含各平台安装包和 `update-manifest.json`。
-5. 从上一版本安装包中执行一次真实“检查更新 → 下载 → 校验 → 打开安装包”验收。
+1. 在 `package.json`、`src-tauri/Cargo.toml`、`src-tauri/tauri.conf.json` 中同步修改 SemVer。
+2. 新建 `docs/upgrade/tiny-note-vX.Y.Z/README.md`，并同步更新 `docs/upgrade/README.md` 与 `CHANGELOG.md`。
+3. 本地运行 `npm run release:check`，确认版本详情、日期和索引全部一致。
+4. 创建并 push 完全匹配的 tag，例如 `tiny-note-v0.2.0`。
+5. 等待四个 release matrix job 和 `publish-manifest` 完成，确认 Release 包含各平台安装包和 `update-manifest.json`。
+6. 从上一版本安装包中执行一次真实“检查更新 → 下载 → 校验 → 打开安装包”验收。
 
 ## Linux CI 依赖
 

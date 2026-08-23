@@ -13,7 +13,9 @@
     "test:unit": "vitest run",
     "test:unit:watch": "vitest",
     "lint": "eslint .",
-    "release:manifest": "node scripts/update-manifest.mjs"
+    "release:manifest": "node scripts/update-manifest.mjs",
+    "release:check": "node scripts/release-notes.mjs --check-current",
+    "release:notes": "node scripts/release-notes.mjs"
   },
   "pnpm": {
     "onlyBuiltDependencies": [

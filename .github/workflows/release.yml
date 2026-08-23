@@ -15,10 +15,26 @@ concurrency:
 jobs:
   preflight:
     runs-on: ubuntu-22.04
+    outputs:
+      release_body: ${{ steps.release-notes.outputs.body }}
     steps:
       - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: 22 }
       - name: Validate release version
-        run: node scripts/check-release-version.mjs "$GITHUB_REF_NAME"
+        run: node scripts/release-notes.mjs --tag "$GITHUB_REF_NAME"
+      - name: Generate release notes
+        id: release-notes
+        shell: bash
+        run: |
+          set -euo pipefail
+          NOTES_FILE="${RUNNER_TEMP}/tiny-note-release-notes.md"
+          node scripts/release-notes.mjs --tag "$GITHUB_REF_NAME" --output "$NOTES_FILE"
+          {
+            echo 'body<<EOF'
+            cat "$NOTES_FILE"
+            echo 'EOF'
+          } >> "$GITHUB_OUTPUT"
 
   release:
     needs: preflight
@@ -62,7 +78,7 @@ jobs:
           args: ${{ matrix.args }}
           tagName: tiny-note-v__VERSION__
           releaseName: Tiny Note v__VERSION__
-          releaseBody: Installers for Windows, macOS, and Linux. The generated update-manifest.json powers SHA-256 verified in-app updates.
+          releaseBody: ${{ needs.preflight.outputs.release_body }}
           releaseDraft: false
           prerelease: false
           generateReleaseNotes: true
