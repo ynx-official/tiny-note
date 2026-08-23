@@ -165,6 +165,16 @@ async function createNoteFromText(content, fallbackTitle = '对话笔记') {
   savedNote.value = note
   return note
 }
+async function refreshDataAfterAgent() {
+  // Agent tools write through Rust directly, so the Pinia lists need an
+  // explicit reload before the user navigates back to Notes or Library.
+  const activeBaseId = library.activeId
+  const activePath = library.path
+  await Promise.allSettled([notesStore.load(), library.load()])
+  if (activeBaseId && library.activeId === activeBaseId && activePath) {
+    await library.navigate(activePath, false)
+  }
+}
 async function saveAssistantAsNote(message) {
   try { error.value = ''; await createNoteFromText(message.content, conversationTitle.value === '新对话' ? '对话笔记' : conversationTitle.value) }
   catch (cause) { error.value = cause?.message || '保存笔记失败' }
@@ -244,6 +254,7 @@ function createResponseChannel() {
     if (event.type === 'completed') {
       if (!streamingText.value && event.content) { streamingText.value = event.content; if (currentMode.value === 'agent') appendAgentText(event.content) }
       finishStreamingAgentText()
+      if (currentMode.value === 'agent') await refreshDataAfterAgent()
       await completeResponse()
     }
   }
