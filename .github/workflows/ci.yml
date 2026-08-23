@@ -36,7 +36,7 @@ jobs:
 
   bundles:
     needs: checks
-    if: github.event_name == 'pull_request' || (github.event_name == 'push' && github.ref == 'refs/heads/main')
+    if: github.event_name == 'pull_request' || (github.event_name == 'push' && (github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/tiny-note-v')))
     strategy:
       fail-fast: false
       matrix:
