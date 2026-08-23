@@ -16,3 +16,12 @@
 - CI 和 Release 均会检查安装包产物是否实际生成，避免“构建成功但没有产物”。
 
 [0.1.7]: docs/upgrade/tiny-note-v0.1.7/README.md
+
+## [0.1.8] - 2026-08-23
+
+### 改进与修复
+
+- 普通 `main` 分支 push 现在也会触发四平台安装包构建并上传为 GitHub Actions artifact，不再必须先创建版本 tag。
+- 正式发布继续使用 `tiny-note-vX.Y.Z` tag，并沿用 SHA-256 更新清单流程。
+
+[0.1.8]: docs/upgrade/tiny-note-v0.1.8/README.md
