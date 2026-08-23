@@ -12,7 +12,7 @@
 | macOS | Intel x86_64 | DMG | `.app.tar.gz` + `.sig` |
 | macOS | Apple Silicon aarch64 | DMG | `.app.tar.gz` + `.sig` |
 
-普通 push/PR 由 `Tiny Note CI` 执行测试、lint、Rust 检查和四组无更新签名的安装包构建，并把产物保存为 workflow artifacts。正式发布只由 `tiny-note-v*` tag 或手动运行 `Release Tiny Note` 触发。
+普通 push/PR 由 `Tiny Note CI` 执行测试、lint、Rust 检查和四组无更新签名的安装包构建，并把产物保存为 workflow artifacts。正式发布只由 `tiny-note-v*` tag 或手动运行 `Release Tiny Note` 触发。CI 和 Release 均使用仓库锁定的 npm 依赖与项目内 Tauri CLI；Release 矩阵串行上传，避免多个平台同时重写 `latest.json`。
 
 ## 在线升级方案
 
@@ -22,7 +22,7 @@
 https://github.com/ynx-official/tiny-note/releases/latest/download/latest.json
 ```
 
-正式发布流水线通过 `tauri-action` 聚合各平台签名产物并生成 `latest.json`。更新包必须通过 Tauri updater 公钥校验，不能关闭签名验证。GitHub Release 必须是非草稿、非 prerelease，才能被 `/releases/latest/` 稳定发现。
+正式发布流水线通过固定版本的 `tauri-action` 聚合各平台签名产物并生成 `latest.json`。更新包必须通过 Tauri updater 公钥校验，不能关闭签名验证。GitHub Release 必须是非草稿、非 prerelease，才能被 `/releases/latest/` 稳定发现。
 
 ## 首次启用更新签名
 

@@ -33,4 +33,30 @@ describe('app updater', () => {
     const client = createAppUpdater({ isDesktop: () => true })
     await expect(client.downloadAndInstall()).rejects.toThrow('No pending update')
   })
+
+  it('clears the pending update after installation', async () => {
+    const update = { downloadAndInstall: vi.fn(async () => {}) }
+    const client = createAppUpdater({
+      isDesktop: () => true,
+      loadUpdater: async () => ({ check: async () => update })
+    })
+
+    await client.check()
+    expect(client.hasPendingUpdate()).toBe(true)
+    await client.downloadAndInstall()
+
+    expect(client.hasPendingUpdate()).toBe(false)
+    await expect(client.downloadAndInstall()).rejects.toThrow('No pending update')
+  })
+
+  it('clears the pending update when installation fails', async () => {
+    const client = createAppUpdater({
+      isDesktop: () => true,
+      loadUpdater: async () => ({ check: async () => ({ downloadAndInstall: async () => { throw new Error('network') } }) })
+    })
+
+    await client.check()
+    await expect(client.downloadAndInstall()).rejects.toThrow('network')
+    expect(client.hasPendingUpdate()).toBe(false)
+  })
 })

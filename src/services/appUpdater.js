@@ -20,8 +20,9 @@ export function createAppUpdater(dependencies = {}) {
       pendingUpdate = null
       if (!deps.isDesktop()) return { supported: false, available: false }
       const { check } = await deps.loadUpdater()
-      pendingUpdate = await check({ timeout: 30_000 })
-      if (!pendingUpdate) return { supported: true, available: false }
+      const update = await check({ timeout: 30_000 })
+      if (!update) return { supported: true, available: false }
+      pendingUpdate = update
       return {
         supported: true,
         available: true,
@@ -32,20 +33,34 @@ export function createAppUpdater(dependencies = {}) {
     },
 
     async downloadAndInstall(onProgress = () => {}) {
-      if (!pendingUpdate) throw new Error('No pending update')
+      const update = pendingUpdate
+      if (!update) throw new Error('No pending update')
       let downloaded = 0
       let contentLength = 0
-      await pendingUpdate.downloadAndInstall(event => {
-        if (event.event === 'Started') {
-          contentLength = Number(event.data?.contentLength) || 0
-          onProgress(0)
-        } else if (event.event === 'Progress') {
-          downloaded += Number(event.data?.chunkLength) || 0
-          onProgress(contentLength ? Math.min(99, Math.round(downloaded / contentLength * 100)) : null)
-        } else if (event.event === 'Finished') {
-          onProgress(100)
-        }
-      })
+      try {
+        await update.downloadAndInstall(event => {
+          if (event.event === 'Started') {
+            contentLength = Number(event.data?.contentLength) || 0
+            onProgress(0)
+          } else if (event.event === 'Progress') {
+            downloaded += Number(event.data?.chunkLength) || 0
+            onProgress(contentLength ? Math.min(99, Math.round(downloaded / contentLength * 100)) : null)
+          } else if (event.event === 'Finished') {
+            onProgress(100)
+          }
+        })
+      } finally {
+        // An update may only be installed once. A failed install must be checked again.
+        pendingUpdate = null
+      }
+    },
+
+    hasPendingUpdate() {
+      return Boolean(pendingUpdate)
+    },
+
+    clearPendingUpdate() {
+      pendingUpdate = null
     },
 
     async relaunch() {
