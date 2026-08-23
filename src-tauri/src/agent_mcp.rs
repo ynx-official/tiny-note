@@ -226,7 +226,7 @@ fn request(server: &McpServer, method: &str, params: Value) -> Result<Value, Str
     let outcome = (|| {
         write_message(
             &mut stdin,
-            &json!({"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-03-26","capabilities":{},"clientInfo":{"name":"tiny-note","version":"0.1.6"}}}),
+            &json!({"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-03-26","capabilities":{},"clientInfo":{"name":"tiny-note","version":"0.1.7"}}}),
         )?;
         let initialize = receive_response(&receiver, 1)?;
         if initialize.get("error").is_some() {

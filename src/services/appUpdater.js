@@ -9,7 +9,7 @@ export function createAppUpdater(dependencies = {}) {
   let pendingUpdate = null
 
   return {
-    async currentVersion(fallback = '0.1.6') {
+    async currentVersion(fallback = '0.1.7') {
       if (!deps.isDesktop()) return fallback
       const { getVersion } = await deps.loadApp()
       return getVersion()
