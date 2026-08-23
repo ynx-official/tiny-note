@@ -323,7 +323,7 @@ fn read_indexable_content(
     Ok((content, None))
 }
 
-fn index_library_file(
+fn index_library_file_conn(
     conn: &Connection,
     kb_id: &str,
     root: &Path,
@@ -400,6 +400,53 @@ fn index_library_file(
     }
 }
 
+pub fn index_library_file(
+    state: &AppState,
+    kb_id: &str,
+    root: &Path,
+    path: &Path,
+) -> Result<(), AppError> {
+    let conn = state
+        .db
+        .lock()
+        .map_err(|_| AppError::db("database lock poisoned"))?;
+    index_library_file_conn(&conn, kb_id, root, path)
+}
+
+pub fn reindex_library_path(
+    state: &AppState,
+    kb_id: &str,
+    root: &Path,
+    relative_path: &str,
+) -> Result<(), AppError> {
+    let relative_path = relative_path.replace('\\', "/");
+    let conn = state
+        .db
+        .lock()
+        .map_err(|_| AppError::db("database lock poisoned"))?;
+    let prefix = format!("file:{kb_id}:{relative_path}");
+    conn.execute(
+        "DELETE FROM search_documents WHERE id=?1 OR id LIKE ?2",
+        params![prefix, format!("{prefix}/%")],
+    )
+    .map_err(AppError::db)?;
+    let path = root.join(relative_path);
+    if path.is_dir() {
+        for entry in WalkDir::new(&path)
+            .follow_links(false)
+            .into_iter()
+            .filter_map(Result::ok)
+        {
+            if entry.file_type().is_file() {
+                index_library_file_conn(&conn, kb_id, root, entry.path())?;
+            }
+        }
+    } else if path.is_file() {
+        index_library_file_conn(&conn, kb_id, root, &path)?;
+    }
+    Ok(())
+}
+
 pub fn rebuild_all(state: &AppState) -> Result<IndexStatusDto, AppError> {
     let conn = state
         .db
@@ -434,7 +481,7 @@ pub fn rebuild_all(state: &AppState) -> Result<IndexStatusDto, AppError> {
             .filter_map(Result::ok)
         {
             if entry.file_type().is_file() {
-                index_library_file(&conn, &kb_id, &root, entry.path())?;
+                index_library_file_conn(&conn, &kb_id, &root, entry.path())?;
             }
         }
     }

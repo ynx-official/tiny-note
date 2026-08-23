@@ -40,4 +40,14 @@ describe('library store', () => {
     expect(result.knowledgeBaseId).toBe(store.activeId)
     expect(note.knowledgeBaseId).toBe(store.activeId)
   })
+
+  it('keeps binary imports intact and previews image data safely', async () => {
+    const store = useLibraryStore()
+    await store.load()
+    const bytes = Uint8Array.from([137, 80, 78, 71, 13, 10])
+    await store.importFile({ name: 'cover.png', type: 'image/png', arrayBuffer: async () => bytes })
+    await store.openPreview('cover.png')
+    expect(store.preview.kind).toBe('image')
+    expect(store.preview.content).toMatch(/^data:image\/png;base64,/)
+  })
 })

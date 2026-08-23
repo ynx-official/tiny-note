@@ -154,6 +154,23 @@ describe('ChatView Agent approval', () => {
     wrapper.unmount()
   })
 
+  it('only enables the send button when a message is ready', async () => {
+    const wrapper = mount(ChatView, {
+      attachTo: window.document.body,
+      global: { plugins: [createPinia()], stubs: { MarkdownMessage: true } }
+    })
+    await flushPromises()
+
+    const sendButton = wrapper.get('.chat-page-send[type="submit"]')
+    expect(sendButton.element.disabled).toBe(true)
+    expect(sendButton.attributes('aria-label')).toBe('发送消息')
+
+    await wrapper.get('textarea').setValue('你好')
+    expect(sendButton.element.disabled).toBe(false)
+    expect(sendButton.classes()).toContain('active')
+    wrapper.unmount()
+  })
+
   it('keeps the tool timeline after the user stops an agent run', async () => {
     const wrapper = await mountPendingApproval()
 

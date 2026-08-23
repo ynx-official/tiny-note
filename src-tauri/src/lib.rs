@@ -1,3 +1,4 @@
+use base64::{engine::general_purpose::STANDARD as BASE64, Engine as _};
 use chrono::Utc;
 use futures_util::StreamExt;
 use rusqlite::{params, Connection, OptionalExtension};
@@ -88,7 +89,7 @@ pub struct AppState {
     cancels: Arc<Mutex<HashMap<String, Arc<AtomicBool>>>>,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct NoteDto {
     pub id: String,
@@ -98,12 +99,14 @@ pub struct NoteDto {
     pub content_html: String,
     pub content_text: String,
     pub content_markdown: String,
+    pub tags: Vec<String>,
+    pub pinned: bool,
     pub deleted_at: Option<String>,
     pub created_at: String,
     pub updated_at: String,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct NotebookDto {
     pub id: String,
@@ -113,7 +116,7 @@ pub struct NotebookDto {
     pub updated_at: String,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct KnowledgeBaseDto {
     pub id: String,
@@ -145,6 +148,57 @@ pub struct PreviewDto {
     pub title: String,
     pub content: String,
     pub mime_type: String,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct NoteLinkDto {
+    pub source_note_id: String,
+    pub target_note_id: String,
+    pub target_title: String,
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone)]
+#[serde(rename_all = "camelCase")]
+pub struct NoteTemplateDto {
+    pub id: String,
+    pub name: String,
+    pub description: String,
+    pub title: String,
+    pub content_markdown: String,
+    pub builtin: bool,
+    pub updated_at: String,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct BackupFileDto {
+    pub knowledge_base_id: String,
+    pub relative_path: String,
+    pub content_base64: String,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct WorkspaceBackupDto {
+    pub format: String,
+    pub version: u32,
+    pub exported_at: String,
+    pub notebooks: Vec<NotebookDto>,
+    pub notes: Vec<NoteDto>,
+    pub knowledge_bases: Vec<KnowledgeBaseDto>,
+    pub files: Vec<BackupFileDto>,
+    pub templates: Vec<NoteTemplateDto>,
+    pub links: Vec<NoteLinkDto>,
+    pub settings: SettingsDto,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct WorkspaceImportRequest {
+    pub backup: WorkspaceBackupDto,
+    #[serde(default)]
+    pub replace_existing: bool,
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
@@ -296,6 +350,10 @@ pub struct CreateNote {
     pub content_html: Option<String>,
     pub content_text: Option<String>,
     pub content_markdown: Option<String>,
+    #[serde(default)]
+    pub tags: Vec<String>,
+    #[serde(default)]
+    pub pinned: bool,
 }
 
 #[derive(Debug, Deserialize)]
@@ -307,6 +365,10 @@ pub struct UpdateNote {
     pub content_html: String,
     pub content_text: String,
     pub content_markdown: String,
+    #[serde(default)]
+    pub tags: Vec<String>,
+    #[serde(default)]
+    pub pinned: bool,
 }
 
 #[derive(Debug, Deserialize)]
@@ -400,7 +462,7 @@ fn now() -> String {
 fn init_database(conn: &Connection) -> Result<(), AppError> {
     conn.execute_batch("PRAGMA foreign_keys = ON;
       CREATE TABLE IF NOT EXISTS notebooks (id TEXT PRIMARY KEY, name TEXT NOT NULL, description TEXT NOT NULL DEFAULT '', created_at TEXT NOT NULL, updated_at TEXT NOT NULL);
-      CREATE TABLE IF NOT EXISTS notes (id TEXT PRIMARY KEY, notebook_id TEXT REFERENCES notebooks(id) ON DELETE SET NULL, title TEXT NOT NULL, content_html TEXT NOT NULL, content_text TEXT NOT NULL, content_markdown TEXT NOT NULL DEFAULT '', deleted_at TEXT, created_at TEXT NOT NULL, updated_at TEXT NOT NULL);
+      CREATE TABLE IF NOT EXISTS notes (id TEXT PRIMARY KEY, notebook_id TEXT REFERENCES notebooks(id) ON DELETE SET NULL, title TEXT NOT NULL, content_html TEXT NOT NULL, content_text TEXT NOT NULL, content_markdown TEXT NOT NULL DEFAULT '', tags_json TEXT NOT NULL DEFAULT '[]', is_pinned INTEGER NOT NULL DEFAULT 0, deleted_at TEXT, created_at TEXT NOT NULL, updated_at TEXT NOT NULL);
       CREATE INDEX IF NOT EXISTS idx_notes_deleted_updated ON notes(deleted_at, updated_at);
       CREATE TABLE IF NOT EXISTS knowledge_bases (id TEXT PRIMARY KEY, category TEXT NOT NULL CHECK(category IN ('personal','local')), name TEXT NOT NULL, description TEXT NOT NULL DEFAULT '', cover TEXT, root_path TEXT NOT NULL, created_at TEXT NOT NULL, updated_at TEXT NOT NULL);
       CREATE TABLE IF NOT EXISTS model_profiles (id TEXT PRIMARY KEY, name TEXT NOT NULL, provider TEXT NOT NULL, base_url TEXT NOT NULL, model TEXT NOT NULL, api_key TEXT NOT NULL DEFAULT '', is_default INTEGER NOT NULL DEFAULT 0);
@@ -497,6 +559,74 @@ fn init_database(conn: &Connection) -> Result<(), AppError> {
             [],
         )
         .map_err(AppError::db)?;
+    }
+    for (column, definition) in [
+        ("tags_json", "TEXT NOT NULL DEFAULT '[]'"),
+        ("is_pinned", "INTEGER NOT NULL DEFAULT 0"),
+    ] {
+        if !note_columns.iter().any(|existing| existing == column) {
+            conn.execute(
+                &format!("ALTER TABLE notes ADD COLUMN {} {}", column, definition),
+                [],
+            )
+            .map_err(AppError::db)?;
+        }
+    }
+    conn.execute_batch(
+        "CREATE INDEX IF NOT EXISTS idx_notes_pinned_updated ON notes(is_pinned, updated_at DESC);
+         CREATE TABLE IF NOT EXISTS note_templates (
+           id TEXT PRIMARY KEY, name TEXT NOT NULL, description TEXT NOT NULL DEFAULT '',
+           title TEXT NOT NULL, content_markdown TEXT NOT NULL, builtin INTEGER NOT NULL DEFAULT 0,
+           updated_at TEXT NOT NULL
+         );
+         CREATE TABLE IF NOT EXISTS note_links (
+           source_note_id TEXT NOT NULL REFERENCES notes(id) ON DELETE CASCADE,
+           target_note_id TEXT NOT NULL REFERENCES notes(id) ON DELETE CASCADE,
+           created_at TEXT NOT NULL,
+           PRIMARY KEY(source_note_id, target_note_id)
+         );
+         CREATE INDEX IF NOT EXISTS idx_note_links_target ON note_links(target_note_id);",
+    )
+    .map_err(AppError::db)?;
+    let template_count: i64 = conn
+        .query_row(
+            "SELECT COUNT(*) FROM note_templates WHERE builtin=1",
+            [],
+            |row| row.get(0),
+        )
+        .map_err(AppError::db)?;
+    if template_count == 0 {
+        let timestamp = now();
+        let builtin_templates = [
+            (
+                "daily",
+                "每日记录",
+                "记录当天的重点、进展和复盘",
+                "每日记录",
+                "# 今日重点\n\n## 计划\n\n## 进展\n\n## 复盘\n",
+            ),
+            (
+                "meeting",
+                "会议纪要",
+                "快速整理会议背景、结论和行动项",
+                "会议纪要",
+                "# 会议纪要\n\n## 参与者\n\n## 讨论\n\n## 结论\n\n## 行动项\n- [ ] \n",
+            ),
+            (
+                "project",
+                "项目计划",
+                "拆解项目目标、里程碑和风险",
+                "项目计划",
+                "# 项目计划\n\n## 目标\n\n## 里程碑\n\n## 风险\n\n## 下一步\n",
+            ),
+        ];
+        for (id, name, description, title, content_markdown) in builtin_templates {
+            conn.execute(
+                "INSERT OR IGNORE INTO note_templates(id,name,description,title,content_markdown,builtin,updated_at) VALUES(?1,?2,?3,?4,?5,1,?6)",
+                params![id, name, description, title, content_markdown, timestamp],
+            )
+            .map_err(AppError::db)?;
+        }
     }
     conn.execute(
         "CREATE INDEX IF NOT EXISTS idx_notes_knowledge_base ON notes(knowledge_base_id, deleted_at, updated_at)",
@@ -693,6 +823,8 @@ fn ensure_memory_files(state: &AppState) -> Result<PathBuf, AppError> {
 }
 
 fn note_from_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<NoteDto> {
+    let tags_json: String = row.get(7)?;
+    let tags = serde_json::from_str(&tags_json).unwrap_or_default();
     Ok(NoteDto {
         id: row.get(0)?,
         notebook_id: row.get(1)?,
@@ -701,10 +833,84 @@ fn note_from_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<NoteDto> {
         content_html: row.get(4)?,
         content_text: row.get(5)?,
         content_markdown: row.get(6)?,
-        deleted_at: row.get(7)?,
-        created_at: row.get(8)?,
-        updated_at: row.get(9)?,
+        tags,
+        pinned: row.get::<_, i64>(8)? != 0,
+        deleted_at: row.get(9)?,
+        created_at: row.get(10)?,
+        updated_at: row.get(11)?,
     })
+}
+
+pub(crate) fn normalize_tags(tags: &[String]) -> Vec<String> {
+    let mut normalized = tags
+        .iter()
+        .map(|tag| tag.trim().trim_start_matches('#').to_lowercase())
+        .filter(|tag| !tag.is_empty())
+        .collect::<Vec<_>>();
+    normalized.sort();
+    normalized.dedup();
+    normalized.into_iter().take(32).collect()
+}
+
+fn sync_note_links(conn: &Connection, source_note_id: &str) -> Result<(), AppError> {
+    conn.execute(
+        "DELETE FROM note_links WHERE source_note_id=?1",
+        params![source_note_id],
+    )
+    .map_err(AppError::db)?;
+    let markdown: String = conn
+        .query_row(
+            "SELECT content_markdown FROM notes WHERE id=?1",
+            params![source_note_id],
+            |row| row.get(0),
+        )
+        .optional()
+        .map_err(AppError::db)?
+        .unwrap_or_default();
+    let mut cursor = 0;
+    while let Some(start_offset) = markdown[cursor..].find("[[") {
+        let start = cursor + start_offset + 2;
+        let Some(end_offset) = markdown[start..].find("]]") else {
+            break;
+        };
+        let end = start + end_offset;
+        let target_title = markdown[start..end].trim();
+        if !target_title.is_empty() {
+            if let Some(target_id) = conn
+                .query_row(
+                    "SELECT id FROM notes WHERE deleted_at IS NULL AND lower(title)=lower(?1) AND id<>?2 ORDER BY updated_at DESC LIMIT 1",
+                    params![target_title, source_note_id],
+                    |row| row.get::<_, String>(0),
+                )
+                .optional()
+                .map_err(AppError::db)?
+            {
+                conn.execute(
+                    "INSERT OR IGNORE INTO note_links(source_note_id,target_note_id,created_at) VALUES(?1,?2,?3)",
+                    params![source_note_id, target_id, now()],
+                )
+                .map_err(AppError::db)?;
+            }
+        }
+        cursor = end + 2;
+    }
+    Ok(())
+}
+
+fn rebuild_note_links(conn: &Connection) -> Result<(), AppError> {
+    conn.execute("DELETE FROM note_links", [])
+        .map_err(AppError::db)?;
+    let ids = conn
+        .prepare("SELECT id FROM notes WHERE deleted_at IS NULL")
+        .map_err(AppError::db)?
+        .query_map([], |row| row.get::<_, String>(0))
+        .map_err(AppError::db)?
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(AppError::db)?;
+    for id in ids {
+        sync_note_links(conn, &id)?;
+    }
+    Ok(())
 }
 
 pub mod commands {
@@ -918,21 +1124,34 @@ pub mod commands {
         search: Option<String>,
         deleted: bool,
         knowledge_base_id: Option<String>,
+        tag: Option<String>,
+        pinned: Option<bool>,
     ) -> Result<Vec<NoteDto>, AppError> {
         let conn = state
             .db
             .lock()
             .map_err(|_| AppError::db("database lock poisoned"))?;
         let pattern = format!("%{}%", search.unwrap_or_default());
+        let tag_pattern = tag
+            .filter(|value| !value.trim().is_empty())
+            .map(|value| format!("%\"{}\"%", value.trim().to_lowercase()));
         let sql = if deleted {
-            "SELECT id,notebook_id,knowledge_base_id,title,content_html,content_text,content_markdown,deleted_at,created_at,updated_at FROM notes WHERE deleted_at IS NOT NULL AND (?2 IS NULL OR knowledge_base_id=?2) AND (title LIKE ?1 OR content_text LIKE ?1) ORDER BY updated_at DESC"
+            "SELECT id,notebook_id,knowledge_base_id,title,content_html,content_text,content_markdown,tags_json,is_pinned,deleted_at,created_at,updated_at FROM notes WHERE deleted_at IS NOT NULL AND (?2 IS NULL OR knowledge_base_id=?2) AND (?3 IS NULL OR lower(tags_json) LIKE ?3) AND (?4 IS NULL OR is_pinned=?4) AND (title LIKE ?1 OR content_text LIKE ?1) ORDER BY is_pinned DESC,updated_at DESC"
         } else {
-            "SELECT id,notebook_id,knowledge_base_id,title,content_html,content_text,content_markdown,deleted_at,created_at,updated_at FROM notes WHERE deleted_at IS NULL AND (?2 IS NULL OR knowledge_base_id=?2) AND (title LIKE ?1 OR content_text LIKE ?1) ORDER BY updated_at DESC"
+            "SELECT id,notebook_id,knowledge_base_id,title,content_html,content_text,content_markdown,tags_json,is_pinned,deleted_at,created_at,updated_at FROM notes WHERE deleted_at IS NULL AND (?2 IS NULL OR knowledge_base_id=?2) AND (?3 IS NULL OR lower(tags_json) LIKE ?3) AND (?4 IS NULL OR is_pinned=?4) AND (title LIKE ?1 OR content_text LIKE ?1) ORDER BY is_pinned DESC,updated_at DESC"
         };
         let result = conn
             .prepare(sql)
             .map_err(AppError::db)?
-            .query_map(params![pattern, knowledge_base_id], note_from_row)
+            .query_map(
+                params![
+                    pattern,
+                    knowledge_base_id,
+                    tag_pattern,
+                    pinned.map(|value| value as i64)
+                ],
+                note_from_row,
+            )
             .map_err(AppError::db)?
             .collect::<Result<Vec<_>, _>>()
             .map_err(AppError::db);
@@ -945,7 +1164,522 @@ pub mod commands {
             .db
             .lock()
             .map_err(|_| AppError::db("database lock poisoned"))?;
-        conn.query_row("SELECT id,notebook_id,knowledge_base_id,title,content_html,content_text,content_markdown,deleted_at,created_at,updated_at FROM notes WHERE id=?1", params![id], note_from_row).optional().map_err(AppError::db)?.ok_or_else(|| AppError::not_found("note_not_found", "Note not found"))
+        conn.query_row("SELECT id,notebook_id,knowledge_base_id,title,content_html,content_text,content_markdown,tags_json,is_pinned,deleted_at,created_at,updated_at FROM notes WHERE id=?1", params![id], note_from_row).optional().map_err(AppError::db)?.ok_or_else(|| AppError::not_found("note_not_found", "Note not found"))
+    }
+
+    #[tauri::command]
+    pub fn note_set_pinned(
+        state: State<'_, AppState>,
+        id: String,
+        pinned: bool,
+    ) -> Result<NoteDto, AppError> {
+        let conn = state
+            .db
+            .lock()
+            .map_err(|_| AppError::db("database lock poisoned"))?;
+        let changed = conn
+            .execute(
+                "UPDATE notes SET is_pinned=?2,updated_at=?3 WHERE id=?1 AND deleted_at IS NULL",
+                params![id, pinned as i64, now()],
+            )
+            .map_err(AppError::db)?;
+        if changed == 0 {
+            return Err(AppError::not_found("note_not_found", "Note not found"));
+        }
+        drop(conn);
+        note_get(state, id)
+    }
+
+    #[tauri::command]
+    pub fn note_link_list(
+        state: State<'_, AppState>,
+        note_id: String,
+    ) -> Result<Vec<NoteLinkDto>, AppError> {
+        let conn = state
+            .db
+            .lock()
+            .map_err(|_| AppError::db("database lock poisoned"))?;
+        let result = conn
+            .prepare(
+                "SELECT l.source_note_id,l.target_note_id,n.title
+             FROM note_links l JOIN notes n ON n.id=l.target_note_id
+             WHERE l.source_note_id=?1
+             UNION
+             SELECT l.source_note_id,l.target_note_id,n.title
+             FROM note_links l JOIN notes n ON n.id=l.source_note_id
+             WHERE l.target_note_id=?1
+             ORDER BY 3",
+            )
+            .map_err(AppError::db)?
+            .query_map(params![note_id], |row| {
+                Ok(NoteLinkDto {
+                    source_note_id: row.get(0)?,
+                    target_note_id: row.get(1)?,
+                    target_title: row.get(2)?,
+                })
+            })
+            .map_err(AppError::db)?
+            .collect::<Result<Vec<_>, _>>()
+            .map_err(AppError::db);
+        result
+    }
+
+    #[tauri::command]
+    pub fn note_template_list(
+        state: State<'_, AppState>,
+    ) -> Result<Vec<NoteTemplateDto>, AppError> {
+        let conn = state
+            .db
+            .lock()
+            .map_err(|_| AppError::db("database lock poisoned"))?;
+        let result = conn
+            .prepare(
+                "SELECT id,name,description,title,content_markdown,builtin,updated_at
+             FROM note_templates ORDER BY builtin DESC,name",
+            )
+            .map_err(AppError::db)?
+            .query_map([], |row| {
+                Ok(NoteTemplateDto {
+                    id: row.get(0)?,
+                    name: row.get(1)?,
+                    description: row.get(2)?,
+                    title: row.get(3)?,
+                    content_markdown: row.get(4)?,
+                    builtin: row.get::<_, i64>(5)? != 0,
+                    updated_at: row.get(6)?,
+                })
+            })
+            .map_err(AppError::db)?
+            .collect::<Result<Vec<_>, _>>()
+            .map_err(AppError::db);
+        result
+    }
+
+    #[tauri::command]
+    pub fn note_template_upsert(
+        state: State<'_, AppState>,
+        template: NoteTemplateDto,
+    ) -> Result<NoteTemplateDto, AppError> {
+        if template.name.trim().is_empty() || template.content_markdown.len() > 512 * 1024 {
+            return Err(AppError::invalid("invalid_template", "Template is invalid"));
+        }
+        let id = if template.id.trim().is_empty() {
+            Uuid::new_v4().to_string()
+        } else {
+            template.id
+        };
+        let timestamp = now();
+        let conn = state
+            .db
+            .lock()
+            .map_err(|_| AppError::db("database lock poisoned"))?;
+        conn.execute(
+            "INSERT INTO note_templates(id,name,description,title,content_markdown,builtin,updated_at)
+             VALUES(?1,?2,?3,?4,?5,0,?6)
+             ON CONFLICT(id) DO UPDATE SET name=excluded.name,description=excluded.description,
+             title=excluded.title,content_markdown=excluded.content_markdown,updated_at=excluded.updated_at
+             WHERE note_templates.builtin=0",
+            params![
+                id,
+                template.name.trim(),
+                template.description,
+                template.title,
+                template.content_markdown,
+                timestamp
+            ],
+        )
+        .map_err(AppError::db)?;
+        drop(conn);
+        note_template_list(state)?
+            .into_iter()
+            .find(|item| item.id == id)
+            .ok_or_else(|| AppError::not_found("template_not_found", "Template not found"))
+    }
+
+    #[tauri::command]
+    pub fn note_template_delete(state: State<'_, AppState>, id: String) -> Result<(), AppError> {
+        let conn = state
+            .db
+            .lock()
+            .map_err(|_| AppError::db("database lock poisoned"))?;
+        conn.execute(
+            "DELETE FROM note_templates WHERE id=?1 AND builtin=0",
+            params![id],
+        )
+        .map_err(AppError::db)?;
+        Ok(())
+    }
+
+    #[tauri::command]
+    pub fn workspace_export(state: State<'_, AppState>) -> Result<WorkspaceBackupDto, AppError> {
+        let conn = state
+            .db
+            .lock()
+            .map_err(|_| AppError::db("database lock poisoned"))?;
+        let notes = conn
+            .prepare("SELECT id,notebook_id,knowledge_base_id,title,content_html,content_text,content_markdown,tags_json,is_pinned,deleted_at,created_at,updated_at FROM notes ORDER BY created_at")
+            .map_err(AppError::db)?
+            .query_map([], note_from_row)
+            .map_err(AppError::db)?
+            .collect::<Result<Vec<_>, _>>()
+            .map_err(AppError::db)?;
+        let notebooks = conn
+            .prepare("SELECT id,name,description,created_at,updated_at FROM notebooks ORDER BY created_at")
+            .map_err(AppError::db)?
+            .query_map([], |row| {
+                Ok(NotebookDto {
+                    id: row.get(0)?,
+                    name: row.get(1)?,
+                    description: row.get(2)?,
+                    created_at: row.get(3)?,
+                    updated_at: row.get(4)?,
+                })
+            })
+            .map_err(AppError::db)?
+            .collect::<Result<Vec<_>, _>>()
+            .map_err(AppError::db)?;
+        let knowledge_bases = conn
+            .prepare("SELECT id,category,name,description,cover,root_path,created_at,updated_at FROM knowledge_bases ORDER BY created_at")
+            .map_err(AppError::db)?
+            .query_map([], |row| {
+                Ok(KnowledgeBaseDto {
+                    id: row.get(0)?,
+                    category: row.get(1)?,
+                    name: row.get(2)?,
+                    description: row.get(3)?,
+                    cover: row.get(4)?,
+                    root_path: row.get(5)?,
+                    created_at: row.get(6)?,
+                    updated_at: row.get(7)?,
+                })
+            })
+            .map_err(AppError::db)?
+            .collect::<Result<Vec<_>, _>>()
+            .map_err(AppError::db)?;
+        let templates = conn
+            .prepare("SELECT id,name,description,title,content_markdown,builtin,updated_at FROM note_templates ORDER BY name")
+            .map_err(AppError::db)?
+            .query_map([], |row| {
+                Ok(NoteTemplateDto {
+                    id: row.get(0)?,
+                    name: row.get(1)?,
+                    description: row.get(2)?,
+                    title: row.get(3)?,
+                    content_markdown: row.get(4)?,
+                    builtin: row.get::<_, i64>(5)? != 0,
+                    updated_at: row.get(6)?,
+                })
+            })
+            .map_err(AppError::db)?
+            .collect::<Result<Vec<_>, _>>()
+            .map_err(AppError::db)?;
+        let links = conn
+            .prepare(
+                "SELECT l.source_note_id,l.target_note_id,n.title
+                 FROM note_links l JOIN notes n ON n.id=l.target_note_id ORDER BY l.created_at",
+            )
+            .map_err(AppError::db)?
+            .query_map([], |row| {
+                Ok(NoteLinkDto {
+                    source_note_id: row.get(0)?,
+                    target_note_id: row.get(1)?,
+                    target_title: row.get(2)?,
+                })
+            })
+            .map_err(AppError::db)?
+            .collect::<Result<Vec<_>, _>>()
+            .map_err(AppError::db)?;
+        let settings = SettingsDto {
+            theme: conn
+                .query_row("SELECT value FROM settings WHERE key='theme'", [], |row| {
+                    row.get(0)
+                })
+                .unwrap_or_else(|_| "system".into()),
+            language: conn
+                .query_row(
+                    "SELECT value FROM settings WHERE key='language'",
+                    [],
+                    |row| row.get(0),
+                )
+                .unwrap_or_else(|_| "zh-CN".into()),
+            fim_enabled: conn
+                .query_row(
+                    "SELECT value FROM settings WHERE key='fimEnabled'",
+                    [],
+                    |row| row.get::<_, String>(0),
+                )
+                .map(|value| value == "true")
+                .unwrap_or(false),
+        };
+        drop(conn);
+
+        let mut files = Vec::new();
+        for knowledge_base in &knowledge_bases {
+            let root = PathBuf::from(&knowledge_base.root_path);
+            if !root.exists() {
+                continue;
+            }
+            for entry in WalkDir::new(&root)
+                .follow_links(false)
+                .into_iter()
+                .filter_map(Result::ok)
+            {
+                if !entry.file_type().is_file()
+                    || entry.file_name().to_string_lossy() == ".tiny-note.json"
+                {
+                    continue;
+                }
+                let relative_path = entry
+                    .path()
+                    .strip_prefix(&root)
+                    .unwrap_or(entry.path())
+                    .to_string_lossy()
+                    .replace('\\', "/");
+                let content = fs::read(entry.path()).map_err(AppError::fs)?;
+                files.push(BackupFileDto {
+                    knowledge_base_id: knowledge_base.id.clone(),
+                    relative_path,
+                    content_base64: BASE64.encode(content),
+                });
+            }
+        }
+        Ok(WorkspaceBackupDto {
+            format: "tiny-note-workspace".into(),
+            version: 1,
+            exported_at: now(),
+            notebooks,
+            notes,
+            knowledge_bases,
+            files,
+            templates,
+            links,
+            settings,
+        })
+    }
+
+    #[tauri::command]
+    pub fn workspace_import(
+        state: State<'_, AppState>,
+        request: WorkspaceImportRequest,
+    ) -> Result<(), AppError> {
+        if request.backup.format != "tiny-note-workspace" || request.backup.version != 1 {
+            return Err(AppError::invalid(
+                "unsupported_backup",
+                "Unsupported Tiny Note backup",
+            ));
+        }
+        if !request.replace_existing {
+            return Err(AppError::invalid(
+                "replace_confirmation_required",
+                "Restoring a workspace requires explicit replacement confirmation",
+            ));
+        }
+        let knowledge_root = state.data_dir.join("knowledge");
+        for knowledge_base in &request.backup.knowledge_bases {
+            if !matches!(knowledge_base.category.as_str(), "personal" | "local") {
+                return Err(AppError::invalid(
+                    "invalid_backup_category",
+                    "Invalid knowledge base category",
+                ));
+            }
+        }
+        for file in &request.backup.files {
+            let Some(knowledge_base) = request
+                .backup
+                .knowledge_bases
+                .iter()
+                .find(|item| item.id == file.knowledge_base_id)
+            else {
+                return Err(AppError::invalid(
+                    "invalid_backup_file",
+                    "Backup file references an unknown knowledge base",
+                ));
+            };
+            if file.relative_path.trim().is_empty()
+                || Path::new(&file.relative_path)
+                    .file_name()
+                    .and_then(|name| name.to_str())
+                    == Some(".tiny-note.json")
+            {
+                return Err(AppError::invalid(
+                    "invalid_backup_file",
+                    "Backup file path is invalid",
+                ));
+            }
+            let root = knowledge_root
+                .join(&knowledge_base.category)
+                .join(&knowledge_base.id);
+            safe_path(&root, &file.relative_path)?;
+            BASE64.decode(&file.content_base64).map_err(|_| {
+                AppError::invalid("invalid_backup_file", "Invalid backup file data")
+            })?;
+        }
+        for note in &request.backup.notes {
+            if note
+                .notebook_id
+                .as_ref()
+                .is_some_and(|id| !request.backup.notebooks.iter().any(|item| &item.id == id))
+                || note.knowledge_base_id.as_ref().is_some_and(|id| {
+                    !request
+                        .backup
+                        .knowledge_bases
+                        .iter()
+                        .any(|item| &item.id == id)
+                })
+            {
+                return Err(AppError::invalid(
+                    "invalid_backup_reference",
+                    "Backup note references unknown metadata",
+                ));
+            }
+        }
+        for link in &request.backup.links {
+            if !request
+                .backup
+                .notes
+                .iter()
+                .any(|note| note.id == link.source_note_id)
+                || !request
+                    .backup
+                    .notes
+                    .iter()
+                    .any(|note| note.id == link.target_note_id)
+            {
+                return Err(AppError::invalid(
+                    "invalid_backup_link",
+                    "Backup link references an unknown note",
+                ));
+            }
+        }
+        if knowledge_root.exists() {
+            fs::remove_dir_all(&knowledge_root).map_err(AppError::fs)?;
+        }
+        fs::create_dir_all(&knowledge_root).map_err(AppError::fs)?;
+        let mut conn = state
+            .db
+            .lock()
+            .map_err(|_| AppError::db("database lock poisoned"))?;
+        let transaction = conn.transaction().map_err(AppError::db)?;
+        transaction
+            .execute("DELETE FROM note_links", [])
+            .map_err(AppError::db)?;
+        transaction
+            .execute("DELETE FROM notes", [])
+            .map_err(AppError::db)?;
+        transaction
+            .execute("DELETE FROM knowledge_bases", [])
+            .map_err(AppError::db)?;
+        transaction
+            .execute("DELETE FROM notebooks", [])
+            .map_err(AppError::db)?;
+        transaction
+            .execute("DELETE FROM note_templates WHERE builtin=0", [])
+            .map_err(AppError::db)?;
+        transaction
+            .execute("DELETE FROM settings", [])
+            .map_err(AppError::db)?;
+        for notebook in &request.backup.notebooks {
+            transaction
+                .execute(
+                    "INSERT INTO notebooks(id,name,description,created_at,updated_at) VALUES(?1,?2,?3,?4,?5)",
+                    params![notebook.id, notebook.name, notebook.description, notebook.created_at, notebook.updated_at],
+                )
+                .map_err(AppError::db)?;
+        }
+        for knowledge_base in &request.backup.knowledge_bases {
+            if !matches!(knowledge_base.category.as_str(), "personal" | "local") {
+                return Err(AppError::invalid(
+                    "invalid_backup_category",
+                    "Invalid knowledge base category",
+                ));
+            }
+            let root = knowledge_root
+                .join(&knowledge_base.category)
+                .join(&knowledge_base.id);
+            fs::create_dir_all(&root).map_err(AppError::fs)?;
+            fs::write(
+                root.join(".tiny-note.json"),
+                format!(
+                    "{{\"id\":\"{}\",\"category\":\"{}\"}}",
+                    knowledge_base.id, knowledge_base.category
+                ),
+            )
+            .map_err(AppError::fs)?;
+            transaction
+                .execute(
+                    "INSERT INTO knowledge_bases(id,category,name,description,cover,root_path,created_at,updated_at) VALUES(?1,?2,?3,?4,?5,?6,?7,?8)",
+                    params![knowledge_base.id, knowledge_base.category, knowledge_base.name, knowledge_base.description, knowledge_base.cover, root.to_string_lossy(), knowledge_base.created_at, knowledge_base.updated_at],
+                )
+                .map_err(AppError::db)?;
+        }
+        for note in &request.backup.notes {
+            let tags_json =
+                serde_json::to_string(&normalize_tags(&note.tags)).map_err(AppError::db)?;
+            transaction
+                .execute(
+                    "INSERT INTO notes(id,notebook_id,knowledge_base_id,title,content_html,content_text,content_markdown,tags_json,is_pinned,deleted_at,created_at,updated_at) VALUES(?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12)",
+                    params![note.id, note.notebook_id, note.knowledge_base_id, note.title, note.content_html, note.content_text, note.content_markdown, tags_json, note.pinned as i64, note.deleted_at, note.created_at, note.updated_at],
+                )
+                .map_err(AppError::db)?;
+        }
+        for template in &request.backup.templates {
+            if !template.builtin {
+                transaction
+                    .execute(
+                        "INSERT OR REPLACE INTO note_templates(id,name,description,title,content_markdown,builtin,updated_at) VALUES(?1,?2,?3,?4,?5,0,?6)",
+                        params![template.id, template.name, template.description, template.title, template.content_markdown, template.updated_at],
+                    )
+                    .map_err(AppError::db)?;
+            }
+        }
+        for setting in [
+            ("theme", request.backup.settings.theme.clone()),
+            ("language", request.backup.settings.language.clone()),
+            (
+                "fimEnabled",
+                request.backup.settings.fim_enabled.to_string(),
+            ),
+        ] {
+            transaction
+                .execute(
+                    "INSERT INTO settings(key,value) VALUES(?1,?2)",
+                    params![setting.0, setting.1],
+                )
+                .map_err(AppError::db)?;
+        }
+        for link in &request.backup.links {
+            transaction
+                .execute(
+                    "INSERT OR IGNORE INTO note_links(source_note_id,target_note_id,created_at) VALUES(?1,?2,?3)",
+                    params![link.source_note_id, link.target_note_id, now()],
+                )
+                .map_err(AppError::db)?;
+        }
+        transaction.commit().map_err(AppError::db)?;
+        drop(conn);
+        for file in &request.backup.files {
+            let Some(knowledge_base) = request
+                .backup
+                .knowledge_bases
+                .iter()
+                .find(|item| item.id == file.knowledge_base_id)
+            else {
+                continue;
+            };
+            let root = knowledge_root
+                .join(&knowledge_base.category)
+                .join(&knowledge_base.id);
+            let path = commands::safe_path(&root, &file.relative_path)?;
+            if let Some(parent) = path.parent() {
+                fs::create_dir_all(parent).map_err(AppError::fs)?;
+            }
+            let content = BASE64.decode(&file.content_base64).map_err(|_| {
+                AppError::invalid("invalid_backup_file", "Invalid backup file data")
+            })?;
+            fs::write(path, content).map_err(AppError::fs)?;
+        }
+        search::rebuild_all(&state)?;
+        Ok(())
     }
 
     #[tauri::command]
@@ -960,7 +1694,10 @@ pub mod commands {
             .db
             .lock()
             .map_err(|_| AppError::db("database lock poisoned"))?;
-        conn.execute("INSERT INTO notes (id,notebook_id,knowledge_base_id,title,content_html,content_text,content_markdown,created_at,updated_at) VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?8)", params![id, input.notebook_id, input.knowledge_base_id, title, html, text, markdown, t]).map_err(AppError::db)?;
+        let tags_json =
+            serde_json::to_string(&normalize_tags(&input.tags)).map_err(AppError::db)?;
+        conn.execute("INSERT INTO notes (id,notebook_id,knowledge_base_id,title,content_html,content_text,content_markdown,tags_json,is_pinned,created_at,updated_at) VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?10)", params![id, input.notebook_id, input.knowledge_base_id, title, html, text, markdown, tags_json, input.pinned as i64, t]).map_err(AppError::db)?;
+        rebuild_note_links(&conn)?;
         search::index_note(&conn, &id)?;
         drop(conn);
         note_get(state, id)
@@ -977,10 +1714,13 @@ pub mod commands {
             .lock()
             .map_err(|_| AppError::db("database lock poisoned"))?;
         let t = now();
-        let changed = conn.execute("UPDATE notes SET notebook_id=?2,knowledge_base_id=?3,title=?4,content_html=?5,content_text=?6,content_markdown=?7,updated_at=?8 WHERE id=?1", params![id, input.notebook_id, input.knowledge_base_id, input.title, input.content_html, input.content_text, input.content_markdown, t]).map_err(AppError::db)?;
+        let tags_json =
+            serde_json::to_string(&normalize_tags(&input.tags)).map_err(AppError::db)?;
+        let changed = conn.execute("UPDATE notes SET notebook_id=?2,knowledge_base_id=?3,title=?4,content_html=?5,content_text=?6,content_markdown=?7,tags_json=?8,is_pinned=?9,updated_at=?10 WHERE id=?1", params![id, input.notebook_id, input.knowledge_base_id, input.title, input.content_html, input.content_text, input.content_markdown, tags_json, input.pinned as i64, t]).map_err(AppError::db)?;
         if changed == 0 {
             return Err(AppError::not_found("note_not_found", "Note not found"));
         }
+        rebuild_note_links(&conn)?;
         search::index_note(&conn, &id)?;
         drop(conn);
         note_get(state, id)
@@ -1001,6 +1741,11 @@ pub mod commands {
         if changed == 0 {
             Err(AppError::not_found("note_not_found", "Note not found"))
         } else {
+            conn.execute(
+                "DELETE FROM note_links WHERE source_note_id=?1 OR target_note_id=?1",
+                params![id],
+            )
+            .map_err(AppError::db)?;
             search::index_note(&conn, &id)?;
             Ok(())
         }
@@ -1020,7 +1765,9 @@ pub mod commands {
             .db
             .lock()
             .map_err(|_| AppError::db("database lock poisoned"))?;
-        conn.execute("INSERT INTO notes (id,notebook_id,knowledge_base_id,title,content_html,content_text,content_markdown,created_at,updated_at) VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?8)", params![new_id, source.notebook_id, source.knowledge_base_id, title, source.content_html, source.content_text, source.content_markdown, t]).map_err(AppError::db)?;
+        let tags_json = serde_json::to_string(&source.tags).map_err(AppError::db)?;
+        conn.execute("INSERT INTO notes (id,notebook_id,knowledge_base_id,title,content_html,content_text,content_markdown,tags_json,is_pinned,created_at,updated_at) VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?10)", params![new_id, source.notebook_id, source.knowledge_base_id, title, source.content_html, source.content_text, source.content_markdown, tags_json, source.pinned as i64, t]).map_err(AppError::db)?;
+        rebuild_note_links(&conn)?;
         search::index_note(&conn, &new_id)?;
         drop(conn);
         note_get(state, new_id)
@@ -1101,6 +1848,7 @@ pub mod commands {
             params![id, now()],
         )
         .map_err(AppError::db)?;
+        rebuild_note_links(&conn)?;
         search::index_note(&conn, &id)?;
         Ok(())
     }
@@ -1523,41 +2271,45 @@ pub mod commands {
         fs::create_dir_all(parent.join(name)).map_err(AppError::fs)
     }
 
-    #[tauri::command]
-    pub fn library_write_file(
-        state: State<'_, AppState>,
-        knowledge_base_id: String,
-        relative_path: String,
-        content: String,
+    fn next_library_path(root: &Path, target: &Path) -> PathBuf {
+        if !target.exists() {
+            return target.to_path_buf();
+        }
+        let parent = target.parent().unwrap_or(root);
+        let stem = target
+            .file_stem()
+            .and_then(|s| s.to_str())
+            .unwrap_or("file");
+        let ext = target
+            .extension()
+            .and_then(|s| s.to_str())
+            .map(|s| format!(".{s}"))
+            .unwrap_or_default();
+        let mut index = 2;
+        loop {
+            let candidate = parent.join(format!("{stem} ({index}){ext}"));
+            if !candidate.exists() {
+                return candidate;
+            }
+            index += 1;
+        }
+    }
+
+    fn write_library_bytes(
+        state: &AppState,
+        knowledge_base_id: &str,
+        relative_path: &str,
+        content: &[u8],
     ) -> Result<LibraryEntryDto, AppError> {
-        let root = kb_root(&state, &knowledge_base_id)?;
-        let target = safe_path(&root, &relative_path)?;
+        let root = kb_root(state, knowledge_base_id)?;
+        let target = safe_path(&root, relative_path)?;
         let parent = target.parent().unwrap_or(&root);
         fs::create_dir_all(parent).map_err(AppError::fs)?;
-        let mut final_path = target.clone();
-        if final_path.exists() {
-            let stem = target
-                .file_stem()
-                .and_then(|s| s.to_str())
-                .unwrap_or("file");
-            let ext = target
-                .extension()
-                .and_then(|s| s.to_str())
-                .map(|s| format!(".{s}"))
-                .unwrap_or_default();
-            let mut index = 2;
-            loop {
-                let candidate = parent.join(format!("{stem} ({index}){ext}"));
-                if !candidate.exists() {
-                    final_path = candidate;
-                    break;
-                }
-                index += 1;
-            }
-        }
-        fs::write(&final_path, content.as_bytes()).map_err(AppError::fs)?;
+        let final_path = next_library_path(&root, &target);
+        fs::write(&final_path, content).map_err(AppError::fs)?;
         let metadata = fs::metadata(&final_path).map_err(AppError::fs)?;
-        let result = LibraryEntryDto {
+        search::index_library_file(state, knowledge_base_id, &root, &final_path)?;
+        Ok(LibraryEntryDto {
             name: final_path
                 .file_name()
                 .and_then(|s| s.to_str())
@@ -1575,10 +2327,90 @@ pub mod commands {
                 .extension()
                 .and_then(|s| s.to_str())
                 .map(str::to_lowercase),
-            index_status: Some("indexed".into()),
-        };
-        search::rebuild_all(&state)?;
-        Ok(result)
+            index_status: Some("pending".into()),
+        })
+    }
+
+    #[tauri::command]
+    pub fn library_write_file(
+        state: State<'_, AppState>,
+        knowledge_base_id: String,
+        relative_path: String,
+        content: String,
+    ) -> Result<LibraryEntryDto, AppError> {
+        write_library_bytes(
+            &state,
+            &knowledge_base_id,
+            &relative_path,
+            content.as_bytes(),
+        )
+    }
+
+    #[tauri::command]
+    pub fn library_write_file_bytes(
+        state: State<'_, AppState>,
+        knowledge_base_id: String,
+        relative_path: String,
+        content: Vec<u8>,
+    ) -> Result<LibraryEntryDto, AppError> {
+        write_library_bytes(&state, &knowledge_base_id, &relative_path, &content)
+    }
+
+    #[tauri::command]
+    pub async fn library_import_url(
+        state: State<'_, AppState>,
+        knowledge_base_id: String,
+        relative_path: Option<String>,
+        url: String,
+    ) -> Result<LibraryEntryDto, AppError> {
+        let parsed = reqwest::Url::parse(url.trim())
+            .map_err(|_| AppError::invalid("invalid_import_url", "URL is invalid"))?;
+        if !matches!(parsed.scheme(), "http" | "https") {
+            return Err(AppError::invalid(
+                "invalid_import_url",
+                "Only HTTP and HTTPS URLs are supported",
+            ));
+        }
+        let response = reqwest::Client::new()
+            .get(parsed.clone())
+            .header(
+                "Accept",
+                "text/plain,text/markdown,text/html,application/json",
+            )
+            .send()
+            .await
+            .map_err(|_| AppError::Operation {
+                code: "url_import_failed".into(),
+                message: "URL import request failed".into(),
+            })?;
+        if !response.status().is_success() {
+            return Err(AppError::Operation {
+                code: "url_import_failed".into(),
+                message: "URL import request was rejected".into(),
+            });
+        }
+        let bytes = response.bytes().await.map_err(|_| AppError::Operation {
+            code: "url_import_failed".into(),
+            message: "URL content could not be read".into(),
+        })?;
+        if bytes.len() > 5 * 1024 * 1024 {
+            return Err(AppError::invalid(
+                "url_import_too_large",
+                "URL content is too large",
+            ));
+        }
+        let name = relative_path.unwrap_or_else(|| {
+            parsed
+                .path_segments()
+                .and_then(|mut segments| segments.next_back())
+                .filter(|value| !value.is_empty())
+                .unwrap_or("imported.md")
+                .split('?')
+                .next()
+                .unwrap_or("imported.md")
+                .to_string()
+        });
+        write_library_bytes(&state, &knowledge_base_id, &name, &bytes)
     }
 
     #[tauri::command]
@@ -1602,8 +2434,14 @@ pub mod commands {
                 .to_string_lossy()
                 .as_ref(),
         )?;
-        fs::rename(path, target).map_err(AppError::fs)?;
-        search::rebuild_all(&state)?;
+        fs::rename(path, &target).map_err(AppError::fs)?;
+        search::reindex_library_path(&state, &knowledge_base_id, &root, &relative_path)?;
+        let new_relative = target
+            .strip_prefix(&root)
+            .unwrap_or(&target)
+            .to_string_lossy()
+            .replace('\\', "/");
+        search::reindex_library_path(&state, &knowledge_base_id, &root, &new_relative)?;
         Ok(())
     }
 
@@ -1616,7 +2454,7 @@ pub mod commands {
         let root = kb_root(&state, &knowledge_base_id)?;
         let path = safe_path(&root, &relative_path)?;
         trash::delete(path).map_err(AppError::fs)?;
-        search::rebuild_all(&state)?;
+        search::reindex_library_path(&state, &knowledge_base_id, &root, &relative_path)?;
         Ok(())
     }
 
@@ -1633,7 +2471,47 @@ pub mod commands {
             .and_then(|x| x.to_str())
             .unwrap_or_default()
             .to_lowercase();
-        let raw_content = fs::read_to_string(&path).map_err(AppError::fs)?;
+        let raw_bytes = fs::read(&path).map_err(AppError::fs)?;
+        let is_image = matches!(
+            ext.as_str(),
+            "png" | "jpg" | "jpeg" | "gif" | "webp" | "svg"
+        );
+        if is_image {
+            let mime = match ext.as_str() {
+                "png" => "image/png",
+                "jpg" | "jpeg" => "image/jpeg",
+                "gif" => "image/gif",
+                "webp" => "image/webp",
+                "svg" => "image/svg+xml",
+                _ => "application/octet-stream",
+            };
+            return Ok(PreviewDto {
+                kind: "image".into(),
+                title: path
+                    .file_name()
+                    .and_then(|x| x.to_str())
+                    .unwrap_or_default()
+                    .into(),
+                content: format!("data:{mime};base64,{}", BASE64.encode(raw_bytes)),
+                mime_type: mime.into(),
+            });
+        }
+        if matches!(ext.as_str(), "pdf" | "epub") {
+            return Ok(PreviewDto {
+                kind: "unsupported".into(),
+                title: path
+                    .file_name()
+                    .and_then(|x| x.to_str())
+                    .unwrap_or_default()
+                    .into(),
+                content: "该文件已保存，但当前版本暂不提供预览和全文索引。".into(),
+                mime_type: "application/octet-stream".into(),
+            });
+        }
+        let raw_content = String::from_utf8(raw_bytes).map_err(|_| AppError::Operation {
+            code: "preview_not_text".into(),
+            message: "This file is not a supported text preview".into(),
+        })?;
         let mut content = raw_content.clone();
         let mut title = path
             .file_name()
@@ -1832,7 +2710,7 @@ pub mod commands {
             .map_err(AppError::db)?;
         transaction.commit().map_err(AppError::db)?;
         search::index_note(&conn, &proposal.note_id)?;
-        conn.query_row("SELECT id,notebook_id,knowledge_base_id,title,content_html,content_text,content_markdown,deleted_at,created_at,updated_at FROM notes WHERE id=?1", params![proposal.note_id], note_from_row).map_err(AppError::db)
+        conn.query_row("SELECT id,notebook_id,knowledge_base_id,title,content_html,content_text,content_markdown,tags_json,is_pinned,deleted_at,created_at,updated_at FROM notes WHERE id=?1", params![proposal.note_id], note_from_row).map_err(AppError::db)
     }
 
     #[tauri::command]
@@ -1895,8 +2773,9 @@ pub mod commands {
         transaction.execute("INSERT INTO note_revisions(id,note_id,title,content_html,content_text,content_markdown,reason,created_at) VALUES(?1,?2,?3,?4,?5,?6,'revision_restore',?7)", params![Uuid::new_v4().to_string(),revision.note_id,current.0,current.1,current.2,current.3,timestamp]).map_err(AppError::db)?;
         transaction.execute("UPDATE notes SET title=?2,content_html=?3,content_text=?4,content_markdown=?5,updated_at=?6 WHERE id=?1", params![revision.note_id,revision.title,revision.content_html,revision.content_text,revision.content_markdown,timestamp]).map_err(AppError::db)?;
         transaction.commit().map_err(AppError::db)?;
+        rebuild_note_links(&conn)?;
         search::index_note(&conn, &revision.note_id)?;
-        conn.query_row("SELECT id,notebook_id,knowledge_base_id,title,content_html,content_text,content_markdown,deleted_at,created_at,updated_at FROM notes WHERE id=?1", params![revision.note_id], note_from_row).map_err(AppError::db)
+        conn.query_row("SELECT id,notebook_id,knowledge_base_id,title,content_html,content_text,content_markdown,tags_json,is_pinned,deleted_at,created_at,updated_at FROM notes WHERE id=?1", params![revision.note_id], note_from_row).map_err(AppError::db)
     }
 
     #[tauri::command]
@@ -3126,6 +4005,13 @@ pub fn run() {
             commands::chat_generate_title,
             commands::note_list,
             commands::note_get,
+            commands::note_set_pinned,
+            commands::note_link_list,
+            commands::note_template_list,
+            commands::note_template_upsert,
+            commands::note_template_delete,
+            commands::workspace_export,
+            commands::workspace_import,
             commands::note_create,
             commands::note_update,
             commands::note_delete,
@@ -3146,6 +4032,8 @@ pub fn run() {
             commands::library_list,
             commands::library_create_folder,
             commands::library_write_file,
+            commands::library_write_file_bytes,
+            commands::library_import_url,
             commands::library_rename,
             commands::library_move_to_trash,
             commands::library_preview,
@@ -3261,6 +4149,18 @@ mod tests {
                 .unwrap();
             assert_eq!(markdown_columns, 1, "missing content_markdown on {table}");
         }
+        for column in ["tags_json", "is_pinned"] {
+            let count: i64 = c
+                .query_row(
+                    &format!(
+                        "SELECT COUNT(*) FROM pragma_table_info('notes') WHERE name='{column}'"
+                    ),
+                    [],
+                    |row| row.get(0),
+                )
+                .unwrap();
+            assert_eq!(count, 1, "missing {column} on notes");
+        }
     }
     #[test]
     fn note_and_revision_rows_preserve_markdown_alongside_html_and_text() {
@@ -3274,7 +4174,7 @@ mod tests {
         .unwrap();
         let note = c
             .query_row(
-                "SELECT id,notebook_id,knowledge_base_id,title,content_html,content_text,content_markdown,deleted_at,created_at,updated_at FROM notes WHERE id='markdown-note'",
+                "SELECT id,notebook_id,knowledge_base_id,title,content_html,content_text,content_markdown,tags_json,is_pinned,deleted_at,created_at,updated_at FROM notes WHERE id='markdown-note'",
                 [],
                 note_from_row,
             )
@@ -3282,6 +4182,8 @@ mod tests {
         assert_eq!(note.content_html, "<h1>指南</h1>");
         assert_eq!(note.content_text, "指南");
         assert_eq!(note.content_markdown, "# 指南");
+        assert_eq!(note.tags, Vec::<String>::new());
+        assert!(!note.pinned);
 
         c.execute(
             "INSERT INTO note_revisions(id,note_id,title,content_html,content_text,content_markdown,reason,created_at) VALUES('revision-1','markdown-note','指南','<p>旧版</p>','旧版','旧版源码','ai_edit',?1)",
@@ -3298,6 +4200,31 @@ mod tests {
         assert_eq!(revision.content_html, "<p>旧版</p>");
         assert_eq!(revision.content_text, "旧版");
         assert_eq!(revision.content_markdown, "旧版源码");
+    }
+    #[test]
+    fn note_links_and_builtin_templates_are_created_by_migration() {
+        let c = Connection::open_in_memory().unwrap();
+        init_database(&c).unwrap();
+        let templates: i64 = c
+            .query_row(
+                "SELECT COUNT(*) FROM note_templates WHERE builtin=1",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        let links_table: i64 = c
+            .query_row(
+                "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='note_links'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(templates, 3);
+        assert_eq!(links_table, 1);
+        assert_eq!(
+            normalize_tags(&["#项目".into(), " 项目 ".into(), "".into()]),
+            vec!["项目"]
+        );
     }
     #[test]
     fn migration_creates_usage_records() {

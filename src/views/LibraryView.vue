@@ -5,7 +5,7 @@ import { useRouter } from 'vue-router'
 import {
   Folder, File, FileText, Plus, Search, Grid2X2, List, Upload, Trash2, Eye, ChevronLeft,
   ChevronRight, SlidersHorizontal, PanelLeftClose, PanelLeftOpen, Pencil,
-  FolderOpen, X, ArrowDownAZ, HardDrive, Clock3
+  FolderOpen, X, ArrowDownAZ, HardDrive, Clock3, Link2
 } from 'lucide-vue-next'
 import { useLibraryStore } from '../stores/library'
 import { useNotesStore } from '../stores/notes'
@@ -61,6 +61,16 @@ async function importList(files) {
   } finally {
     importing.value = false
     dropActive.value = false
+  }
+}
+async function importUrl() {
+  if (!store.activeId) return
+  const url = window.prompt('输入网页或文件 URL')
+  if (!url?.trim()) return
+  try {
+    await store.importUrl(url.trim())
+  } catch (error) {
+    window.alert(error?.message || '网页导入失败，请重试')
   }
 }
 async function handleDrop(event) {
@@ -142,6 +152,7 @@ function openNote(note) { router.push({ path: '/notes', query: { note: note.id }
           </div>
           <button class="icon-button" title="新建文件夹" @click="folder"><Plus :size="18" /></button>
           <button class="icon-button" :class="{ pressed: importing }" :disabled="importing" :title="t('importFiles')" @click="importInput?.click()"><Upload :size="18" /></button>
+          <button class="icon-button" title="导入网页或 URL" @click="importUrl"><Link2 :size="17" /></button>
           <input ref="importInput" type="file" multiple hidden accept=".pdf,.epub,.md,.markdown,.html,.htm,.txt,.json,.xml,.note" @change="importFiles" />
         </div>
       </div>
@@ -166,7 +177,9 @@ function openNote(note) { router.push({ path: '/notes', query: { note: note.id }
 
     <div v-if="store.preview" class="preview-drawer">
       <div class="preview-head"><div><strong>{{ store.preview.title }}</strong><small>{{ store.preview.kind }}</small></div><button class="icon-button" title="关闭" @click="store.preview = null"><X :size="17" /></button></div>
-      <pre v-if="store.preview.kind !== 'html'">{{ store.preview.content }}</pre>
+      <img v-if="store.preview.kind === 'image'" :src="store.preview.content" :alt="store.preview.title" class="library-image-preview" />
+      <div v-else-if="store.preview.kind === 'unsupported'" class="library-preview-unsupported">{{ store.preview.content }}</div>
+      <pre v-else-if="store.preview.kind !== 'html'">{{ store.preview.content }}</pre>
       <iframe v-else sandbox="" :title="store.preview.title" :srcdoc="store.preview.content"></iframe>
     </div>
   </div>

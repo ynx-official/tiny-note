@@ -32,8 +32,10 @@ import { DEFAULT_NOTE_MODE, NOTE_MODES, applyMarkdownSourceToEditor, clampSplitR
 
 const lowlight = createLowlight()
 lowlight.register('javascript', javascript); lowlight.register('typescript', typescript); lowlight.register('python', python); lowlight.register('json', json); lowlight.register('html', xml); lowlight.register('xml', xml); lowlight.register('css', css); lowlight.register('bash', bash); lowlight.register('sql', sql); lowlight.register('markdown', markdown); lowlight.register('yaml', yaml); lowlight.register('rust', rust)
-const props = defineProps({ note: Object, tocVisible: { type: Boolean, default: false }, proposalId: { type: String, default: '' } }); const emit = defineEmits(['deleted', 'toggle-toc', 'proposal-reviewed']); const store = useNotesStore(); const library = useLibraryStore(); const appStore = useAppStore(); const { t } = useI18n(); const aiBusy = ref(false); const aiText = ref(''); const aiRequestId = ref(''); const aiAction = ref('summarize'); const aiResultAction = ref(''); const aiProposal = ref(null); const aiSources = ref([]); const aiConsentOpen = ref(false); const assistantOpen = ref(false); const assistantTriggerVisible = ref(true); const assistantBusy = ref(false); const assistantRequestId = ref(''); const assistantStreamingText = ref(''); const assistantMessages = ref([]); const assistantSelection = ref(null); const assistantResponseSources = ref([]); const assistantResponseProposal = ref(null); const aiPanelOpen = ref(false); const aiPanelSelectionText = ref(''); const commandMenuOpen = ref(false); const aiPrompt = ref(''); const aiInputRef = ref(null); const commandMenuDirection = ref('down'); const moreOpen = ref(false); const revisionsOpen = ref(false); const revisions = ref([]); const revisionsBusy = ref(false); const insertOpen = ref(false); const tablePickerOpen = ref(false); const textColorOpen = ref(false); const highlightOpen = ref(false); const headingOpen = ref(false); const knowledgeMenuOpen = ref(false); const imageDialogOpen = ref(false); const imageUrl = ref(''); const imageAlt = ref(''); const imageInput = ref(null); const tableRows = ref(0); const tableCols = ref(0); const fimEnabled = computed(() => appStore.settings.fimEnabled === true); const fimSuggestion = ref(''); const editorStateTick = ref(0); let fimTimer; let assistantTriggerTimer; let savedSelection = null; let pendingAiRequest = null; let pendingAiChange = null
+const props = defineProps({ note: Object, tocVisible: { type: Boolean, default: false }, proposalId: { type: String, default: '' } }); const emit = defineEmits(['deleted', 'toggle-toc', 'proposal-reviewed']); const store = useNotesStore(); const library = useLibraryStore(); const appStore = useAppStore(); const { t } = useI18n(); const aiBusy = ref(false); const aiText = ref(''); const aiRequestId = ref(''); const aiAction = ref('summarize'); const aiResultAction = ref(''); const aiProposal = ref(null); const aiSources = ref([]); const aiConsentOpen = ref(false); const assistantOpen = ref(false); const assistantTriggerVisible = ref(true); const assistantBusy = ref(false); const assistantRequestId = ref(''); const assistantStreamingText = ref(''); const assistantMessages = ref([]); const assistantSelection = ref(null); const assistantResponseSources = ref([]); const assistantResponseProposal = ref(null); const aiPanelOpen = ref(false); const aiPanelSelectionText = ref(''); const commandMenuOpen = ref(false); const aiPrompt = ref(''); const aiInputRef = ref(null); const commandMenuDirection = ref('down'); const moreOpen = ref(false); const revisionsOpen = ref(false); const revisions = ref([]); const revisionsBusy = ref(false); const insertOpen = ref(false); const tablePickerOpen = ref(false); const textColorOpen = ref(false); const highlightOpen = ref(false); const headingOpen = ref(false); const knowledgeMenuOpen = ref(false); const imageDialogOpen = ref(false); const imageUrl = ref(''); const imageAlt = ref(''); const imageInput = ref(null); const imageFileInput = ref(null); const tableRows = ref(0); const tableCols = ref(0); const fimEnabled = computed(() => appStore.settings.fimEnabled === true); const fimSuggestion = ref(''); const editorStateTick = ref(0); let fimTimer; let assistantTriggerTimer; let savedSelection = null; let pendingAiRequest = null; let pendingAiChange = null
 const modeIcons = { rich: PenLine, markdown: FileCode2, read: Eye }
+const noteLinks = ref([])
+const tagDraft = ref('')
 const editorModes = NOTE_MODES.map(mode => ({ ...mode, icon: modeIcons[mode.id] }))
 const editorMode = ref(DEFAULT_NOTE_MODE)
 const modeMenuOpen = ref(false)
@@ -173,7 +175,7 @@ const currentHeadingLabel = computed(() => { editorStateTick.value; const instan
 
 function noteContentSignature(note) {
   if (!note) return ''
-  return JSON.stringify([note.title, note.notebookId, note.contentHtml, note.contentText, note.contentMarkdown || ''])
+  return JSON.stringify([note.title, note.notebookId, note.contentHtml, note.contentText, note.contentMarkdown || '', note.tags || [], note.pinned])
 }
 
 function scheduleNoteSave(note = props.note) {
@@ -444,6 +446,8 @@ watch(() => props.note?.id, async (id, previousId) => {
   }
   resetTransientEditorState()
   resetEditorSession(props.note)
+  tagDraft.value = ''
+  noteLinks.value = id ? (await store.listLinks(id).catch(() => [])) || [] : []
   await nextTick()
   setupSplitObserver()
   loadExternalProposal()
@@ -955,6 +959,20 @@ function confirmImage() {
   editor.value.chain().focus().setImage({ src, alt: imageAlt.value.trim() }).run()
   imageDialogOpen.value = false
 }
+function insertLocalImage(event) {
+  const file = event.target.files?.[0]
+  event.target.value = ''
+  if (!file || !file.type.startsWith('image/') || file.size > 5 * 1024 * 1024 || !editor.value) return
+  const reader = new FileReader()
+  reader.onload = () => {
+    const src = String(reader.result || '')
+    if (/^data:image\/(?:png|jpe?g|gif|webp);base64,/i.test(src)) {
+      editor.value.chain().focus().setImage({ src, alt: imageAlt.value.trim() }).run()
+      imageDialogOpen.value = false
+    }
+  }
+  reader.readAsDataURL(file)
+}
 function setTextColor(color) {
   if (!editor.value) return
   const chain = editor.value.chain().focus()
@@ -1000,6 +1018,33 @@ async function addToKnowledge(knowledgeBaseId) {
   if (!props.note || !knowledgeBaseId) return
   if (!await flushLatestContent()) return
   try { await library.addNoteReference(knowledgeBaseId, props.note); knowledgeMenuOpen.value = false } catch (error) { window.alert(error?.message || '添加到知识库失败，请重试') }
+}
+async function saveNoteMetadata() {
+  if (!props.note) return
+  await flushLatestContent({ save: true })
+  await store.save(props.note)
+  persistedSignatures.set(props.note.id, noteContentSignature(props.note))
+  noteLinks.value = (await store.listLinks(props.note.id).catch(() => [])) || []
+}
+async function addTag() {
+  const value = tagDraft.value.trim().replace(/^#/, '').toLowerCase()
+  if (!props.note || !value || (props.note.tags || []).includes(value)) {
+    tagDraft.value = ''
+    return
+  }
+  props.note.tags = [...(props.note.tags || []), value].slice(0, 32)
+  tagDraft.value = ''
+  await saveNoteMetadata()
+}
+async function removeTag(tag) {
+  if (!props.note) return
+  props.note.tags = (props.note.tags || []).filter(value => value !== tag)
+  await saveNoteMetadata()
+}
+async function togglePinned() {
+  if (!props.note) return
+  const updated = await store.setPinned(props.note.id, !props.note.pinned)
+  if (updated) Object.assign(props.note, updated)
 }
 async function createKnowledgeFromEditor() {
   const name = window.prompt(t('newKnowledge'))
@@ -1084,7 +1129,14 @@ const title = computed({
         <button v-if="assistantTriggerVisible" class="ai-button" @click="toggleAssistant"><Layers :size="17" /> Tiny Note 助理</button>
       </div>
     </div>
-    <div class="editor-head"><input v-model="title" class="title-input" :readonly="editorMode === 'read'" :aria-readonly="editorMode === 'read'" :placeholder="t('untitled')" /><div class="editor-meta"><span :class="{ saving: store.saving }">{{ store.saving ? t('saving') : t('save') }}</span></div></div>
+    <div class="editor-head"><input v-model="title" class="title-input" :readonly="editorMode === 'read'" :aria-readonly="editorMode === 'read'" :placeholder="t('untitled')" /><div class="editor-meta"><button type="button" class="note-pin-button" :class="{ active: note.pinned }" :aria-pressed="note.pinned" title="置顶笔记" @click="togglePinned">★</button><span :class="{ saving: store.saving }">{{ store.saving ? t('saving') : t('save') }}</span></div></div>
+    <div v-if="editorMode !== 'read' || note.tags?.length || noteLinks.length" class="note-metadata">
+      <div class="note-tag-list">
+        <span v-for="tag in note.tags || []" :key="tag" class="note-tag">#{{ tag }}<button v-if="editorMode !== 'read'" type="button" aria-label="移除标签" @click="removeTag(tag)">×</button></span>
+        <input v-if="editorMode !== 'read'" v-model="tagDraft" class="note-tag-input" placeholder="添加标签" @keydown.enter.prevent="addTag" />
+      </div>
+      <div v-if="noteLinks.length" class="note-links" aria-label="关联笔记"><span>关联笔记</span><button v-for="link in noteLinks" :key="link.sourceNoteId + '-' + link.targetNoteId" type="button" @click="store.activeId = link.sourceNoteId === note.id ? link.targetNoteId : link.sourceNoteId">{{ link.targetTitle }}</button></div>
+    </div>
     <button class="toc-btn" :class="{ 'is-open': tocVisible }" title="目录" aria-label="目录" @click="emit('toggle-toc')"><span class="toc-char">目</span><span class="toc-char">录</span></button>
     <div ref="splitWorkspace" class="editor-workspace" :class="[`mode-${editorMode}`, { 'is-previewing': splitMode, 'is-vertical': splitVertical }]">
       <div v-if="codeMode" class="markdown-source-pane" :class="{ 'split-source-pane': splitMode }" :style="splitMode ? splitPaneStyle : undefined">
@@ -1165,7 +1217,7 @@ const title = computed({
     <div v-if="imageDialogOpen" class="editor-dialog-overlay" @click.self="imageDialogOpen = false">
       <div class="editor-dialog" role="dialog" aria-modal="true" aria-label="插入图片">
         <div class="editor-dialog-header"><strong>插入图片</strong><button class="editor-dialog-close" title="关闭" @click="imageDialogOpen = false">×</button></div>
-        <div class="editor-dialog-body"><label>图片地址<input ref="imageInput" v-model="imageUrl" type="url" placeholder="https://example.com/image.jpg" @keyup.enter="confirmImage" /></label><label>替代文字<input v-model="imageAlt" type="text" placeholder="图片说明（可选）" @keyup.enter="confirmImage" /></label></div>
+        <div class="editor-dialog-body"><label>图片地址<input ref="imageInput" v-model="imageUrl" type="url" placeholder="https://example.com/image.jpg" @keyup.enter="confirmImage" /></label><label>替代文字<input v-model="imageAlt" type="text" placeholder="图片说明（可选）" @keyup.enter="confirmImage" /></label><button type="button" class="secondary-button" @click="imageFileInput?.click()">从本机选择图片</button><input ref="imageFileInput" type="file" hidden accept="image/png,image/jpeg,image/gif,image/webp" @change="insertLocalImage" /></div>
         <div class="editor-dialog-footer"><button class="secondary-button" @click="imageDialogOpen = false">取消</button><button class="primary-button" :disabled="!normalizeImageUrl(imageUrl)" @click="confirmImage">插入图片</button></div>
       </div>
     </div>

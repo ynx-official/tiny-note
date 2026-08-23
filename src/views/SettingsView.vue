@@ -39,6 +39,8 @@ const updateStatus = ref('idle')
 const updateInfo = ref(null)
 const updateProgress = ref(null)
 const updateError = ref('')
+const backupInput = ref(null)
+const backupStatus = ref('')
 
 const providerOptions = [
   { key: 'doubao', label: '豆包', mark: '豆', icon: doubaoIcon, baseUrl: 'https://ark.cn-beijing.volces.com/api/v3' },
@@ -63,7 +65,7 @@ const currentLanguageLabel = computed(() => languageOptions.value.find(option =>
 const settingsSections = computed(() => [
   { id: 'appearance', label: t('appearance'), description: t('appearanceHint'), icon: Palette },
   { id: 'ai', label: t('aiWriting'), description: t('aiWritingHint'), icon: Sparkles },
-  { id: 'agent-tools', label: locale.value === 'zh-CN' ? 'Agent 工具' : 'Agent tools', description: locale.value === 'zh-CN' ? '查看可用能力和强制审批策略' : 'Inspect available capabilities and approval policies', icon: Wrench },
+  { id: 'agent-tools', label: locale.value === 'zh-CN' ? 'Agent 工具（实验）' : 'Agent tools (Experimental)', description: locale.value === 'zh-CN' ? '查看实验能力和强制审批策略' : 'Inspect experimental capabilities and approval policies', icon: Wrench },
   { id: 'models', label: t('models'), description: t('modelsHint'), icon: Cpu },
   { id: 'about', label: t('about'), description: t('aboutHint'), icon: Info }
 ])
@@ -137,6 +139,39 @@ function closeDropdowns() {
 function selectSection(id) {
   activeSectionId.value = id
   closeDropdowns()
+}
+
+async function exportWorkspace() {
+  backupStatus.value = ''
+  try {
+    const backup = await invoke('workspace_export')
+    const blob = new Blob([JSON.stringify(backup, null, 2)], { type: 'application/json;charset=utf-8' })
+    const url = URL.createObjectURL(blob)
+    const link = document.createElement('a')
+    link.href = url
+    link.download = 'tiny-note-backup-' + new Date().toISOString().slice(0, 10) + '.tnbackup.json'
+    link.click()
+    URL.revokeObjectURL(url)
+    backupStatus.value = locale.value === 'zh-CN' ? '备份已导出；模型 API Key 不会包含在备份中。' : 'Backup exported; model API keys are not included.'
+  } catch (error) {
+    backupStatus.value = error?.message || (locale.value === 'zh-CN' ? '备份导出失败' : 'Backup export failed')
+  }
+}
+
+async function restoreWorkspace(event) {
+  const file = event.target.files?.[0]
+  event.target.value = ''
+  if (!file) return
+  try {
+    const backup = JSON.parse(await file.text())
+    const confirmed = window.confirm(locale.value === 'zh-CN' ? '恢复会替换当前笔记、知识库和设置，确定继续吗？建议先导出当前备份。' : 'Restore will replace current notes, libraries, and settings. Continue? Export a backup first.')
+    if (!confirmed) return
+    await invoke('workspace_import', { request: { backup, replaceExisting: true } })
+    backupStatus.value = locale.value === 'zh-CN' ? '恢复完成，正在重新加载…' : 'Restore complete. Reloading…'
+    window.setTimeout(() => window.location.reload(), 250)
+  } catch (error) {
+    backupStatus.value = error?.message || (locale.value === 'zh-CN' ? '备份恢复失败' : 'Backup restore failed')
+  }
 }
 
 function addModel() {
@@ -447,7 +482,8 @@ watch(filteredSections, sections => {
           </section>
 
           <section v-else-if="activeSectionId === 'agent-tools'" class="settings-detail-section settings-agent-tools-section">
-            <div class="settings-section-kicker">工具与权限</div>
+            <div class="settings-section-kicker">工具与权限 · 实验功能</div>
+            <p class="settings-inline-note">Tiny Agent、MCP 和隔离脚本仍处于实验阶段；涉及写入、删除或外部调用的操作会按策略请求审批。</p>
             <AgentToolsCatalog />
           </section>
 
@@ -467,6 +503,11 @@ watch(filteredSections, sections => {
               </button>
             </div>
             <div class="settings-setting-row"><div class="settings-setting-copy"><strong>{{ t('localFirst') }}</strong><span>{{ t('noteScope') }}</span></div><Globe2 :size="17" class="settings-value-icon" /></div>
+            <div class="settings-subheading">数据备份与恢复</div>
+            <div class="settings-setting-row">
+              <div class="settings-setting-copy"><strong>工作区备份</strong><span>导出笔记、知识库文件、标签、链接和设置；模型 API Key 不会写入备份。</span><small v-if="backupStatus" role="status">{{ backupStatus }}</small></div>
+              <div class="settings-inline-actions"><button type="button" class="settings-action-button" @click="exportWorkspace">导出备份</button><button type="button" class="settings-action-button" @click="backupInput?.click()">恢复备份</button><input ref="backupInput" type="file" hidden accept=".json,.tnbackup" @change="restoreWorkspace" /></div>
+            </div>
           </section>
         </div>
       </main>
