@@ -1488,7 +1488,46 @@ pub mod commands {
             .and_then(|x| x.to_str())
             .unwrap_or_default()
             .to_lowercase();
-        let content = fs::read_to_string(&path).map_err(AppError::fs)?;
+        let raw_content = fs::read_to_string(&path).map_err(AppError::fs)?;
+        let mut content = raw_content.clone();
+        let mut title = path
+            .file_name()
+            .and_then(|x| x.to_str())
+            .unwrap_or_default()
+            .to_string();
+        if ext == "note" {
+            if let Ok(reference) = serde_json::from_str::<serde_json::Value>(&raw_content) {
+                if reference.get("format").and_then(|value| value.as_str())
+                    == Some("tiny-note-reference")
+                {
+                    if let Some(note_id) = reference.get("noteId").and_then(|value| value.as_str())
+                    {
+                        let conn = state
+                            .db
+                            .lock()
+                            .map_err(|_| AppError::db("database lock poisoned"))?;
+                        if let Some((note_title, markdown, text)) = conn
+                            .query_row(
+                                "SELECT title,content_markdown,content_text FROM notes WHERE id=?1 AND deleted_at IS NULL",
+                                params![note_id],
+                                |row| {
+                                    Ok((
+                                        row.get::<_, String>(0)?,
+                                        row.get::<_, String>(1)?,
+                                        row.get::<_, String>(2)?,
+                                    ))
+                                },
+                            )
+                            .optional()
+                            .map_err(AppError::db)?
+                        {
+                            title = note_title;
+                            content = if markdown.is_empty() { text } else { markdown };
+                        }
+                    }
+                }
+            }
+        }
         let kind = match ext.as_str() {
             "md" | "markdown" => "markdown",
             "html" | "htm" => "html",
@@ -1506,11 +1545,7 @@ pub mod commands {
         };
         Ok(PreviewDto {
             kind: kind.into(),
-            title: path
-                .file_name()
-                .and_then(|x| x.to_str())
-                .unwrap_or_default()
-                .into(),
+            title,
             content,
             mime_type: mime.into(),
         })
