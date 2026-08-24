@@ -21,6 +21,7 @@ const browserTemplateSeed = [
   { id: 'meeting', name: '会议纪要', description: '快速整理会议背景、结论和行动项', title: '会议纪要', contentMarkdown: '# 会议纪要\n\n## 参与者\n\n## 讨论\n\n## 结论\n\n## 行动项\n- [ ] \n', builtin: true },
   { id: 'project', name: '项目计划', description: '拆解项目目标、里程碑和风险', title: '项目计划', contentMarkdown: '# 项目计划\n\n## 目标\n\n## 里程碑\n\n## 风险\n\n## 下一步\n', builtin: true }
 ]
+const browserDemoImageDataUri = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII='
 const browserLegacySkillContent = {
   'knowledge-research': [
     '---\nname: knowledge-research\ndescription: 检索并汇总 Tiny Note 本地知识，保留来源和不确定性。\n---\n\n# 知识调研\n\n先检索，再汇总并保留来源。\n',
@@ -110,6 +111,11 @@ export async function invoke(command, args = {}) {
   if (!state.agentToolPolicies) state.agentToolPolicies = {}
   if (!state.mcpServers) state.mcpServers = []
   if (!state.usageRecords) state.usageRecords = []
+  if (!state.imageGenerations) state.imageGenerations = []
+  if (!state.imageAssets) state.imageAssets = []
+  state.imageAssets.forEach(asset => {
+    if (!asset.dataUri && asset.contentBase64) asset.dataUri = `data:${asset.mimeType || 'image/png'};base64,${asset.contentBase64}`
+  })
   if (!state.chatConversations) state.chatConversations = []
   if (!state.chatMessages) state.chatMessages = []
   if (!state.backgroundTasks) state.backgroundTasks = []
@@ -129,7 +135,7 @@ export async function invoke(command, args = {}) {
   else if (command === 'background_task_get') result = state.backgroundTasks.find(task => task.id === args.id) || null
   else if (command === 'background_task_enqueue') {
     const input = args.input || {}
-    if (!['conversation_summary', 'note_ai'].includes(input.kind)) throw new Error('无效的后台任务类型')
+    if (!['conversation_summary', 'note_ai', 'image_generation'].includes(input.kind)) throw new Error('无效的后台任务类型')
     const id = crypto.randomUUID()
     const resourceKey = input.conversationId ? `conversation:${input.conversationId}` : input.targetNoteId ? `note:${input.targetNoteId}` : `task:${id}`
     if (input.kind === 'conversation_summary' && state.backgroundTasks.some(task => task.kind === input.kind && task.conversationId === input.conversationId && ['queued', 'running', 'awaiting_approval', 'awaiting_input'].includes(task.status))) throw new Error('当前对话已有正在处理的总结任务')
@@ -150,6 +156,21 @@ export async function invoke(command, args = {}) {
   else if (command === 'chat_add_message') { const conversation = state.chatConversations.find(item => item.id === args.conversationId); result = { id: crypto.randomUUID(), conversationId: args.conversationId, role: args.role, content: args.content, references: args.references || [], sources: args.sources || [], proposalId: args.proposalId || null, agentRunId: args.agentRunId || null, createdAt: now }; state.chatMessages.push(result); if (conversation) conversation.updatedAt = now }
   else if (command === 'chat_delete') { state.chatConversations = state.chatConversations.filter(item => item.id !== args.id); state.chatMessages = state.chatMessages.filter(item => item.conversationId !== args.id); result = null }
   else if (command === 'chat_generate_title') { const conversation = state.chatConversations.find(item => item.id === args.conversationId); const firstRound = state.chatMessages.filter(item => item.conversationId === args.conversationId).slice(0, 2); const first = firstRound.find(item => item.role === 'user'); const compact = String(first?.content || '').replace(/\s+/g, ' ').trim(); result = firstRound.length < 2 ? '新对话' : (compact.length > 24 ? compact.slice(0, 24) + '…' : (compact || '新对话')); if (conversation?.title === '新对话' && result !== '新对话') { conversation.title = result; conversation.updatedAt = now } }
+  else if (command === 'image_model_list') result = (state.models || []).filter(model => Boolean(model.imageEnabled))
+  else if (command === 'image_generate') {
+    const request = args.request || {}
+    if (!String(request.prompt || '').trim()) throw new Error('图片描述不能为空')
+    const generationId = crypto.randomUUID()
+    const assets = Array.from({ length: Math.min(4, Math.max(1, Number(request.count) || 1)) }, () => ({ id: crypto.randomUUID(), generationId, relativePath: `generated-images/demo-${crypto.randomUUID()}.png`, mimeType: 'image/png', byteSize: 68, width: 1, height: 1, createdAt: now, dataUri: browserDemoImageDataUri }))
+    const generation = { id: generationId, taskId: request.requestId, prompt: String(request.prompt).trim(), imageModelProfileId: request.imageModelProfileId || '', size: request.size || 'square', count: assets.length, status: 'succeeded', errorCode: null, errorMessage: null, createdAt: now, completedAt: now, assets: assets.map(({ dataUri, ...asset }) => asset) }
+    state.imageGenerations.unshift(generation)
+    state.imageAssets.push(...assets)
+    result = { generationId, assets, usage: null }
+  }
+  else if (command === 'image_cancel') result = null
+  else if (command === 'image_generation_list') result = state.imageGenerations.slice(0, Math.min(500, args.limit || 100)).map(generation => ({ ...generation, assets: generation.assets || [] }))
+  else if (command === 'image_asset_read') { const asset = state.imageAssets.find(item => item.id === args.assetId); result = asset ? { ...asset, dataUri: asset.dataUri || browserDemoImageDataUri } : null }
+  else if (command === 'image_generation_delete') { const generation = state.imageGenerations.find(item => item.id === args.generationId); state.imageGenerations = state.imageGenerations.filter(item => item.id !== args.generationId); state.imageAssets = state.imageAssets.filter(item => item.generationId !== args.generationId); result = generation ? null : null }
   else if (command === 'note_list') result = state.notes.filter(n => Boolean(n.deletedAt) === Boolean(args.deleted) && (args.knowledgeBaseId == null || n.knowledgeBaseId === args.knowledgeBaseId) && (args.tag == null || (n.tags || []).includes(String(args.tag).toLowerCase())) && (args.pinned == null || Boolean(n.pinned) === Boolean(args.pinned)) && (!args.search || `${n.title} ${n.contentText}`.toLowerCase().includes(args.search.toLowerCase()))).sort((a, b) => Number(Boolean(b.pinned)) - Number(Boolean(a.pinned)) || String(b.updatedAt).localeCompare(String(a.updatedAt)))
   else if (command === 'note_get') result = state.notes.find(n => n.id === args.id)
   else if (command === 'note_set_pinned') { const n = state.notes.find(n => n.id === args.id); if (n) Object.assign(n, { pinned: Boolean(args.pinned), updatedAt: now }); result = n }
@@ -288,11 +309,13 @@ export async function invoke(command, args = {}) {
   else if (command === 'note_revision_list') result = state.noteRevisions.filter(item => item.noteId === args.noteId)
   else if (command === 'note_revision_get') result = state.noteRevisions.find(item => item.id === args.id)
   else if (command === 'note_revision_restore') { const revision = state.noteRevisions.find(item => item.id === args.id); const note = state.notes.find(item => item.id === revision?.noteId); if (revision && note) { state.noteRevisions.unshift({ id: crypto.randomUUID(), noteId: note.id, title: note.title, contentHtml: note.contentHtml, contentText: note.contentText, contentMarkdown: note.contentMarkdown, reason: 'revision_restore', createdAt: now }); Object.assign(note, { title: revision.title, contentHtml: revision.contentHtml, contentText: revision.contentText, contentMarkdown: revision.contentMarkdown, updatedAt: now }); rebuildBrowserLinks(state) } result = note }
-  else if (command === 'workspace_export') result = { format: 'tiny-note-workspace', version: 1, exportedAt: now, notebooks: state.notebooks, notes: state.notes, knowledgeBases: state.kbs, files: state.libraryFiles.filter(file => file.kind === 'file').map(file => ({ knowledgeBaseId: file.knowledgeBaseId, relativePath: file.relativePath, contentBase64: file.contentBase64 || bytesToBase64(new globalThis.TextEncoder().encode(file.content || '')) })), templates: state.templates, links: state.noteLinks, settings: state.settings || { theme: 'system', language: 'zh-CN', fimEnabled: false } }
+  else if (command === 'workspace_export') result = { format: 'tiny-note-workspace', version: 2, exportedAt: now, notebooks: state.notebooks, notes: state.notes, knowledgeBases: state.kbs, files: state.libraryFiles.filter(file => file.kind === 'file').map(file => ({ knowledgeBaseId: file.knowledgeBaseId, relativePath: file.relativePath, contentBase64: file.contentBase64 || bytesToBase64(new globalThis.TextEncoder().encode(file.content || '')) })), templates: state.templates, links: state.noteLinks, imageGenerations: state.imageGenerations, imageAssets: state.imageAssets.map(({ dataUri, ...asset }) => ({ ...asset, contentBase64: String(dataUri || '').split(',')[1] || '' })), settings: state.settings || { theme: 'system', language: 'zh-CN', fimEnabled: false } }
   else if (command === 'workspace_import') {
     if (!args.request?.replaceExisting) throw new Error('恢复工作区前需要确认替换现有数据')
     const backup = args.request.backup
-    if (backup?.format !== 'tiny-note-workspace' || backup.version !== 1) throw new Error('不支持的备份文件')
+    if (backup?.format !== 'tiny-note-workspace' || ![1, 2].includes(backup.version)) throw new Error('不支持的备份文件')
+    state.imageGenerations = backup.imageGenerations || []
+    state.imageAssets = backup.imageAssets || []
     for (const file of backup.files || []) {
       if (!(backup.knowledgeBases || []).some(base => base.id === file.knowledgeBaseId)) throw new Error('备份文件引用了未知知识库')
       const relativePath = String(file.relativePath || '').replaceAll('\\', '/')
@@ -368,7 +391,7 @@ export async function invoke(command, args = {}) {
     }
     result = browserAgentTools(state)
   }
-  else if (command === 'model_list') result = state.models || []
+  else if (command === 'model_list') result = (state.models || []).map(model => ({ ...model, imageEnabled: Boolean(model.imageEnabled), isImageDefault: Boolean(model.isImageDefault) }))
   else if (command === 'model_fetch_models') {
     // Keep the browser fallback aligned with the Tauri DTO shape while
     // accepting the legacy flat shape during hot reloads.
@@ -382,7 +405,7 @@ export async function invoke(command, args = {}) {
     const model = (state.models || []).find(item => item.id === args.modelId)
     result = { supported: false, available: null, currency: null, totalBalance: 0, grantedBalance: 0, toppedUpBalance: 0, voucherBalance: 0, cashBalance: 0, updatedAt: now, error: model?.provider?.toLowerCase().includes('deepseek') ? '余额查询需要桌面端凭据服务。' : null }
   }
-  else if (command === 'model_upsert') { state.models = [...(state.models || []).filter(m => m.id !== args.profile.id), { endpointType: 'openaiChat', ...args.profile, apiKeyConfigured: Boolean(args.apiKey) || args.profile.apiKeyConfigured }]; result = null }
+  else if (command === 'model_upsert') { state.models = [...(state.models || []).filter(m => m.id !== args.profile.id), { endpointType: 'openaiChat', imageEnabled: false, isImageDefault: false, ...args.profile, apiKeyConfigured: Boolean(args.apiKey) || args.profile.apiKeyConfigured }]; result = null }
   else if (command === 'model_delete') { state.models = (state.models || []).filter(m => m.id !== args.id); result = null }
   else result = []
   saveBrowserState(state); return result

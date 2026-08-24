@@ -3,7 +3,7 @@ import { computed, onMounted, onUnmounted, ref } from 'vue'
 import { useRouter } from 'vue-router'
 import { useI18n } from 'vue-i18n'
 import { getCurrentWindow } from '@tauri-apps/api/window'
-import { AlertCircle, BookOpen, CheckCircle2, FileText, ListTodo, LoaderCircle, Settings, Plus, Minus, Square, Copy, X, PanelLeftClose, PanelLeftOpen, Home } from 'lucide-vue-next'
+import { AlertCircle, BookOpen, CheckCircle2, FileText, ImagePlus, ListTodo, LoaderCircle, Settings, Plus, Minus, Square, Copy, X, PanelLeftClose, PanelLeftOpen, Home } from 'lucide-vue-next'
 import { useTasksStore } from '../stores/tasks'
 import AvatarDrawer from './AvatarDrawer.vue'
 import ChatHistoryDrawer from './ChatHistoryDrawer.vue'
@@ -20,7 +20,7 @@ const taskArrival = ref(false)
 let appWindow = null
 let stopResizeListener = null
 let taskArrivalTimer = null
-const nav = computed(() => [{ key: 'notes', label: t('notes'), icon: FileText, path: '/notes' }, { key: 'library', label: t('library'), icon: BookOpen, path: '/library' }, { key: 'tasks', label: '任务中心', icon: ListTodo, path: '/tasks' }, { key: 'settings', label: t('settings'), icon: Settings, path: '/settings' }])
+const nav = computed(() => [{ key: 'notes', label: t('notes'), icon: FileText, path: '/notes' }, { key: 'library', label: t('library'), icon: BookOpen, path: '/library' }, { key: 'images', label: '生图', icon: ImagePlus, path: '/images' }, { key: 'tasks', label: '任务中心', icon: ListTodo, path: '/tasks' }, { key: 'settings', label: t('settings'), icon: Settings, path: '/settings' }])
 function navigate(path) { router.push(path) }
 function openTaskCenter() {
   tasksStore.markResultsSeen()

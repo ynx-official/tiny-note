@@ -24,6 +24,7 @@ mod agent_mcp;
 mod agent_script;
 mod agent_skills;
 mod background_tasks;
+mod image_generation;
 mod model_endpoint;
 mod search;
 mod update;
@@ -376,6 +377,10 @@ pub struct WorkspaceBackupDto {
     pub templates: Vec<NoteTemplateDto>,
     pub links: Vec<NoteLinkDto>,
     pub settings: SettingsDto,
+    #[serde(default)]
+    pub image_generations: Vec<image_generation::ImageGenerationDto>,
+    #[serde(default)]
+    pub image_assets: Vec<image_generation::BackupImageAssetDto>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -400,6 +405,10 @@ pub struct ModelProfileDto {
     pub endpoint_type: String,
     pub api_key_configured: bool,
     pub is_default: bool,
+    #[serde(default)]
+    pub image_enabled: bool,
+    #[serde(default)]
+    pub is_image_default: bool,
 }
 
 #[derive(Debug, Serialize, Clone)]
@@ -687,7 +696,7 @@ fn init_database(conn: &Connection) -> Result<(), AppError> {
       CREATE INDEX IF NOT EXISTS idx_notes_deleted_updated ON notes(deleted_at, updated_at);
       CREATE TABLE IF NOT EXISTS knowledge_bases (id TEXT PRIMARY KEY, category TEXT NOT NULL CHECK(category IN ('personal','local')), name TEXT NOT NULL, description TEXT NOT NULL DEFAULT '', cover TEXT, root_path TEXT NOT NULL, created_at TEXT NOT NULL, updated_at TEXT NOT NULL);
       CREATE TABLE IF NOT EXISTS model_providers (id TEXT PRIMARY KEY, name TEXT NOT NULL, provider TEXT NOT NULL, base_url TEXT NOT NULL, api_key TEXT NOT NULL DEFAULT '', endpoint_type TEXT NOT NULL DEFAULT 'openaiChat');
-      CREATE TABLE IF NOT EXISTS model_profiles (id TEXT PRIMARY KEY, name TEXT NOT NULL, provider_id TEXT NOT NULL REFERENCES model_providers(id) ON DELETE CASCADE, model TEXT NOT NULL, is_default INTEGER NOT NULL DEFAULT 0);
+      CREATE TABLE IF NOT EXISTS model_profiles (id TEXT PRIMARY KEY, name TEXT NOT NULL, provider_id TEXT NOT NULL REFERENCES model_providers(id) ON DELETE CASCADE, model TEXT NOT NULL, is_default INTEGER NOT NULL DEFAULT 0, image_enabled INTEGER NOT NULL DEFAULT 0, is_image_default INTEGER NOT NULL DEFAULT 0);
       CREATE TABLE IF NOT EXISTS usage_records (id TEXT PRIMARY KEY, ts INTEGER NOT NULL, model_id TEXT NOT NULL DEFAULT '', model_name TEXT NOT NULL DEFAULT '', provider TEXT NOT NULL DEFAULT '', source TEXT NOT NULL DEFAULT 'chat', conversation_id TEXT NOT NULL DEFAULT '', prompt_tokens INTEGER NOT NULL DEFAULT 0, completion_tokens INTEGER NOT NULL DEFAULT 0, total_tokens INTEGER NOT NULL DEFAULT 0, reasoning_tokens INTEGER NOT NULL DEFAULT 0);
       CREATE INDEX IF NOT EXISTS idx_usage_records_ts ON usage_records(ts);
       CREATE TABLE IF NOT EXISTS chat_conversations (id TEXT PRIMARY KEY, title TEXT NOT NULL DEFAULT '新对话', model_profile_id TEXT, mode TEXT NOT NULL DEFAULT 'chat' CHECK(mode IN ('chat','memoryless','agent')), created_at TEXT NOT NULL, updated_at TEXT NOT NULL);
@@ -716,6 +725,7 @@ fn init_database(conn: &Connection) -> Result<(), AppError> {
     }
     agent::init_schema(conn)?;
     background_tasks::init_schema(conn)?;
+    image_generation::init_schema(conn)?;
     let model_columns = {
         let mut statement = conn
             .prepare("PRAGMA table_info(model_profiles)")
@@ -755,10 +765,12 @@ fn init_database(conn: &Connection) -> Result<(), AppError> {
                name TEXT NOT NULL,
                provider_id TEXT NOT NULL REFERENCES model_providers(id) ON DELETE CASCADE,
                model TEXT NOT NULL,
-               is_default INTEGER NOT NULL DEFAULT 0
+               is_default INTEGER NOT NULL DEFAULT 0,
+               image_enabled INTEGER NOT NULL DEFAULT 0,
+               is_image_default INTEGER NOT NULL DEFAULT 0
              );
-             INSERT INTO model_profiles_normalized(id,name,provider_id,model,is_default)
-             SELECT profile.id, profile.name, provider.id, profile.model, profile.is_default
+             INSERT INTO model_profiles_normalized(id,name,provider_id,model,is_default,image_enabled,is_image_default)
+             SELECT profile.id, profile.name, provider.id, profile.model, profile.is_default, 0, 0
              FROM model_profiles profile
              JOIN model_providers provider
                ON provider.provider=profile.provider
@@ -768,6 +780,35 @@ fn init_database(conn: &Connection) -> Result<(), AppError> {
              DROP TABLE model_profiles;
              ALTER TABLE model_profiles_normalized RENAME TO model_profiles;
              COMMIT;",
+        )
+        .map_err(AppError::db)?;
+    }
+    let image_model_columns = {
+        let mut statement = conn
+            .prepare("PRAGMA table_info(model_profiles)")
+            .map_err(AppError::db)?;
+        let rows = statement
+            .query_map([], |row| row.get::<_, String>(1))
+            .map_err(AppError::db)?;
+        rows.collect::<Result<Vec<_>, _>>().map_err(AppError::db)?
+    };
+    if !image_model_columns
+        .iter()
+        .any(|column| column == "image_enabled")
+    {
+        conn.execute(
+            "ALTER TABLE model_profiles ADD COLUMN image_enabled INTEGER NOT NULL DEFAULT 0",
+            [],
+        )
+        .map_err(AppError::db)?;
+    }
+    if !image_model_columns
+        .iter()
+        .any(|column| column == "is_image_default")
+    {
+        conn.execute(
+            "ALTER TABLE model_profiles ADD COLUMN is_image_default INTEGER NOT NULL DEFAULT 0",
+            [],
         )
         .map_err(AppError::db)?;
     }
@@ -1705,6 +1746,7 @@ pub mod commands {
                 .map(|value| value == "true")
                 .unwrap_or(false),
         };
+        let (image_generations, image_assets) = image_generation::backup_data(&state, &conn)?;
         drop(conn);
 
         let mut files = Vec::new();
@@ -1739,7 +1781,7 @@ pub mod commands {
         }
         Ok(WorkspaceBackupDto {
             format: "tiny-note-workspace".into(),
-            version: 1,
+            version: 2,
             exported_at: now(),
             notebooks,
             notes,
@@ -1748,6 +1790,8 @@ pub mod commands {
             templates,
             links,
             settings,
+            image_generations,
+            image_assets,
         })
     }
 
@@ -1756,7 +1800,9 @@ pub mod commands {
         state: State<'_, AppState>,
         request: WorkspaceImportRequest,
     ) -> Result<(), AppError> {
-        if request.backup.format != "tiny-note-workspace" || request.backup.version != 1 {
+        if request.backup.format != "tiny-note-workspace"
+            || !matches!(request.backup.version, 1 | 2)
+        {
             return Err(AppError::invalid(
                 "unsupported_backup",
                 "Unsupported Tiny Note backup",
@@ -1845,10 +1891,64 @@ pub mod commands {
                 ));
             }
         }
+        if request.backup.version >= 2 {
+            let generation_ids: HashSet<&str> = request
+                .backup
+                .image_generations
+                .iter()
+                .map(|generation| generation.id.as_str())
+                .collect();
+            if generation_ids.len() != request.backup.image_generations.len() {
+                return Err(AppError::invalid(
+                    "invalid_backup_image",
+                    "备份中的生图记录 ID 重复",
+                ));
+            }
+            let mut asset_ids = HashSet::new();
+            let attachments_root = state.data_dir.join("attachments");
+            for asset in &request.backup.image_assets {
+                if !generation_ids.contains(asset.generation_id.as_str())
+                    || !asset_ids.insert(asset.id.as_str())
+                    || !asset.relative_path.starts_with("generated-images/")
+                {
+                    return Err(AppError::invalid(
+                        "invalid_backup_image",
+                        "备份中的生图附件引用无效",
+                    ));
+                }
+                safe_path(&attachments_root, &asset.relative_path)?;
+                let content = BASE64.decode(&asset.content_base64).map_err(|_| {
+                    AppError::invalid("invalid_backup_image", "备份中的生图附件数据无效")
+                })?;
+                if content.len() as u64 != asset.byte_size {
+                    return Err(AppError::invalid(
+                        "invalid_backup_image",
+                        "备份中的生图附件大小不匹配",
+                    ));
+                }
+            }
+        }
         if knowledge_root.exists() {
             fs::remove_dir_all(&knowledge_root).map_err(AppError::fs)?;
         }
         fs::create_dir_all(&knowledge_root).map_err(AppError::fs)?;
+        let generated_images_root = state.data_dir.join("attachments/generated-images");
+        if generated_images_root.exists() {
+            fs::remove_dir_all(&generated_images_root).map_err(AppError::fs)?;
+        }
+        fs::create_dir_all(&generated_images_root).map_err(AppError::fs)?;
+        if request.backup.version >= 2 {
+            for asset in &request.backup.image_assets {
+                let path = safe_path(&state.data_dir.join("attachments"), &asset.relative_path)?;
+                if let Some(parent) = path.parent() {
+                    fs::create_dir_all(parent).map_err(AppError::fs)?;
+                }
+                let content = BASE64.decode(&asset.content_base64).map_err(|_| {
+                    AppError::invalid("invalid_backup_image", "备份中的生图附件数据无效")
+                })?;
+                fs::write(path, content).map_err(AppError::fs)?;
+            }
+        }
         let mut conn = state
             .db
             .lock()
@@ -1871,6 +1971,12 @@ pub mod commands {
             .map_err(AppError::db)?;
         transaction
             .execute("DELETE FROM settings", [])
+            .map_err(AppError::db)?;
+        transaction
+            .execute("DELETE FROM image_assets", [])
+            .map_err(AppError::db)?;
+        transaction
+            .execute("DELETE FROM image_generations", [])
             .map_err(AppError::db)?;
         for notebook in &request.backup.notebooks {
             transaction
@@ -1948,6 +2054,13 @@ pub mod commands {
                     params![link.source_note_id, link.target_note_id, now()],
                 )
                 .map_err(AppError::db)?;
+        }
+        if request.backup.version >= 2 {
+            image_generation::insert_backup_data(
+                &transaction,
+                &request.backup.image_generations,
+                &request.backup.image_assets,
+            )?;
         }
         transaction.commit().map_err(AppError::db)?;
         drop(conn);
@@ -3402,7 +3515,7 @@ pub mod commands {
             .lock()
             .map_err(|_| AppError::db("database lock poisoned"))?;
         let result = conn.prepare(
-        "SELECT profile.id,profile.name,provider.id,provider.name,provider.provider,provider.base_url,profile.model,provider.api_key,provider.endpoint_type,profile.is_default
+        "SELECT profile.id,profile.name,provider.id,provider.name,provider.provider,provider.base_url,profile.model,provider.api_key,provider.endpoint_type,profile.is_default,profile.image_enabled,profile.is_image_default
          FROM model_profiles profile JOIN model_providers provider ON provider.id=profile.provider_id
          ORDER BY provider.name,profile.name",
     )
@@ -3421,6 +3534,8 @@ pub mod commands {
             endpoint_type: r.get(8)?,
             api_key_configured: configured,
             is_default: r.get::<_, i64>(9)? != 0,
+            image_enabled: r.get::<_, i64>(10)? != 0,
+            is_image_default: r.get::<_, i64>(11)? != 0,
         })
     })
     .map_err(AppError::db)?
@@ -3808,9 +3923,9 @@ pub mod commands {
             params![provider_id, profile.connection_name.as_deref().unwrap_or(&profile.provider), profile.provider, profile.base_url, key, profile.endpoint_type],
         ).map_err(AppError::db)?;
         conn.execute(
-            "INSERT INTO model_profiles(id,name,provider_id,model,is_default) VALUES (?1,?2,?3,?4,?5)
-             ON CONFLICT(id) DO UPDATE SET name=excluded.name,provider_id=excluded.provider_id,model=excluded.model,is_default=excluded.is_default",
-            params![profile.id, profile.name, provider_id, profile.model, profile.is_default as i64],
+            "INSERT INTO model_profiles(id,name,provider_id,model,is_default,image_enabled,is_image_default) VALUES (?1,?2,?3,?4,?5,?6,?7)
+             ON CONFLICT(id) DO UPDATE SET name=excluded.name,provider_id=excluded.provider_id,model=excluded.model,is_default=excluded.is_default,image_enabled=excluded.image_enabled,is_image_default=excluded.is_image_default",
+            params![profile.id, profile.name, provider_id, profile.model, profile.is_default as i64, profile.image_enabled as i64, profile.is_image_default as i64],
         ).map_err(AppError::db)?;
         Ok(())
     }
@@ -4675,6 +4790,12 @@ pub fn run() {
             commands::model_query_balance,
             commands::model_upsert,
             commands::model_delete,
+            image_generation::image_model_list,
+            image_generation::image_generate,
+            image_generation::image_cancel,
+            image_generation::image_generation_list,
+            image_generation::image_asset_read,
+            image_generation::image_generation_delete,
             commands::note_ai_stream,
             commands::note_ai_cancel,
             commands::note_fim_stream,

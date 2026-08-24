@@ -2,7 +2,7 @@
 import { computed, onMounted, onUnmounted, ref } from 'vue'
 import { useRouter } from 'vue-router'
 import { storeToRefs } from 'pinia'
-import { AlertCircle, CheckCircle2, CircleStop, Clock3, FileText, LoaderCircle, RefreshCw, Sparkles, Trash2 } from 'lucide-vue-next'
+import { AlertCircle, CheckCircle2, CircleStop, Clock3, FileText, ImagePlus, LoaderCircle, RefreshCw, Sparkles, Trash2 } from 'lucide-vue-next'
 import { useTasksStore } from '../stores/tasks'
 import { formatTaskDuration } from '../utils/taskDuration'
 
@@ -34,7 +34,7 @@ const counts = computed(() => Object.fromEntries(filters.map(([key]) => [key, ta
 }).length])))
 
 const kindMeta = {
-  conversation_summary: ['总结为笔记', Sparkles], note_ai: ['笔记 AI', FileText]
+  conversation_summary: ['总结为笔记', Sparkles], note_ai: ['笔记 AI', FileText], image_generation: ['生图', ImagePlus]
 }
 const statusLabels = { queued: '排队中', running: '执行中', awaiting_approval: '等待确认', awaiting_input: '等待回答', succeeded: '已完成', failed: '失败', cancelled: '已取消', interrupted: '已中断' }
 const statusIcons = { queued: Clock3, running: LoaderCircle, awaiting_approval: Clock3, awaiting_input: Clock3, succeeded: CheckCircle2, failed: AlertCircle, cancelled: CircleStop, interrupted: AlertCircle }
@@ -44,6 +44,7 @@ function hasRetryAttempt(task) { return tasks.value.some(item => item.retryOf ==
 function openResult(task) {
   if (task.result?.noteId) router.push({ path: '/notes', query: { note: task.result.noteId } })
   else if (task.result?.proposalId && task.targetNoteId) router.push({ path: '/notes', query: { note: task.targetNoteId, proposal: task.result.proposalId } })
+  else if (task.kind === 'image_generation') router.push({ path: '/images', query: { generation: task.result?.generationId || '' } })
   else if (task.conversationId) router.push({ path: '/chat', query: { id: task.conversationId } })
   else if (task.targetNoteId) router.push({ path: '/notes', query: { note: task.targetNoteId } })
 }
@@ -71,7 +72,7 @@ onUnmounted(() => window.clearInterval(durationTimer))
     </nav>
     <div v-if="loading" class="tasks-state"><LoaderCircle class="spin" :size="20" />正在读取任务…</div>
     <div v-else-if="error" class="tasks-state is-error"><AlertCircle :size="20" />{{ error }}<button type="button" @click="store.initialize({ force: true })">重试</button></div>
-    <div v-else-if="!visibleTasks.length" class="tasks-empty"><CheckCircle2 :size="28" /><strong>这里暂时没有任务</strong><span>发起“总结为笔记”或笔记 AI 后，可以在这里查看进度和结果。</span></div>
+    <div v-else-if="!visibleTasks.length" class="tasks-empty"><CheckCircle2 :size="28" /><strong>这里暂时没有任务</strong><span>发起“总结为笔记”、笔记 AI 或生图后，可以在这里查看进度和结果。</span></div>
     <div v-else class="tasks-list">
       <article v-for="task in visibleTasks" :key="task.id" class="task-row" :class="`is-${task.status}`">
         <button class="task-row-main" type="button" :aria-expanded="expanded === task.id" @click="expanded = expanded === task.id ? '' : task.id">

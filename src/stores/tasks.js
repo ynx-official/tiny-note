@@ -10,7 +10,7 @@ const activeExecutions = new Map()
 const eventChains = new Map()
 const ACTIVE = new Set(['running', 'awaiting_approval', 'awaiting_input'])
 const TERMINAL = new Set(['succeeded', 'failed', 'cancelled', 'interrupted'])
-const TASK_KINDS = new Set(['conversation_summary', 'note_ai'])
+const TASK_KINDS = new Set(['conversation_summary', 'note_ai', 'image_generation'])
 let initialization = null
 
 function errorMessage(error, fallback = '后台任务执行失败') {
@@ -99,12 +99,24 @@ export const useTasksStore = defineStore('tasks', {
           eventChains.set(task.id, next)
           next.finally(() => { if (eventChains.get(task.id) === next) eventChains.delete(task.id) })
         }
-        await invoke('note_ai_stream', { request: { ...task.payload.request, requestId: task.id }, onEvent: channel })
+        if (task.kind === 'image_generation') {
+          const result = await invoke('image_generate', { request: { ...task.payload.request, requestId: task.id } })
+          await this.complete(task.id, '', result)
+        } else {
+          await invoke('note_ai_stream', { request: { ...task.payload.request, requestId: task.id }, onEvent: channel })
+        }
       } catch (error) {
         await this.fail(task.id, error)
       }
     },
     async executePreview(task) {
+      if (task.kind === 'image_generation') {
+        try {
+          const result = await invoke('image_generate', { request: { ...task.payload.request, requestId: task.id } })
+          await this.complete(task.id, '', result)
+        } catch (error) { await this.fail(task.id, error) }
+        return
+      }
       const content = task.payload.previewOutput || task.payload.request?.instruction || '浏览器预览任务已完成。'
       await this.transition(task, 'running', { outputDelta: content })
       await this.complete(task.id)
@@ -128,7 +140,7 @@ export const useTasksStore = defineStore('tasks', {
         }
       } catch (error) { await this.fail(id, error) }
     },
-    async complete(id, fallbackContent = '') {
+    async complete(id, fallbackContent = '', taskResult = null) {
       let task = this.tasks.find(item => item.id === id)
       if (!task || TERMINAL.has(task.status)) return task
       const content = task.output || fallbackContent || ''
@@ -139,9 +151,11 @@ export const useTasksStore = defineStore('tasks', {
         result = { noteId: note.id }
       } else if (task.kind === 'note_ai') {
         result = { noteId: task.targetNoteId || null, proposalId: task.payload.proposal?.id || null, content }
+      } else if (task.kind === 'image_generation') {
+        result = taskResult || task.payload.result || {}
       }
       task = await this.transition(task, 'succeeded', { result })
-      this.notify(task, task.kind === 'conversation_summary' ? '总结笔记已生成' : '后台任务已完成')
+      this.notify(task, task.kind === 'conversation_summary' ? '总结笔记已生成' : task.kind === 'image_generation' ? '图片已生成' : '后台任务已完成')
       return task
     },
     async fail(id, error) {
@@ -157,7 +171,7 @@ export const useTasksStore = defineStore('tasks', {
       const task = this.tasks.find(item => item.id === id)
       if (!task) return null
       if (!skipRuntime && task.status !== 'queued') {
-        try { await invoke('note_ai_cancel', { requestId: task.id }) } catch {}
+        try { await invoke(task.kind === 'image_generation' ? 'image_cancel' : 'note_ai_cancel', { requestId: task.id }) } catch {}
       }
       try { return this.upsert(await invoke('background_task_cancel', { id })) }
       catch { await this.refresh(); return this.tasks.find(item => item.id === id) }

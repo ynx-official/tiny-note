@@ -6,7 +6,7 @@ use serde_json::Value;
 use tauri::State;
 use uuid::Uuid;
 
-const KINDS: [&str; 2] = ["conversation_summary", "note_ai"];
+const KINDS: [&str; 3] = ["conversation_summary", "note_ai", "image_generation"];
 const STATUSES: [&str; 8] = [
     "queued",
     "running",
@@ -87,7 +87,7 @@ pub fn init_schema(conn: &Connection) -> Result<(), AppError> {
     conn.execute_batch(
         "CREATE TABLE IF NOT EXISTS background_tasks (
            id TEXT PRIMARY KEY,
-           kind TEXT NOT NULL CHECK(kind IN ('agent_run','conversation_summary','note_ai')),
+           kind TEXT NOT NULL CHECK(kind IN ('agent_run','conversation_summary','note_ai','image_generation')),
            title TEXT NOT NULL,
            status TEXT NOT NULL CHECK(status IN ('queued','running','awaiting_approval','awaiting_input','succeeded','failed','cancelled','interrupted')),
            payload_json TEXT NOT NULL DEFAULT '{}',
@@ -111,6 +111,7 @@ pub fn init_schema(conn: &Connection) -> Result<(), AppError> {
          CREATE INDEX IF NOT EXISTS idx_background_tasks_conversation ON background_tasks(conversation_id,created_at DESC);",
     )
     .map_err(AppError::db)?;
+    migrate_image_generation_kind(conn)?;
     // The previous process cannot still own workers once a new application
     // process has opened the database. Never auto-replay potentially mutating work.
     conn.execute(
@@ -128,6 +129,60 @@ pub fn init_schema(conn: &Connection) -> Result<(), AppError> {
     let cutoff = (Utc::now() - Duration::days(30)).to_rfc3339();
     delete_finished_tasks(conn, Some(&cutoff))?;
     Ok(())
+}
+
+fn migrate_image_generation_kind(conn: &Connection) -> Result<(), AppError> {
+    let sql: Option<String> = conn
+        .query_row(
+            "SELECT sql FROM sqlite_master WHERE type='table' AND name='background_tasks'",
+            [],
+            |row| row.get(0),
+        )
+        .optional()
+        .map_err(AppError::db)?;
+    if sql
+        .as_deref()
+        .is_some_and(|value| value.contains("'image_generation'"))
+    {
+        return Ok(());
+    }
+    conn.execute_batch(
+        "BEGIN;
+         ALTER TABLE background_tasks RENAME TO background_tasks_legacy;
+         DROP INDEX IF EXISTS idx_background_tasks_status_created;
+         DROP INDEX IF EXISTS idx_background_tasks_resource;
+         DROP INDEX IF EXISTS idx_background_tasks_conversation;
+         CREATE TABLE background_tasks (
+           id TEXT PRIMARY KEY,
+           kind TEXT NOT NULL CHECK(kind IN ('agent_run','conversation_summary','note_ai','image_generation')),
+           title TEXT NOT NULL,
+           status TEXT NOT NULL CHECK(status IN ('queued','running','awaiting_approval','awaiting_input','succeeded','failed','cancelled','interrupted')),
+           payload_json TEXT NOT NULL DEFAULT '{}',
+           output TEXT NOT NULL DEFAULT '',
+           result_json TEXT,
+           error_code TEXT,
+           error_message TEXT,
+           conversation_id TEXT,
+           target_note_id TEXT,
+           resource_key TEXT NOT NULL,
+           model_profile_id TEXT,
+           agent_run_id TEXT,
+           retry_of TEXT REFERENCES background_tasks(id) ON DELETE SET NULL,
+           created_at TEXT NOT NULL,
+           started_at TEXT,
+           completed_at TEXT,
+           updated_at TEXT NOT NULL
+         );
+         INSERT INTO background_tasks(id,kind,title,status,payload_json,output,result_json,error_code,error_message,conversation_id,target_note_id,resource_key,model_profile_id,agent_run_id,retry_of,created_at,started_at,completed_at,updated_at)
+           SELECT id,kind,title,status,payload_json,output,result_json,error_code,error_message,conversation_id,target_note_id,resource_key,model_profile_id,agent_run_id,retry_of,created_at,started_at,completed_at,updated_at
+           FROM background_tasks_legacy;
+         DROP TABLE background_tasks_legacy;
+         CREATE INDEX IF NOT EXISTS idx_background_tasks_status_created ON background_tasks(status,created_at DESC);
+         CREATE INDEX IF NOT EXISTS idx_background_tasks_resource ON background_tasks(resource_key,status);
+         CREATE INDEX IF NOT EXISTS idx_background_tasks_conversation ON background_tasks(conversation_id,created_at DESC);
+         COMMIT;",
+    )
+    .map_err(AppError::db)
 }
 
 fn delete_finished_tasks(
@@ -478,6 +533,44 @@ mod tests {
         conn.execute_batch("PRAGMA foreign_keys=ON;").unwrap();
         init_schema(&conn).unwrap();
         conn
+    }
+
+    #[test]
+    fn migration_adds_image_generation_kind_to_existing_tables() {
+        let conn = Connection::open_in_memory().unwrap();
+        conn.execute_batch(
+            "CREATE TABLE background_tasks (
+               id TEXT PRIMARY KEY,
+               kind TEXT NOT NULL CHECK(kind IN ('agent_run','conversation_summary','note_ai')),
+               title TEXT NOT NULL,
+               status TEXT NOT NULL CHECK(status IN ('queued','running','awaiting_approval','awaiting_input','succeeded','failed','cancelled','interrupted')),
+               payload_json TEXT NOT NULL DEFAULT '{}', output TEXT NOT NULL DEFAULT '', result_json TEXT,
+               error_code TEXT, error_message TEXT, conversation_id TEXT, target_note_id TEXT,
+               resource_key TEXT NOT NULL, model_profile_id TEXT, agent_run_id TEXT,
+               retry_of TEXT REFERENCES background_tasks(id) ON DELETE SET NULL,
+               created_at TEXT NOT NULL, started_at TEXT, completed_at TEXT, updated_at TEXT NOT NULL
+             );
+             CREATE INDEX idx_background_tasks_status_created ON background_tasks(status,created_at DESC);
+             CREATE INDEX idx_background_tasks_resource ON background_tasks(resource_key,status);
+             CREATE INDEX idx_background_tasks_conversation ON background_tasks(conversation_id,created_at DESC);
+             INSERT INTO background_tasks(id,kind,title,status,resource_key,created_at,updated_at) VALUES('legacy-summary','conversation_summary','旧总结','failed','task:legacy','2026-01-01','2026-01-01');",
+        )
+        .unwrap();
+
+        init_schema(&conn).unwrap();
+
+        let sql: String = conn
+            .query_row(
+                "SELECT sql FROM sqlite_master WHERE type='table' AND name='background_tasks'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert!(sql.contains("image_generation"));
+        assert_eq!(
+            load_task(&conn, "legacy-summary").unwrap().unwrap().title,
+            "旧总结"
+        );
     }
 
     #[test]

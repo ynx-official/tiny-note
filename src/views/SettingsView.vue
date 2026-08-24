@@ -25,6 +25,7 @@ const showLanguageDropdown = ref(false)
 const providerMenuOpen = ref(false)
 const endpointMenuOpen = ref(false)
 const primaryModelMenuOpen = ref(false)
+const imagePrimaryModelMenuOpen = ref(false)
 const searchQuery = ref('')
 const activeSectionId = ref('appearance')
 const saving = ref(false)
@@ -45,6 +46,7 @@ const updateProgress = ref(null)
 const updateError = ref('')
 const backupInput = ref(null)
 const backupStatus = ref('')
+const selectedImageModelIds = ref([])
 
 const providerOptions = [
   { key: 'doubao', label: '豆包', mark: '豆', icon: doubaoIcon, baseUrl: 'https://ark.cn-beijing.volces.com/api/v3' },
@@ -90,6 +92,8 @@ const selectedEndpoint = computed(() => endpointOptions.find(option => option.ke
 const selectedCatalogModels = computed(() => modelCatalog.value.filter(option => selectedModelIds.value.includes(option.id)))
 const canSaveModel = computed(() => Boolean(draft.value && (selectedModelIds.value.length || draft.value.model.trim())))
 const primaryModel = computed(() => models.value.find(model => model.isDefault) || models.value[0] || null)
+const imageModels = computed(() => models.value.filter(model => model.imageEnabled))
+const primaryImageModel = computed(() => imageModels.value.find(model => model.isImageDefault) || imageModels.value[0] || null)
 const modelConnections = computed(() => {
   const groups = new Map()
   for (const model of models.value) {
@@ -162,6 +166,7 @@ function closeDropdowns() {
   providerMenuOpen.value = false
   endpointMenuOpen.value = false
   primaryModelMenuOpen.value = false
+  imagePrimaryModelMenuOpen.value = false
 }
 
 function selectSection(id) {
@@ -211,6 +216,7 @@ function addModel() {
   draft.value = emptyDraft()
   modelCatalog.value = []
   selectedModelIds.value = []
+  selectedImageModelIds.value = []
   modelFetchError.value = ''
   providerMenuOpen.value = false
 }
@@ -228,6 +234,7 @@ function editModel(model) {
   }
   modelCatalog.value = []
   selectedModelIds.value = []
+  selectedImageModelIds.value = model.imageEnabled ? [model.model] : []
   modelFetchError.value = ''
   providerMenuOpen.value = false
   endpointMenuOpen.value = false
@@ -242,6 +249,7 @@ function cancelModel() {
   draft.value = null
   modelCatalog.value = []
   selectedModelIds.value = []
+  selectedImageModelIds.value = []
   modelFetchError.value = ''
   providerMenuOpen.value = false
   endpointMenuOpen.value = false
@@ -253,6 +261,7 @@ function selectEndpoint(option) {
   endpointMenuOpen.value = false
   modelCatalog.value = []
   selectedModelIds.value = []
+  selectedImageModelIds.value = []
   modelFetchError.value = ''
 }
 
@@ -264,6 +273,7 @@ function selectProvider(option) {
   draft.value.model = ''
   modelCatalog.value = []
   selectedModelIds.value = []
+  selectedImageModelIds.value = []
   modelFetchError.value = ''
   providerMenuOpen.value = false
 }
@@ -276,6 +286,12 @@ function toggleCatalogModel(id) {
   selectedModelIds.value = selectedModelIds.value.includes(id)
     ? selectedModelIds.value.filter(item => item !== id)
     : [...selectedModelIds.value, id]
+}
+function toggleImageModel(id) {
+  selectedImageModelIds.value = selectedImageModelIds.value.includes(id)
+    ? selectedImageModelIds.value.filter(item => item !== id)
+    : [...selectedImageModelIds.value, id]
+  if (!selectedModelIds.value.includes(id)) selectedModelIds.value = [...selectedModelIds.value, id]
 }
 
 async function fetchModels() {
@@ -292,6 +308,9 @@ async function fetchModels() {
     } })
     selectedModelIds.value = isEditingModel.value
       ? modelCatalog.value.filter(option => draft.value.connectionModels?.some(model => model.model === option.id)).map(option => option.id)
+      : []
+    selectedImageModelIds.value = isEditingModel.value
+      ? modelCatalog.value.filter(option => draft.value.connectionModels?.some(model => model.model === option.id && model.imageEnabled)).map(option => option.id)
       : []
     if (!modelCatalog.value.length) modelFetchError.value = '没有获取到可用模型，请检查地址和 API Key。'
   } catch (error) {
@@ -327,7 +346,9 @@ async function saveModel() {
           model: option.id,
           endpointType: draft.value.endpointType,
           isDefault: existing ? Boolean(existing.isDefault) : (editing ? false : models.value.length === 0 && index === 0),
-          apiKeyConfigured: editing ? Boolean(draft.value.apiKeyConfigured) : false
+          apiKeyConfigured: editing ? Boolean(draft.value.apiKeyConfigured) : false,
+          imageEnabled: draft.value.endpointType !== 'anthropicMessages' && selectedImageModelIds.value.includes(option.id),
+          isImageDefault: existing ? Boolean(existing.isImageDefault) && selectedImageModelIds.value.includes(option.id) : false
         },
         apiKey: draft.value.apiKey
       })
@@ -358,6 +379,23 @@ async function setPrimaryModel(model) {
   } finally {
     modelSaving.value = false
     primaryModelMenuOpen.value = false
+  }
+}
+
+async function setPrimaryImageModel(model) {
+  if (!model || model.id === primaryImageModel.value?.id) {
+    imagePrimaryModelMenuOpen.value = false
+    return
+  }
+  modelSaving.value = true
+  try {
+    for (const item of imageModels.value) {
+      await invoke('model_upsert', { profile: { ...item, isImageDefault: item.id === model.id }, apiKey: null })
+    }
+    await appStore.refreshModels()
+  } finally {
+    modelSaving.value = false
+    imagePrimaryModelMenuOpen.value = false
   }
 }
 
@@ -571,6 +609,22 @@ watch(filteredSections, sections => {
                 </div>
               </div>
             </div>
+            <div class="settings-model-primary-row settings-image-primary-row">
+              <strong>首选生图模型</strong>
+              <div class="settings-primary-select-wrap">
+                <button type="button" class="settings-primary-select" @click.stop="imagePrimaryModelMenuOpen = !imagePrimaryModelMenuOpen; primaryModelMenuOpen = false">
+                  <span v-if="primaryImageModel" class="settings-primary-model"><img :src="providerIcon(primaryImageModel)" :alt="providerLabel(primaryImageModel)" class="provider-icon-image" /><span><b>{{ primaryImageModel.name }}</b><small>{{ providerLabel(primaryImageModel) }} · {{ primaryImageModel.model }}</small></span></span>
+                  <span v-else class="settings-primary-empty">请先勾选生图模型</span>
+                  <ChevronDown :size="15" :class="{ expanded: imagePrimaryModelMenuOpen }" />
+                </button>
+                <div v-if="imagePrimaryModelMenuOpen" class="settings-primary-menu" @click.stop>
+                  <button v-for="model in imageModels" :key="model.id" type="button" :class="{ active: model.id === primaryImageModel?.id }" @click="setPrimaryImageModel(model)">
+                    <img :src="providerIcon(model)" :alt="model.provider" class="provider-icon-image" /><span><b>{{ model.name }}</b><small>{{ model.model }}</small></span><Check v-if="model.id === primaryImageModel?.id" :size="15" />
+                  </button>
+                  <span v-if="!imageModels.length" class="settings-primary-menu-empty">请先在下方模型列表勾选“生图”</span>
+                </div>
+              </div>
+            </div>
             <div class="settings-subheading">模型服务</div>
             <button type="button" class="settings-add-model-row" @click="addModel"><Plus :size="17" /><span>添加模型服务</span><ChevronRight :size="15" /></button>
             <div v-if="modelConnections.length" class="settings-connection-list">
@@ -585,7 +639,7 @@ watch(filteredSections, sections => {
                 <div class="settings-connection-models">
                   <div v-for="model in connection.models" :key="model.id" class="settings-connection-model-row">
                     <div class="settings-model-card-copy"><strong>{{ model.model || model.name }}</strong><span v-if="modelTestStates[model.id]" class="settings-model-test-result" :class="`is-${modelTestStates[model.id].status}`"><Check v-if="modelTestStates[model.id].status === 'success'" :size="11" /><AlertCircle v-else-if="modelTestStates[model.id].status === 'error'" :size="11" /><LoaderCircle v-else class="spinning" :size="11" />{{ modelTestStates[model.id].message }}</span></div>
-                    <span v-if="model.isDefault" class="settings-model-default-badge">首选</span>
+                    <span v-if="model.isDefault" class="settings-model-default-badge">首选</span><span v-if="model.imageEnabled" class="settings-image-enabled-badge">生图</span><span v-if="model.isImageDefault" class="settings-image-default-badge">首选生图</span>
                     <button v-if="model.apiKeyConfigured" type="button" class="model-test-btn" :disabled="modelTestStates[model.id]?.loading" title="测试模型连接" aria-label="测试模型连接" @click="testModel(model)"><LoaderCircle v-if="modelTestStates[model.id]?.loading" class="spinning" :size="15" /><FlaskConical v-else :size="15" /></button>
                     <button type="button" class="model-delete-btn" title="移除模型" aria-label="移除模型" @click="requestModelDelete(model)"><Trash2 :size="15" /></button>
                   </div>
@@ -675,11 +729,11 @@ watch(filteredSections, sections => {
             <label><span>{{ t('baseUrl') }}</span><input v-model="draft.baseUrl" name="base-url" type="url" placeholder="https://api.example.com/v1" /></label>
             <label><span>{{ t('apiKey') }}</span><input v-model="draft.apiKey" name="api-key" type="password" :placeholder="isEditingModel && draft.apiKeyConfigured ? '留空保留已保存的 API Key' : t('apiKey')" autocomplete="new-password" /><small v-if="isEditingModel && draft.apiKeyConfigured" class="settings-key-hint">已保存的 Key 不会回显；留空时获取模型和保存都会继续使用原 Key。</small></label>
           </div>
-          <div class="settings-fetch-row"><span>从 {{ draft.baseUrl || '接口地址' }}/models 获取可用模型</span><button type="button" class="settings-fetch-button" :disabled="modelFetchBusy || !draft.baseUrl.trim()" @click="fetchModels"><RefreshCw :size="14" :class="{ spinning: modelFetchBusy }" />{{ modelFetchBusy ? '获取中…' : '获取模型列表' }}</button></div>
+          <div class="settings-fetch-row"><span>从 {{ draft.baseUrl || '接口地址' }}/models 获取可用模型；获取后可勾选“生图”能力</span><button type="button" class="settings-fetch-button" :disabled="modelFetchBusy || !draft.baseUrl.trim()" @click="fetchModels"><RefreshCw :size="14" :class="{ spinning: modelFetchBusy }" />{{ modelFetchBusy ? '获取中…' : '获取模型列表' }}</button></div>
           <p v-if="modelFetchError" class="settings-model-error">{{ modelFetchError }}</p>
           <div v-if="modelCatalog.length" class="settings-model-picker">
-            <div class="settings-model-picker-header"><span>选择模型 <small>已选 {{ selectedModelIds.length }} 个</small></span><button type="button" @click="toggleAllModels">{{ selectedModelIds.length === modelCatalog.length ? '取消全选' : '全选' }}</button></div>
-            <label v-for="option in modelCatalog" :key="option.id" class="settings-model-check-row"><input :checked="selectedModelIds.includes(option.id)" type="checkbox" :value="option.id" @change="toggleCatalogModel(option.id)" /><span class="settings-model-check"></span><span><b>{{ option.name || option.id }}</b><small>{{ option.id }}<template v-if="option.ownedBy"> · {{ option.ownedBy }}</template></small></span></label>
+            <div class="settings-model-picker-header"><span>选择模型 <small>已选 {{ selectedModelIds.length }} 个 · 生图 {{ selectedImageModelIds.length }} 个</small></span><button type="button" @click="toggleAllModels">{{ selectedModelIds.length === modelCatalog.length ? '取消全选' : '全选' }}</button></div>
+            <div v-for="option in modelCatalog" :key="option.id" class="settings-model-check-row"><label class="settings-model-check-main"><input :checked="selectedModelIds.includes(option.id)" type="checkbox" :value="option.id" @change="toggleCatalogModel(option.id)" /><span class="settings-model-check"></span><span><b>{{ option.name || option.id }}</b><small>{{ option.id }}<template v-if="option.ownedBy"> · {{ option.ownedBy }}</template></small></span></label><label v-if="draft.endpointType !== 'anthropicMessages'" class="settings-image-model-toggle" title="允许此模型用于生图"><input :checked="selectedImageModelIds.includes(option.id)" type="checkbox" @change="toggleImageModel(option.id)" /><span>生图</span></label></div>
           </div>
           <label v-if="!modelCatalog.length" class="settings-custom-model-field"><span>模型 ID</span><input v-model="draft.model" name="model-id" type="text" placeholder="例如 gpt-4.1-mini" /></label>
           <p class="settings-modal-hint">自定义配置，请遵守法规并关注模型使用 Token 消耗。</p>
