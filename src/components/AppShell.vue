@@ -22,6 +22,10 @@ let stopResizeListener = null
 let taskArrivalTimer = null
 const nav = computed(() => [{ key: 'notes', label: t('notes'), icon: FileText, path: '/notes' }, { key: 'library', label: t('library'), icon: BookOpen, path: '/library' }, { key: 'tasks', label: '任务中心', icon: ListTodo, path: '/tasks' }, { key: 'settings', label: t('settings'), icon: Settings, path: '/settings' }])
 function navigate(path) { router.push(path) }
+function openTaskCenter() {
+  tasksStore.markResultsSeen()
+  router.push('/tasks')
+}
 function openConversation(id) { router.push({ path: '/chat', query: { id } }) }
 function closeHistoryOnOutsideClick(event) {
   if (!historyOpen.value || !(event.target instanceof Element)) return
@@ -91,7 +95,7 @@ onUnmounted(() => { if (stopResizeListener) stopResizeListener(); window.clearTi
         <button class="rail-add" aria-label="New" @click="navigate('/notes?new=1')"><Plus :size="18" /></button>
         <nav><button v-for="item in nav.filter(item => !['settings', 'tasks'].includes(item.key))" :key="item.key" :class="['rail-item', { active: props.active === item.key }]" :title="item.label" :aria-label="item.label" @click="navigate(item.path)"><component :is="item.icon" :size="19" /><span>{{ item.label }}</span></button></nav>
         <div class="rail-spacer"></div>
-        <button data-task-center-target class="rail-item rail-tasks" :class="{ active: props.active === 'tasks', 'has-running-task': tasksStore.runningCount, 'task-center-arrival': taskArrival, 'has-failed-task': tasksStore.failedCount }" title="任务中心" aria-label="任务中心" @click="navigate('/tasks')"><AlertCircle v-if="tasksStore.failedCount" class="rail-task-state is-failed" :size="20" /><LoaderCircle v-else-if="tasksStore.runningCount" class="rail-task-state is-running" :size="20" /><CheckCircle2 v-else-if="tasksStore.succeededCount && !tasksStore.waitingCount" class="rail-task-state is-succeeded" :size="20" /><ListTodo v-else :size="19" /><span>任务中心</span><b v-if="tasksStore.failedCount || tasksStore.waitingCount" class="rail-task-badge" :class="{ 'is-failed': tasksStore.failedCount }">{{ Math.min(tasksStore.failedCount || tasksStore.waitingCount, 99) }}</b></button>
+        <button data-task-center-target class="rail-item rail-tasks" :class="{ active: props.active === 'tasks', 'has-running-task': tasksStore.runningCount, 'task-center-arrival': taskArrival, 'has-failed-task': tasksStore.failedCount }" title="任务中心" aria-label="任务中心" @click="openTaskCenter"><AlertCircle v-if="tasksStore.failedCount" class="rail-task-state is-failed" :size="20" /><LoaderCircle v-else-if="tasksStore.runningCount" class="rail-task-state is-running" :size="20" /><CheckCircle2 v-else-if="tasksStore.unreadSucceededCount && !tasksStore.waitingCount" class="rail-task-state is-succeeded" :size="20" /><ListTodo v-else :size="19" /><span>任务中心</span><b v-if="tasksStore.failedCount || tasksStore.waitingCount" class="rail-task-badge" :class="{ 'is-failed': tasksStore.failedCount }">{{ Math.min(tasksStore.failedCount || tasksStore.waitingCount, 99) }}</b></button>
         <button class="rail-item rail-clock" :class="{ active: historyOpen }" title="历史记录" @click="historyOpen = !historyOpen"><span>◷</span></button>
         <button class="rail-item" :class="{ active: props.active === 'settings' }" :title="t('settings')" @click="navigate('/settings')"><Settings :size="19" /><span>{{ t('settings') }}</span></button>
       </aside>

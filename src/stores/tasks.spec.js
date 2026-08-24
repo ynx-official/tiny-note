@@ -83,4 +83,15 @@ describe('background task store', () => {
     store.tasks[0].status = 'failed'
     expect(store.failedCount).toBe(1)
   })
+
+  it('keeps successful tasks green only until their results are viewed', () => {
+    const store = useTasksStore()
+    store.tasks = [{ id: 'done-1', kind: 'note_ai', status: 'succeeded' }]
+
+    expect(store.unreadSucceededCount).toBe(1)
+
+    store.markResultsSeen()
+
+    expect(store.unreadSucceededCount).toBe(0)
+  })
 })

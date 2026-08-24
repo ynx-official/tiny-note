@@ -33,6 +33,7 @@ export const useTasksStore = defineStore('tasks', {
       return state.tasks.filter(Boolean).filter(task => ['failed', 'interrupted'].includes(task.status) && !retried.has(task.id)).length
     },
     succeededCount: state => state.tasks.filter(Boolean).filter(task => task.status === 'succeeded').length,
+    unreadSucceededCount: state => state.tasks.filter(Boolean).filter(task => task.status === 'succeeded' && !state.readTaskIds.includes(task.id)).length,
     activeSummaryForConversation: state => conversationId => state.tasks.filter(Boolean).find(task => task.kind === 'conversation_summary' && task.conversationId === conversationId && ['queued', 'running'].includes(task.status))
   },
   actions: {
