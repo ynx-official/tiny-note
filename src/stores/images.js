@@ -43,13 +43,14 @@ export const useImagesStore = defineStore('images', {
       if (asset) this.assetCache = { ...this.assetCache, [assetId]: asset }
       return asset
     },
-    async enqueue({ prompt, modelId, size, count }) {
+    async enqueue({ prompt, modelId, size, count, mode = 'generate', inputImages = [], maskImage = null }) {
       const tasks = useTasksStore()
+      const modeLabel = { generate: '生图', reference: '参考图', edit: '图片编辑', inpaint: '局部重绘' }[mode] || '生图'
       return tasks.enqueue({
         kind: 'image_generation',
-        title: `生图：${String(prompt).trim().slice(0, 36)}`,
+        title: `${modeLabel}：${String(prompt).trim().slice(0, 36)}`,
         modelProfileId: modelId,
-        payload: { request: { imageModelProfileId: modelId, prompt, size, count } }
+        payload: { request: { imageModelProfileId: modelId, prompt, size, count, mode, inputImages, maskImage } }
       })
     },
     async deleteGeneration(generationId) {

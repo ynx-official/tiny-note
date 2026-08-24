@@ -12,6 +12,20 @@ const MAX_PROMPT_CHARS: usize = 4_000;
 const MAX_COUNT: u8 = 4;
 const MAX_IMAGE_BYTES: usize = 20 * 1024 * 1024;
 const MAX_RESPONSE_BYTES: usize = 64 * 1024 * 1024;
+const MAX_INPUT_IMAGES: usize = 4;
+const MAX_INPUT_TOTAL_BYTES: usize = 50 * 1024 * 1024;
+
+fn default_image_mode() -> String {
+    "generate".into()
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone)]
+#[serde(rename_all = "camelCase")]
+pub struct ImageInputDto {
+    pub name: String,
+    pub mime_type: String,
+    pub data_url: String,
+}
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
 #[serde(rename_all = "camelCase")]
@@ -21,6 +35,12 @@ pub struct ImageGenerateRequest {
     pub prompt: String,
     pub size: String,
     pub count: u8,
+    #[serde(default)]
+    pub mode: String,
+    #[serde(default)]
+    pub input_images: Vec<ImageInputDto>,
+    #[serde(default)]
+    pub mask_image: Option<ImageInputDto>,
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
@@ -44,6 +64,8 @@ pub struct ImageGenerationDto {
     pub id: String,
     pub task_id: String,
     pub prompt: String,
+    #[serde(default = "default_image_mode")]
+    pub mode: String,
     pub image_model_profile_id: String,
     pub size: String,
     pub count: u8,
@@ -83,13 +105,20 @@ struct ImageBytes {
     mime_type: String,
 }
 
+#[derive(Debug)]
+struct ImageUpload {
+    bytes: Vec<u8>,
+    mime_type: String,
+    file_name: String,
+}
+
 fn valid_endpoint_type(value: &str) -> bool {
     matches!(value, "openaiChat" | "openaiResponses")
 }
 
 fn normalize_base_url(value: &str) -> String {
     let mut base = value.trim().trim_end_matches('/').to_string();
-    for suffix in ["/images/generations", "/images", "/v1"] {
+    for suffix in ["/images/generations", "/images/edits", "/images", "/v1"] {
         if let Some(stripped) = base.strip_suffix(suffix) {
             base = stripped.trim_end_matches('/').to_string();
             if suffix == "/v1" {
@@ -110,7 +139,18 @@ fn generations_endpoint(base_url: &str) -> String {
     }
 }
 
-fn validate_generation_request(request: &ImageGenerateRequest) -> Result<(String, u8), AppError> {
+fn edits_endpoint(base_url: &str) -> String {
+    let base = base_url.trim().trim_end_matches('/');
+    if base.ends_with("/images/edits") {
+        base.to_string()
+    } else {
+        format!("{}/images/edits", normalize_base_url(base))
+    }
+}
+
+fn validate_generation_request(
+    request: &ImageGenerateRequest,
+) -> Result<(String, u8, String), AppError> {
     let prompt = request.prompt.trim().to_string();
     if prompt.is_empty() {
         return Err(AppError::invalid("empty_image_prompt", "图片描述不能为空"));
@@ -130,7 +170,149 @@ fn validate_generation_request(request: &ImageGenerateRequest) -> Result<(String
             "一次最多生成 4 张图片",
         ));
     }
-    Ok((prompt, request.count))
+    let mode = if request.mode.trim().is_empty() {
+        "generate"
+    } else {
+        request.mode.trim()
+    };
+    if !matches!(mode, "generate" | "reference" | "edit" | "inpaint") {
+        return Err(AppError::invalid("invalid_image_mode", "图片生成模式无效"));
+    }
+    match mode {
+        "generate" if !request.input_images.is_empty() || request.mask_image.is_some() => {
+            return Err(AppError::invalid(
+                "unexpected_image_input",
+                "文字生图不需要上传图片",
+            ));
+        }
+        "reference"
+            if request.input_images.is_empty()
+                || request.input_images.len() > MAX_INPUT_IMAGES
+                || request.mask_image.is_some() =>
+        {
+            return Err(AppError::invalid(
+                "invalid_reference_images",
+                "参考图模式需要上传 1 至 4 张图片",
+            ));
+        }
+        "edit" if request.input_images.len() != 1 || request.mask_image.is_some() => {
+            return Err(AppError::invalid(
+                "invalid_edit_image",
+                "图片编辑模式需要上传 1 张原图",
+            ));
+        }
+        "inpaint" if request.input_images.len() != 1 || request.mask_image.is_none() => {
+            return Err(AppError::invalid(
+                "invalid_inpaint_input",
+                "局部重绘需要 1 张原图和对应蒙版",
+            ));
+        }
+        _ => {}
+    }
+    Ok((prompt, request.count, mode.to_string()))
+}
+
+fn decode_upload(input: &ImageInputDto, mask: bool) -> Result<ImageUpload, AppError> {
+    let (metadata, encoded) = input
+        .data_url
+        .split_once(',')
+        .ok_or_else(|| AppError::invalid("invalid_image_input", "上传图片内容无效"))?;
+    if !metadata.starts_with("data:") || !metadata.ends_with(";base64") {
+        return Err(AppError::invalid(
+            "invalid_image_input",
+            "上传图片必须使用 Base64 数据",
+        ));
+    }
+    let declared_mime = metadata
+        .trim_start_matches("data:")
+        .trim_end_matches(";base64")
+        .to_ascii_lowercase();
+    if !matches!(
+        declared_mime.as_str(),
+        "image/png" | "image/jpeg" | "image/webp"
+    ) {
+        return Err(AppError::invalid(
+            "unsupported_image_input",
+            "仅支持 PNG、JPEG 或 WebP 图片",
+        ));
+    }
+    let bytes = BASE64
+        .decode(encoded)
+        .map_err(|_| AppError::invalid("invalid_image_input", "上传图片的 Base64 内容无效"))?;
+    if bytes.is_empty() || bytes.len() > MAX_IMAGE_BYTES {
+        return Err(AppError::invalid(
+            "image_input_too_large",
+            "单张上传图片不能超过 20 MB",
+        ));
+    }
+    let detected = detect_mime(&bytes, None)
+        .ok_or_else(|| AppError::invalid("invalid_image_input", "上传内容不是有效图片"))?;
+    if detected != declared_mime || (!input.mime_type.is_empty() && input.mime_type != detected) {
+        return Err(AppError::invalid(
+            "image_input_mismatch",
+            "上传图片的格式信息不一致",
+        ));
+    }
+    if mask && detected != "image/png" {
+        return Err(AppError::invalid(
+            "invalid_image_mask",
+            "局部重绘蒙版必须是带透明通道的 PNG",
+        ));
+    }
+    let extension = extension_for_mime(detected);
+    let fallback = if mask { "mask" } else { "image" };
+    let stem = input
+        .name
+        .rsplit_once('.')
+        .map(|(value, _)| value)
+        .unwrap_or(&input.name)
+        .chars()
+        .filter(|character| character.is_ascii_alphanumeric() || matches!(character, '-' | '_'))
+        .take(48)
+        .collect::<String>();
+    Ok(ImageUpload {
+        bytes,
+        mime_type: detected.into(),
+        file_name: format!(
+            "{}.{}",
+            if stem.is_empty() { fallback } else { &stem },
+            extension
+        ),
+    })
+}
+
+fn decode_edit_uploads(
+    request: &ImageGenerateRequest,
+) -> Result<(Vec<ImageUpload>, Option<ImageUpload>), AppError> {
+    let images = request
+        .input_images
+        .iter()
+        .map(|input| decode_upload(input, false))
+        .collect::<Result<Vec<_>, _>>()?;
+    let mask = request
+        .mask_image
+        .as_ref()
+        .map(|input| decode_upload(input, true))
+        .transpose()?;
+    let total = images.iter().map(|image| image.bytes.len()).sum::<usize>()
+        + mask.as_ref().map_or(0, |image| image.bytes.len());
+    if total > MAX_INPUT_TOTAL_BYTES {
+        return Err(AppError::invalid(
+            "image_inputs_too_large",
+            "上传图片总大小不能超过 50 MB",
+        ));
+    }
+    if mask.is_some()
+        && images
+            .first()
+            .is_some_and(|image| image.mime_type != "image/png")
+    {
+        return Err(AppError::invalid(
+            "invalid_inpaint_format",
+            "局部重绘的原图和蒙版需要统一为 PNG 格式",
+        ));
+    }
+    Ok((images, mask))
 }
 
 fn provider_size(size: &str) -> &'static str {
@@ -170,6 +352,7 @@ pub fn init_schema(conn: &Connection) -> Result<(), AppError> {
            id TEXT PRIMARY KEY,
            task_id TEXT NOT NULL UNIQUE,
            prompt TEXT NOT NULL,
+           mode TEXT NOT NULL DEFAULT 'generate',
            image_model_profile_id TEXT NOT NULL,
            size TEXT NOT NULL,
            count INTEGER NOT NULL,
@@ -193,7 +376,24 @@ pub fn init_schema(conn: &Connection) -> Result<(), AppError> {
          CREATE INDEX IF NOT EXISTS idx_image_assets_generation ON image_assets(generation_id);
         ",
     )
-    .map_err(AppError::db)
+    .map_err(AppError::db)?;
+    let has_mode = conn
+        .prepare("PRAGMA table_info(image_generations)")
+        .map_err(AppError::db)?
+        .query_map([], |row| row.get::<_, String>(1))
+        .map_err(AppError::db)?
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(AppError::db)?
+        .iter()
+        .any(|column| column == "mode");
+    if !has_mode {
+        conn.execute(
+            "ALTER TABLE image_generations ADD COLUMN mode TEXT NOT NULL DEFAULT 'generate'",
+            [],
+        )
+        .map_err(AppError::db)?;
+    }
+    Ok(())
 }
 
 #[tauri::command]
@@ -367,6 +567,7 @@ type GenerationRow = (
     String,
     String,
     String,
+    String,
     i64,
     String,
     Option<String>,
@@ -377,7 +578,7 @@ type GenerationRow = (
 
 fn generation_rows(conn: &Connection, limit: u32) -> Result<Vec<GenerationRow>, AppError> {
     let mut statement = conn
-        .prepare("SELECT id,task_id,prompt,image_model_profile_id,size,count,status,error_code,error_message,created_at,completed_at FROM image_generations ORDER BY created_at DESC LIMIT ?1")
+        .prepare("SELECT id,task_id,prompt,mode,image_model_profile_id,size,count,status,error_code,error_message,created_at,completed_at FROM image_generations ORDER BY created_at DESC LIMIT ?1")
         .map_err(AppError::db)?;
     let mapped = statement
         .query_map(params![limit.min(500)], |row| {
@@ -387,12 +588,13 @@ fn generation_rows(conn: &Connection, limit: u32) -> Result<Vec<GenerationRow>, 
                 row.get::<_, String>(2)?,
                 row.get::<_, String>(3)?,
                 row.get::<_, String>(4)?,
-                row.get::<_, i64>(5)?,
-                row.get::<_, String>(6)?,
-                row.get::<_, Option<String>>(7)?,
+                row.get::<_, String>(5)?,
+                row.get::<_, i64>(6)?,
+                row.get::<_, String>(7)?,
                 row.get::<_, Option<String>>(8)?,
-                row.get::<_, String>(9)?,
-                row.get::<_, Option<String>>(10)?,
+                row.get::<_, Option<String>>(9)?,
+                row.get::<_, String>(10)?,
+                row.get::<_, Option<String>>(11)?,
             ))
         })
         .map_err(AppError::db)?
@@ -412,6 +614,7 @@ pub(crate) fn list_generations(
                 id,
                 task_id,
                 prompt,
+                mode,
                 model_id,
                 size,
                 count,
@@ -426,6 +629,7 @@ pub(crate) fn list_generations(
                     id,
                     task_id,
                     prompt,
+                    mode,
                     image_model_profile_id: model_id,
                     size,
                     count: count as u8,
@@ -486,11 +690,12 @@ pub(crate) fn insert_backup_data(
     for generation in generations {
         transaction
             .execute(
-                "INSERT INTO image_generations(id,task_id,prompt,image_model_profile_id,size,count,status,error_code,error_message,created_at,completed_at) VALUES(?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11)",
+                "INSERT INTO image_generations(id,task_id,prompt,mode,image_model_profile_id,size,count,status,error_code,error_message,created_at,completed_at) VALUES(?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12)",
                 params![
                     generation.id,
                     generation.task_id,
                     generation.prompt,
+                    generation.mode,
                     generation.image_model_profile_id,
                     generation.size,
                     generation.count as i64,
@@ -528,7 +733,7 @@ pub async fn image_generate(
     state: State<'_, AppState>,
     request: ImageGenerateRequest,
 ) -> Result<ImageGenerateResult, AppError> {
-    let (prompt, count) = validate_generation_request(&request)?;
+    let (prompt, count, mode) = validate_generation_request(&request)?;
     let (base_url, model, api_key, endpoint_type) = {
         let conn = state
             .db
@@ -562,25 +767,57 @@ pub async fn image_generate(
                 code: "provider_request_failed".into(),
                 message: "无法创建图片生成请求".into(),
             })?;
-        let body = json!({
-            "model": model,
-            "prompt": prompt,
-            "size": provider_size(&request.size),
-            "n": count
-        });
-        let response = client
-            .post(generations_endpoint(&base_url))
-            .bearer_auth(api_key)
-            .header("Accept", "application/json")
-            .json(&body)
-            .send()
-            .await
-            .map_err(|error| AppError::Operation {
+        let response_result = if mode == "generate" {
+            let body = json!({
+                "model": model,
+                "prompt": prompt,
+                "size": provider_size(&request.size),
+                "n": count
+            });
+            client
+                .post(generations_endpoint(&base_url))
+                .bearer_auth(&api_key)
+                .header("Accept", "application/json")
+                .json(&body)
+                .send()
+                .await
+        } else {
+            let (input_images, mask_image) = decode_edit_uploads(&request)?;
+            let mut form = reqwest::multipart::Form::new()
+                .text("model", model.clone())
+                .text("prompt", prompt.clone())
+                .text("size", provider_size(&request.size).to_string())
+                .text("n", count.to_string());
+            for image in input_images {
+                let part = reqwest::multipart::Part::bytes(image.bytes)
+                    .file_name(image.file_name)
+                    .mime_str(&image.mime_type)
+                    .map_err(|_| {
+                        AppError::invalid("invalid_image_input", "上传图片格式无效")
+                    })?;
+                form = form.part("image[]", part);
+            }
+            if let Some(mask) = mask_image {
+                let part = reqwest::multipart::Part::bytes(mask.bytes)
+                    .file_name(mask.file_name)
+                    .mime_str(&mask.mime_type)
+                    .map_err(|_| AppError::invalid("invalid_image_mask", "蒙版格式无效"))?;
+                form = form.part("mask", part);
+            }
+            client
+                .post(edits_endpoint(&base_url))
+                .bearer_auth(&api_key)
+                .header("Accept", "application/json")
+                .multipart(form)
+                .send()
+                .await
+        };
+        let response = response_result.map_err(|error| AppError::Operation {
                 code: "provider_request_failed".into(),
                 message: if error.is_timeout() {
-                    "图片生成超时（180 秒）".into()
+                    "图片处理超时（180 秒）".into()
                 } else {
-                    "图片生成请求失败".into()
+                    "图片处理请求失败".into()
                 },
             })?;
         let status = response.status();
@@ -662,8 +899,8 @@ pub async fn image_generate(
             let transaction = conn.transaction().map_err(AppError::db)?;
             transaction
                 .execute(
-                    "INSERT INTO image_generations(id,task_id,prompt,image_model_profile_id,size,count,status,created_at,completed_at) VALUES(?1,?2,?3,?4,?5,?6,'succeeded',?7,?7)",
-                    params![generation_id, request.request_id, prompt, request.image_model_profile_id, request.size, assets.len() as i64, created_at],
+                    "INSERT INTO image_generations(id,task_id,prompt,mode,image_model_profile_id,size,count,status,created_at,completed_at) VALUES(?1,?2,?3,?4,?5,?6,?7,'succeeded',?8,?8)",
+                    params![generation_id, request.request_id, prompt, mode, request.image_model_profile_id, request.size, assets.len() as i64, created_at],
                 )
                 .map_err(AppError::db)?;
             for asset in &assets {
@@ -783,6 +1020,29 @@ pub fn image_generation_delete(
 mod tests {
     use super::*;
 
+    const PNG_DATA_URL: &str = "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=";
+
+    fn input(name: &str) -> ImageInputDto {
+        ImageInputDto {
+            name: name.into(),
+            mime_type: "image/png".into(),
+            data_url: PNG_DATA_URL.into(),
+        }
+    }
+
+    fn request(mode: &str) -> ImageGenerateRequest {
+        ImageGenerateRequest {
+            request_id: "request".into(),
+            image_model_profile_id: "model".into(),
+            prompt: "一只猫".into(),
+            size: "square".into(),
+            count: 1,
+            mode: mode.into(),
+            input_images: Vec::new(),
+            mask_image: None,
+        }
+    }
+
     #[test]
     fn normalizes_image_endpoint_without_dropping_v1() {
         assert_eq!(
@@ -792,6 +1052,18 @@ mod tests {
         assert_eq!(
             generations_endpoint("https://example.com/v1/images/generations"),
             "https://example.com/v1/images/generations"
+        );
+        assert_eq!(
+            generations_endpoint("https://example.com/v1/images/edits"),
+            "https://example.com/v1/images/generations"
+        );
+        assert_eq!(
+            edits_endpoint("https://example.com/v1/images/edits"),
+            "https://example.com/v1/images/edits"
+        );
+        assert_eq!(
+            edits_endpoint("https://example.com/v1"),
+            "https://example.com/v1/images/edits"
         );
     }
 
@@ -813,5 +1085,59 @@ mod tests {
             Some("image/jpeg")
         );
         assert_eq!(detect_mime(b"RIFFxxxxWEBP", None), Some("image/webp"));
+    }
+
+    #[test]
+    fn validates_inputs_for_each_image_mode() {
+        let mut reference = request("reference");
+        assert!(validate_generation_request(&reference).is_err());
+        reference.input_images.push(input("reference.png"));
+        assert_eq!(
+            validate_generation_request(&reference).unwrap().2,
+            "reference"
+        );
+
+        let mut edit = request("edit");
+        edit.input_images.push(input("source.png"));
+        assert_eq!(validate_generation_request(&edit).unwrap().2, "edit");
+
+        let mut inpaint = request("inpaint");
+        inpaint.input_images.push(input("source.png"));
+        assert!(validate_generation_request(&inpaint).is_err());
+        inpaint.mask_image = Some(input("mask.png"));
+        assert_eq!(validate_generation_request(&inpaint).unwrap().2, "inpaint");
+        let (images, mask) = decode_edit_uploads(&inpaint).unwrap();
+        assert_eq!(images.len(), 1);
+        assert!(mask.is_some());
+    }
+
+    #[test]
+    fn migrates_existing_generation_table_with_mode() {
+        let conn = Connection::open_in_memory().unwrap();
+        conn.execute_batch(
+            "CREATE TABLE image_generations (
+               id TEXT PRIMARY KEY,
+               task_id TEXT NOT NULL UNIQUE,
+               prompt TEXT NOT NULL,
+               image_model_profile_id TEXT NOT NULL,
+               size TEXT NOT NULL,
+               count INTEGER NOT NULL,
+               status TEXT NOT NULL,
+               error_code TEXT,
+               error_message TEXT,
+               created_at TEXT NOT NULL,
+               completed_at TEXT
+             );",
+        )
+        .unwrap();
+        init_schema(&conn).unwrap();
+        let columns = conn
+            .prepare("PRAGMA table_info(image_generations)")
+            .unwrap()
+            .query_map([], |row| row.get::<_, String>(1))
+            .unwrap()
+            .collect::<Result<Vec<_>, _>>()
+            .unwrap();
+        assert!(columns.iter().any(|column| column == "mode"));
     }
 }
