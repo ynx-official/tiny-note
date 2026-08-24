@@ -126,4 +126,30 @@ describe('SettingsView model services', () => {
     await vi.waitFor(() => expect(mocks.invoke).toHaveBeenCalledWith('model_test', { modelId: 'custom-model' }))
     expect(wrapper.get('.settings-model-test-result').text()).toContain('连接成功')
   })
+
+  it('uses a centered in-app confirmation instead of the native browser confirm when deleting a model', async () => {
+    const confirmSpy = vi.spyOn(window, 'confirm').mockReturnValue(false)
+    const wrapper = mount(SettingsView, {
+      global: {
+        plugins: [createPinia(), createI18n({ legacy: false, locale: 'zh-CN', messages })],
+        stubs: { AgentToolsCatalog: true }
+      }
+    })
+    await vi.waitFor(() => expect(wrapper.text()).toContain('模型服务'))
+    await wrapper.findAll('.settings-nav-item').find(button => button.text().includes('模型服务')).trigger('click')
+    await vi.waitFor(() => expect(wrapper.text()).toContain('公司模型'))
+
+    await wrapper.get('.model-delete-btn').trigger('click')
+
+    expect(confirmSpy).not.toHaveBeenCalled()
+    expect(wrapper.get('[role="alertdialog"]').text()).toContain('删除模型')
+    expect(wrapper.get('[role="alertdialog"]').text()).toContain('公司模型')
+    await wrapper.get('.settings-confirm-backdrop').trigger('click')
+    expect(wrapper.find('[role="alertdialog"]').exists()).toBe(true)
+
+    await wrapper.get('.settings-confirm-delete').trigger('click')
+    await vi.waitFor(() => expect(mocks.invoke).toHaveBeenCalledWith('model_delete', { id: 'custom-model' }))
+    await vi.waitFor(() => expect(wrapper.find('[role="alertdialog"]').exists()).toBe(false))
+    confirmSpy.mockRestore()
+  })
 })

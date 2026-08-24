@@ -1588,11 +1588,29 @@ body, button, input, select, textarea { font-family: -apple-system, BlinkMacSyst
 .settings-custom-model-field { margin-top:14px; }
 .settings-modal-hint { margin:13px 0 0; color:var(--text-tertiary); font-size:11px; line-height:1.45; }
 .settings-model-modal-footer { min-height:72px; display:flex; align-items:center; justify-content:flex-end; gap:10px; padding:0 22px; border-top:1px solid var(--line); }
+.settings-confirm-backdrop { position:fixed; z-index:1400; inset:0; display:grid; place-items:center; padding:24px; background:rgba(15,23,42,.42); backdrop-filter:blur(2px); }
+.settings-confirm-dialog { width:min(400px,calc(100vw - 48px)); overflow:hidden; border:1px solid var(--line); border-radius:12px; background:var(--surface); box-shadow:0 24px 70px rgba(0,0,0,.24); }
+.settings-confirm-content { display:flex; align-items:flex-start; gap:13px; padding:22px 22px 18px; }
+.settings-confirm-icon { width:36px; height:36px; display:grid; place-items:center; flex:0 0 36px; border-radius:50%; color:#dc2626; background:color-mix(in srgb,#dc2626 11%,transparent); }
+.settings-confirm-copy { min-width:0; display:flex; flex-direction:column; gap:7px; }
+.settings-confirm-copy strong { color:var(--text-primary); font-size:16px; font-weight:600; line-height:1.35; }
+.settings-confirm-copy p { margin:0; color:var(--text-secondary); font-size:13px; line-height:1.55; }
+.settings-confirm-copy .settings-confirm-error { color:#dc2626; font-size:12px; }
+.settings-confirm-actions { min-height:62px; display:flex; align-items:center; justify-content:flex-end; gap:9px; padding:0 22px; border-top:1px solid var(--line); background:var(--surface-2); }
+.settings-confirm-actions button { min-width:72px; min-height:34px; display:inline-flex; align-items:center; justify-content:center; gap:6px; padding:7px 14px; border-radius:7px; font-size:13px; font-weight:550; }
+.settings-confirm-cancel { border:1px solid var(--line); color:var(--text-primary); background:var(--surface); }
+.settings-confirm-cancel:hover:not(:disabled) { background:var(--bg-hover); }
+.settings-confirm-delete { color:#fff; background:#dc2626; }
+.settings-confirm-delete:hover:not(:disabled) { background:#b91c1c; }
+.settings-confirm-actions button:disabled { cursor:not-allowed; opacity:.55; }
+.settings-confirm-delete .spinning { animation:settings-spin .8s linear infinite; }
 @media (max-width:760px) {
   .settings-model-primary-row { align-items:stretch; flex-direction:column; gap:10px; }
   .settings-primary-select-wrap { width:100%; }
   .settings-model-modal-backdrop { padding:10px; }
   .settings-model-modal { width:100%; max-height:calc(100vh - 20px); }
+  .settings-confirm-backdrop { padding:16px; }
+  .settings-confirm-dialog { width:100%; }
 }
 
 .provider-icon-image { width:30px; height:30px; flex:0 0 30px; display:block; object-fit:contain; border-radius:8px; }

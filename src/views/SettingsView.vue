@@ -33,6 +33,9 @@ const selectedModelIds = ref([])
 const modelFetchBusy = ref(false)
 const modelFetchError = ref('')
 const modelTestStates = ref({})
+const modelPendingDelete = ref(null)
+const modelDeleteBusy = ref(false)
+const modelDeleteError = ref('')
 const balanceStates = ref({})
 const balanceRefreshingAll = ref(false)
 const indexStatus = ref(null)
@@ -327,14 +330,35 @@ async function setPrimaryModel(model) {
   }
 }
 
-async function removeModel(id) {
-  if (!window.confirm(t('confirmDelete'))) return
-  await invoke('model_delete', { id })
-  localStorage.removeItem(`tiny-note-context-consent:${id}`)
-  await appStore.refreshModels()
-  const next = { ...balanceStates.value }
-  delete next[id]
-  balanceStates.value = next
+function requestModelDelete(model) {
+  modelDeleteError.value = ''
+  modelPendingDelete.value = model
+}
+
+function cancelModelDelete() {
+  if (modelDeleteBusy.value) return
+  modelPendingDelete.value = null
+  modelDeleteError.value = ''
+}
+
+async function confirmModelDelete() {
+  const model = modelPendingDelete.value
+  if (!model?.id || modelDeleteBusy.value) return
+  modelDeleteBusy.value = true
+  modelDeleteError.value = ''
+  try {
+    await invoke('model_delete', { id: model.id })
+    localStorage.removeItem(`tiny-note-context-consent:${model.id}`)
+    await appStore.refreshModels()
+    const next = { ...balanceStates.value }
+    delete next[model.id]
+    balanceStates.value = next
+    modelPendingDelete.value = null
+  } catch (error) {
+    modelDeleteError.value = error?.message || error?.code || (typeof error === 'string' ? error : '') || '删除失败，请重试'
+  } finally {
+    modelDeleteBusy.value = false
+  }
 }
 
 function providerForModel(model) {
@@ -527,7 +551,7 @@ watch(filteredSections, sections => {
                 <span class="settings-model-status">{{ model.apiKeyConfigured ? t('configured') : t('notConfigured') }}</span>
                 <button type="button" class="model-edit-btn" title="编辑模型服务" aria-label="编辑模型服务" @click="editModel(model)"><Pencil :size="15" /></button>
                 <button v-if="model.apiKeyConfigured" type="button" class="model-test-btn" :disabled="modelTestStates[model.id]?.loading" title="测试模型连接" aria-label="测试模型连接" @click="testModel(model)"><LoaderCircle v-if="modelTestStates[model.id]?.loading" class="spinning" :size="15" /><FlaskConical v-else :size="15" /></button>
-                <button type="button" class="model-delete-btn" :title="t('delete')" @click="removeModel(model.id)"><Trash2 :size="16" /></button>
+                <button type="button" class="model-delete-btn" :title="t('delete')" @click="requestModelDelete(model)"><Trash2 :size="16" /></button>
               </div>
             </div>
             <div v-else class="settings-empty settings-empty-large">{{ t('noModels') }}</div>
@@ -623,6 +647,22 @@ watch(filteredSections, sections => {
           <p class="settings-modal-hint">自定义配置，请遵守法规并关注模型使用 Token 消耗。</p>
         </div>
         <footer class="settings-model-modal-footer"><button type="button" class="settings-text-button" @click="cancelModel">{{ t('cancel') }}</button><button type="button" class="settings-action-button primary" :disabled="modelSaving || (!selectedModelIds.length && !draft.model.trim())" @click="saveModel">{{ modelSaving ? t('saving') : (isEditingModel ? '保存修改' : (locale === 'zh-CN' ? '保存' : 'Save')) }}</button></footer>
+      </section>
+    </div>
+    <div v-if="modelPendingDelete" class="settings-confirm-backdrop">
+      <section class="settings-confirm-dialog" role="alertdialog" aria-modal="true" aria-labelledby="model-delete-title" aria-describedby="model-delete-description">
+        <div class="settings-confirm-content">
+          <span class="settings-confirm-icon" aria-hidden="true"><AlertCircle :size="20" /></span>
+          <div class="settings-confirm-copy">
+            <strong id="model-delete-title">删除模型</strong>
+            <p id="model-delete-description">确定删除「{{ modelPendingDelete.name }}」吗？删除后需要重新配置才能使用。</p>
+            <p v-if="modelDeleteError" class="settings-confirm-error" role="alert">{{ modelDeleteError }}</p>
+          </div>
+        </div>
+        <footer class="settings-confirm-actions">
+          <button type="button" class="settings-confirm-cancel" :disabled="modelDeleteBusy" @click="cancelModelDelete">{{ t('cancel') }}</button>
+          <button type="button" class="settings-confirm-delete" :disabled="modelDeleteBusy" @click="confirmModelDelete"><LoaderCircle v-if="modelDeleteBusy" class="spinning" :size="14" />{{ modelDeleteBusy ? '删除中…' : t('delete') }}</button>
+        </footer>
       </section>
     </div>
   </div>
