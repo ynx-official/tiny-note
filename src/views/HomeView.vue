@@ -43,7 +43,7 @@ const providerIcons = { doubao: doubaoIcon, qwen: qwenIcon, zhipu: zhipuIcon, de
 const providerAliases = { doubao: ['doubao', '豆包'], qwen: ['qwen', '千问', '通义'], zhipu: ['zhipu', '智谱'], deepseek: ['deepseek'], kimi: ['kimi', 'moonshot'], minimax: ['minimax'], custom: ['custom', '其他', 'openai'] }
 const modelButtonLabel = computed(() => {
   const mode = thinkingMode.value === 'deep' ? (locale.value === 'en' ? 'Deep' : '深度') : (locale.value === 'en' ? 'Quick' : '快速')
-  return selectedModel.value ? `${selectedModel.value.name} · ${mode}` : (locale.value === 'en' ? `Local AI · ${mode}` : `本地 AI · ${mode}`)
+  return selectedModel.value ? `${selectedModel.value.connectionName || selectedModel.value.name} · ${selectedModel.value.model} · ${mode}` : (locale.value === 'en' ? `Local AI · ${mode}` : `本地 AI · ${mode}`)
 })
 
 const copy = computed(() => locale.value === 'en' ? {
@@ -209,7 +209,7 @@ onMounted(async () => {
               <div v-if="modelMenuOpen" class="home-model-menu" :class="{ 'is-above': modelMenuPlacement === 'above' }" :style="{ '--home-model-menu-max-height': `${modelMenuMaxHeight}px` }">
                 <div class="home-thinking-row"><span><Sparkles :size="15" />思考模式</span><div class="home-thinking-tabs"><button type="button" :class="{ active: thinkingMode === 'fast' }" @click="thinkingMode = 'fast'"><span>快速</span></button><button type="button" :class="{ active: thinkingMode === 'deep' }" @click="thinkingMode = 'deep'"><span>深度</span></button></div></div>
                 <div class="home-model-divider"></div>
-                <button v-for="model in models" :key="model.id" type="button" class="home-model-option" :class="{ active: model.id === selectedModel?.id }" @click="selectModel(model)"><img :src="providerIcon(model)" :alt="modelProviderLabel(model.provider)" class="home-model-provider-icon" /><span><b>{{ model.model || model.name }}</b></span><span v-if="model.id === selectedModel?.id" class="home-model-check">✓</span></button>
+                <button v-for="model in models" :key="model.id" type="button" class="home-model-option" :class="{ active: model.id === selectedModel?.id }" @click="selectModel(model)"><img :src="providerIcon(model)" :alt="modelProviderLabel(model.provider)" class="home-model-provider-icon" /><span><b>{{ model.connectionName || model.name }}</b><small>{{ model.model }}</small></span><span v-if="model.id === selectedModel?.id" class="home-model-check">✓</span></button>
                 <button v-if="!models.length" type="button" class="home-model-empty" @click="open('/settings'); modelMenuOpen = false">请先在设置中添加模型</button>
               </div>
             </div>
