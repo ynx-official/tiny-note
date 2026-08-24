@@ -5,6 +5,7 @@ import { useI18n } from 'vue-i18n'
 import { AlertCircle, Check, ChevronDown, ChevronRight, Cpu, FlaskConical, Globe2, Info, Languages, LoaderCircle, Moon, Monitor, Palette, Pencil, Plus, RefreshCw, Search, Sparkles, Sun, Trash2, Wrench, X } from 'lucide-vue-next'
 import { invoke } from '../services/tauri'
 import { appUpdater } from '../services/appUpdater'
+import { requestConfirmation, showToast } from '../services/appFeedback'
 import { useAppStore } from '../stores/app'
 import { modelProviderLabel } from '../utils/modelProvider'
 import AgentToolsCatalog from '../components/AgentToolsCatalog.vue'
@@ -33,9 +34,6 @@ const selectedModelIds = ref([])
 const modelFetchBusy = ref(false)
 const modelFetchError = ref('')
 const modelTestStates = ref({})
-const modelPendingDelete = ref(null)
-const modelDeleteBusy = ref(false)
-const modelDeleteError = ref('')
 const balanceStates = ref({})
 const balanceRefreshingAll = ref(false)
 const indexStatus = ref(null)
@@ -91,6 +89,21 @@ const isEditingModel = computed(() => Boolean(draft.value?.id))
 const selectedEndpoint = computed(() => endpointOptions.find(option => option.key === draft.value?.endpointType) || endpointOptions[1])
 const selectedCatalogModels = computed(() => modelCatalog.value.filter(option => selectedModelIds.value.includes(option.id)))
 const primaryModel = computed(() => models.value.find(model => model.isDefault) || models.value[0] || null)
+const modelConnections = computed(() => {
+  const groups = new Map()
+  for (const model of models.value) {
+    const key = model.providerId || [model.provider, model.baseUrl, model.endpointType || 'openaiChat'].join('|')
+    if (!groups.has(key)) groups.set(key, {
+      id: key,
+      name: model.connectionName || providerLabel(model),
+      providerId: model.providerId || null,
+      representative: model,
+      models: []
+    })
+    groups.get(key).models.push(model)
+  }
+  return [...groups.values()]
+})
 const balanceModels = computed(() => {
   const byProvider = new Map()
   for (const model of models.value) {
@@ -119,7 +132,7 @@ const updateMessage = computed(() => {
 
 function emptyDraft() {
   const provider = providerOptions[3]
-  return { id: '', name: '', providerKey: provider.key, provider: provider.label, baseUrl: provider.baseUrl, model: '', endpointType: 'openaiChat', isDefault: models.value.length === 0, apiKey: '' }
+  return { id: '', providerId: crypto.randomUUID(), connectionName: provider.label, name: '', providerKey: provider.key, provider: provider.label, baseUrl: provider.baseUrl, model: '', endpointType: 'openaiChat', isDefault: models.value.length === 0, apiKey: '' }
 }
 
 async function save() {
@@ -178,7 +191,12 @@ async function restoreWorkspace(event) {
   if (!file) return
   try {
     const backup = JSON.parse(await file.text())
-    const confirmed = window.confirm(locale.value === 'zh-CN' ? '恢复会替换当前笔记、知识库和设置，确定继续吗？建议先导出当前备份。' : 'Restore will replace current notes, libraries, and settings. Continue? Export a backup first.')
+    const confirmed = await requestConfirmation({
+      title: locale.value === 'zh-CN' ? '恢复工作区' : 'Restore workspace',
+      message: locale.value === 'zh-CN' ? '恢复会替换当前笔记、知识库和设置。建议先导出当前备份，确定继续吗？' : 'Restore will replace current notes, libraries, and settings. Export a backup first. Continue?',
+      tone: 'danger',
+      confirmLabel: locale.value === 'zh-CN' ? '继续恢复' : 'Restore'
+    })
     if (!confirmed) return
     await invoke('workspace_import', { request: { backup, replaceExisting: true } })
     backupStatus.value = locale.value === 'zh-CN' ? '恢复完成，正在重新加载…' : 'Restore complete. Reloading…'
@@ -200,6 +218,7 @@ function editModel(model) {
   const provider = providerForModel(model)
   draft.value = {
     ...model,
+    connectionName: model.connectionName || provider.label,
     providerKey: provider.key,
     provider: provider.label,
     name: model.name || '',
@@ -211,6 +230,10 @@ function editModel(model) {
   modelFetchError.value = ''
   providerMenuOpen.value = false
   endpointMenuOpen.value = false
+}
+
+function editConnection(connection) {
+  editModel(connection.representative)
 }
 
 function cancelModel() {
@@ -296,6 +319,8 @@ async function saveModel() {
         profile: {
           id: editing ? draft.value.id : crypto.randomUUID(),
           name: (options.length === 1 && draft.value.name.trim()) || draft.value.provider + ' ' + option.id,
+          providerId: draft.value.providerId,
+          connectionName: draft.value.connectionName.trim() || draft.value.provider,
           provider: draft.value.provider,
           baseUrl: draft.value.baseUrl.trim(),
           model: option.id,
@@ -330,22 +355,9 @@ async function setPrimaryModel(model) {
   }
 }
 
-function requestModelDelete(model) {
-  modelDeleteError.value = ''
-  modelPendingDelete.value = model
-}
-
-function cancelModelDelete() {
-  if (modelDeleteBusy.value) return
-  modelPendingDelete.value = null
-  modelDeleteError.value = ''
-}
-
-async function confirmModelDelete() {
-  const model = modelPendingDelete.value
-  if (!model?.id || modelDeleteBusy.value) return
-  modelDeleteBusy.value = true
-  modelDeleteError.value = ''
+async function requestModelDelete(model) {
+  const confirmed = await requestConfirmation({ title: '删除模型', message: `确定删除「${model.name}」吗？删除后需要重新配置才能使用。`, tone: 'danger', confirmLabel: '删除' })
+  if (!confirmed) return
   try {
     await invoke('model_delete', { id: model.id })
     localStorage.removeItem(`tiny-note-context-consent:${model.id}`)
@@ -353,11 +365,22 @@ async function confirmModelDelete() {
     const next = { ...balanceStates.value }
     delete next[model.id]
     balanceStates.value = next
-    modelPendingDelete.value = null
   } catch (error) {
-    modelDeleteError.value = error?.message || error?.code || (typeof error === 'string' ? error : '') || '删除失败，请重试'
-  } finally {
-    modelDeleteBusy.value = false
+    showToast(error?.message || error?.code || (typeof error === 'string' ? error : '') || '删除失败，请重试', { tone: 'error' })
+  }
+}
+
+async function requestConnectionDelete(connection) {
+  const confirmed = await requestConfirmation({ title: '删除模型服务', message: `确定删除「${connection.name}」及其 ${connection.models.length} 个模型吗？`, tone: 'danger', confirmLabel: '删除服务' })
+  if (!confirmed) return
+  try {
+    for (const model of connection.models) {
+      await invoke('model_delete', { id: model.id })
+      localStorage.removeItem(`tiny-note-context-consent:${model.id}`)
+    }
+    await appStore.refreshModels()
+  } catch (error) {
+    showToast(error?.message || error?.code || '删除失败，请重试', { tone: 'error' })
   }
 }
 
@@ -542,17 +565,26 @@ watch(filteredSections, sections => {
                 </div>
               </div>
             </div>
-            <div class="settings-subheading">自定义模型</div>
-            <button type="button" class="settings-add-model-row" @click="addModel"><Plus :size="17" /><span>{{ t('addModel') }}</span><ChevronRight :size="15" /></button>
-            <div v-if="models.length" class="settings-model-list">
-              <div v-for="model in models" :key="model.id" class="settings-model-card">
-                <img :src="providerIcon(model)" :alt="providerLabel(model)" class="provider-icon-image" />
-                <div class="settings-model-card-copy"><strong>{{ model.name }}</strong><small>{{ providerLabel(model) }} · {{ endpointLabel(model) }} · {{ model.model }}</small><span v-if="modelTestStates[model.id]" class="settings-model-test-result" :class="`is-${modelTestStates[model.id].status}`"><Check v-if="modelTestStates[model.id].status === 'success'" :size="11" /><AlertCircle v-else-if="modelTestStates[model.id].status === 'error'" :size="11" /><LoaderCircle v-else class="spinning" :size="11" />{{ modelTestStates[model.id].message }}</span></div>
-                <span class="settings-model-status">{{ model.apiKeyConfigured ? t('configured') : t('notConfigured') }}</span>
-                <button type="button" class="model-edit-btn" title="编辑模型服务" aria-label="编辑模型服务" @click="editModel(model)"><Pencil :size="15" /></button>
-                <button v-if="model.apiKeyConfigured" type="button" class="model-test-btn" :disabled="modelTestStates[model.id]?.loading" title="测试模型连接" aria-label="测试模型连接" @click="testModel(model)"><LoaderCircle v-if="modelTestStates[model.id]?.loading" class="spinning" :size="15" /><FlaskConical v-else :size="15" /></button>
-                <button type="button" class="model-delete-btn" :title="t('delete')" @click="requestModelDelete(model)"><Trash2 :size="16" /></button>
-              </div>
+            <div class="settings-subheading">模型服务</div>
+            <button type="button" class="settings-add-model-row" @click="addModel"><Plus :size="17" /><span>添加模型服务</span><ChevronRight :size="15" /></button>
+            <div v-if="modelConnections.length" class="settings-connection-list">
+              <article v-for="connection in modelConnections" :key="connection.id" class="settings-connection-card">
+                <header class="settings-connection-head">
+                  <img :src="providerIcon(connection.representative)" :alt="providerLabel(connection.representative)" class="provider-icon-image" />
+                  <div class="settings-model-card-copy"><strong>{{ connection.name }}</strong><small>{{ providerLabel(connection.representative) }} · {{ endpointLabel(connection.representative) }} · {{ connection.representative.baseUrl }}</small></div>
+                  <span class="settings-model-status">{{ connection.models.length }} 个模型 · {{ connection.representative.apiKeyConfigured ? t('configured') : t('notConfigured') }}</span>
+                  <button type="button" class="model-edit-btn" title="编辑模型服务" aria-label="编辑模型服务" @click="editConnection(connection)"><Pencil :size="15" /></button>
+                  <button type="button" class="model-delete-btn" title="删除模型服务" aria-label="删除模型服务" @click="requestConnectionDelete(connection)"><Trash2 :size="16" /></button>
+                </header>
+                <div class="settings-connection-models">
+                  <div v-for="model in connection.models" :key="model.id" class="settings-connection-model-row">
+                    <div class="settings-model-card-copy"><strong>{{ model.name }}</strong><small>{{ model.model }}</small><span v-if="modelTestStates[model.id]" class="settings-model-test-result" :class="`is-${modelTestStates[model.id].status}`"><Check v-if="modelTestStates[model.id].status === 'success'" :size="11" /><AlertCircle v-else-if="modelTestStates[model.id].status === 'error'" :size="11" /><LoaderCircle v-else class="spinning" :size="11" />{{ modelTestStates[model.id].message }}</span></div>
+                    <span v-if="model.isDefault" class="settings-model-default-badge">首选</span>
+                    <button v-if="model.apiKeyConfigured" type="button" class="model-test-btn" :disabled="modelTestStates[model.id]?.loading" title="测试模型连接" aria-label="测试模型连接" @click="testModel(model)"><LoaderCircle v-if="modelTestStates[model.id]?.loading" class="spinning" :size="15" /><FlaskConical v-else :size="15" /></button>
+                    <button type="button" class="model-delete-btn" title="移除模型" aria-label="移除模型" @click="requestModelDelete(model)"><Trash2 :size="15" /></button>
+                  </div>
+                </div>
+              </article>
             </div>
             <div v-else class="settings-empty settings-empty-large">{{ t('noModels') }}</div>
             <div class="settings-subheading settings-balance-heading"><span>账户余额</span><button type="button" class="settings-balance-refresh-all" :disabled="balanceRefreshingAll || !balanceModels.some(isDeepSeek)" @click="queryAllBalances"><RefreshCw :size="14" :class="{ spinning: balanceRefreshingAll }" />刷新全部</button></div>
@@ -608,8 +640,8 @@ watch(filteredSections, sections => {
       </main>
     </div>
     <div v-if="draft" class="settings-model-modal-backdrop">
-      <section class="settings-model-modal" role="dialog" aria-modal="true" :aria-label="isEditingModel ? '编辑模型' : '添加模型'">
-        <header class="settings-model-modal-header"><strong>{{ isEditingModel ? '编辑模型' : '添加模型' }}</strong><button type="button" aria-label="关闭" @click="cancelModel"><X :size="20" /></button></header>
+      <section class="settings-model-modal" role="dialog" aria-modal="true" :aria-label="isEditingModel ? '编辑模型服务' : '添加模型服务'">
+        <header class="settings-model-modal-header"><strong>{{ isEditingModel ? '编辑模型服务' : '添加模型服务' }}</strong><button type="button" aria-label="关闭" @click="cancelModel"><X :size="20" /></button></header>
         <div class="settings-model-modal-body">
           <label class="settings-modal-label">模型厂商</label>
           <div class="settings-provider-control">
@@ -633,7 +665,7 @@ watch(filteredSections, sections => {
             </div>
           </div>
           <div class="settings-modal-form-grid">
-            <label><span>配置名称</span><input v-model="draft.name" name="profile-name" type="text" placeholder="例如：公司内部模型" /></label>
+            <label><span>连接名称</span><input v-model="draft.connectionName" name="profile-name" type="text" placeholder="例如：公司网关" /></label>
             <label><span>{{ t('baseUrl') }}</span><input v-model="draft.baseUrl" name="base-url" type="url" placeholder="https://api.example.com/v1" /></label>
             <label><span>{{ t('apiKey') }}</span><input v-model="draft.apiKey" name="api-key" type="password" :placeholder="isEditingModel && draft.apiKeyConfigured ? '留空保留已保存的 API Key' : t('apiKey')" autocomplete="new-password" /><small v-if="isEditingModel && draft.apiKeyConfigured" class="settings-key-hint">已保存的 Key 不会回显；留空时获取模型和保存都会继续使用原 Key。</small></label>
           </div>
@@ -647,22 +679,6 @@ watch(filteredSections, sections => {
           <p class="settings-modal-hint">自定义配置，请遵守法规并关注模型使用 Token 消耗。</p>
         </div>
         <footer class="settings-model-modal-footer"><button type="button" class="settings-text-button" @click="cancelModel">{{ t('cancel') }}</button><button type="button" class="settings-action-button primary" :disabled="modelSaving || (!selectedModelIds.length && !draft.model.trim())" @click="saveModel">{{ modelSaving ? t('saving') : (isEditingModel ? '保存修改' : (locale === 'zh-CN' ? '保存' : 'Save')) }}</button></footer>
-      </section>
-    </div>
-    <div v-if="modelPendingDelete" class="settings-confirm-backdrop">
-      <section class="settings-confirm-dialog" role="alertdialog" aria-modal="true" aria-labelledby="model-delete-title" aria-describedby="model-delete-description">
-        <div class="settings-confirm-content">
-          <span class="settings-confirm-icon" aria-hidden="true"><AlertCircle :size="20" /></span>
-          <div class="settings-confirm-copy">
-            <strong id="model-delete-title">删除模型</strong>
-            <p id="model-delete-description">确定删除「{{ modelPendingDelete.name }}」吗？删除后需要重新配置才能使用。</p>
-            <p v-if="modelDeleteError" class="settings-confirm-error" role="alert">{{ modelDeleteError }}</p>
-          </div>
-        </div>
-        <footer class="settings-confirm-actions">
-          <button type="button" class="settings-confirm-cancel" :disabled="modelDeleteBusy" @click="cancelModelDelete">{{ t('cancel') }}</button>
-          <button type="button" class="settings-confirm-delete" :disabled="modelDeleteBusy" @click="confirmModelDelete"><LoaderCircle v-if="modelDeleteBusy" class="spinning" :size="14" />{{ modelDeleteBusy ? '删除中…' : t('delete') }}</button>
-        </footer>
       </section>
     </div>
   </div>

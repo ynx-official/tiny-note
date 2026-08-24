@@ -32,6 +32,7 @@ import { createNoteExtensions } from '../editor/noteExtensions'
 import { DEFAULT_NOTE_MODE, NOTE_MODES, applyMarkdownSourceToEditor, clampSplitRatio, isRichClipboardHtml, markdownToEditorHtml, sanitizeEditorHtml, scrollOffset, scrollProgress } from '../utils/noteMarkdown'
 import { prepareTaskFlight } from '../utils/taskFlight'
 import { requestPrompt } from '../services/promptDialog'
+import { requestConfirmation, showToast } from '../services/appFeedback'
 
 const lowlight = createLowlight()
 lowlight.register('javascript', javascript); lowlight.register('typescript', typescript); lowlight.register('python', python); lowlight.register('json', json); lowlight.register('html', xml); lowlight.register('xml', xml); lowlight.register('css', css); lowlight.register('bash', bash); lowlight.register('sql', sql); lowlight.register('markdown', markdown); lowlight.register('yaml', yaml); lowlight.register('rust', rust)
@@ -653,7 +654,7 @@ async function stopAi() { if (!aiRequestId.value) return; await tasksStore.cance
 async function exportMarkdown() { if (!props.note || !editor.value || !await flushLatestContent()) return; const markdown = props.note.contentMarkdown || getEditorMarkdown(); const blob = new Blob([markdown], { type: 'text/markdown;charset=utf-8' }); const url = URL.createObjectURL(blob); const link = document.createElement('a'); link.href = url; link.download = `${props.note.title || 'note'}.md`; link.click(); URL.revokeObjectURL(url) }
 function printNote() { window.print() }
 async function openRevisions() { if (!props.note) return; moreOpen.value = false; revisionsOpen.value = true; revisionsBusy.value = true; try { revisions.value = await (await import('../services/tauri')).invoke('note_revision_list', { noteId: props.note.id }) } finally { revisionsBusy.value = false } }
-async function restoreRevision(revision) { if (!window.confirm('恢复这个版本？当前内容也会先保存为可恢复版本。')) return; const updated = await (await import('../services/tauri')).invoke('note_revision_restore', { id: revision.id }); Object.assign(props.note, updated); applyingEditorContent = true; editor.value?.commands.setContent(prepareEditorContent(updated), { emitUpdate: false }); applyingEditorContent = false; markdownDraft.value = updated.contentMarkdown || getEditorMarkdown() || ''; sourceDirty.value = false; markdownParseError.value = ''; pendingSourceDrafts.delete(updated.id); persistedSignatures.set(updated.id, noteContentSignature(updated)); revisions.value = await (await import('../services/tauri')).invoke('note_revision_list', { noteId: props.note.id }) }
+async function restoreRevision(revision) { if (!(await requestConfirmation({ title: '恢复历史版本', message: '恢复这个版本？当前内容也会先保存为可恢复版本。', confirmLabel: '恢复' }))) return; const updated = await (await import('../services/tauri')).invoke('note_revision_restore', { id: revision.id }); Object.assign(props.note, updated); applyingEditorContent = true; editor.value?.commands.setContent(prepareEditorContent(updated), { emitUpdate: false }); applyingEditorContent = false; markdownDraft.value = updated.contentMarkdown || getEditorMarkdown() || ''; sourceDirty.value = false; markdownParseError.value = ''; pendingSourceDrafts.delete(updated.id); persistedSignatures.set(updated.id, noteContentSignature(updated)); revisions.value = await (await import('../services/tauri')).invoke('note_revision_list', { noteId: props.note.id }) }
 function formatRevisionTime(value) { try { return new Intl.DateTimeFormat('zh-CN', { dateStyle: 'medium', timeStyle: 'short' }).format(new Date(value)) } catch { return value } }
 function restoreSavedSelection() { if (!editor.value || !savedSelection) return false; return editor.value.chain().focus().setTextSelection(savedSelection).run() }
 function clearAiResultState() { aiOutputOpen.value = false; aiText.value = ''; aiOriginalText.value = ''; aiResultAction.value = ''; aiFeedback.value = ''; aiDialogPosition.value = null; aiProposal.value = null; aiSources.value = [] }
@@ -785,13 +786,13 @@ async function confirmPendingAiChange() {
   } catch (error) {
     applyingEditorContent = false
     restoreAiChange(change)
-    window.alert(error?.code === 'proposal_stale' ? '文章已经发生变化，请重新生成修改建议。' : '应用修改失败，请重试。')
+    showToast(error?.code === 'proposal_stale' ? '文章已经发生变化，请重新生成修改建议。' : '应用修改失败，请重试。', { tone: 'error' })
   }
 }
 async function applyAiResult(mode) {
   if (!editor.value || !aiText.value || !aiProposal.value) return
   if (mode === 'insert' && editorMode.value !== 'rich') {
-    window.alert('Markdown 和阅读模式没有可靠插入位置，请切换到即时编辑后再应用插入。')
+    showToast('Markdown 和阅读模式没有可靠插入位置，请切换到即时编辑后再应用插入。', { tone: 'warning' })
     return
   }
   if (!await flushLatestContent()) return
@@ -840,7 +841,7 @@ async function applyAiResult(mode) {
   } catch (error) {
     applyingEditorContent = false
     restoreAiChange(change)
-    window.alert(error?.code === 'proposal_stale' ? '文章已经发生变化，请重新生成修改建议。' : '应用修改失败，请重试。')
+    showToast(error?.code === 'proposal_stale' ? '文章已经发生变化，请重新生成修改建议。' : '应用修改失败，请重试。', { tone: 'error' })
   }
 }
 function insertAi() { return applyAiResult('insert') }
@@ -997,7 +998,7 @@ async function editLink() {
 async function addToKnowledge(knowledgeBaseId) {
   if (!props.note || !knowledgeBaseId) return
   if (!await flushLatestContent()) return
-  try { await library.addNoteReference(knowledgeBaseId, props.note); knowledgeMenuOpen.value = false } catch (error) { window.alert(error?.message || '添加到知识库失败，请重试') }
+  try { await library.addNoteReference(knowledgeBaseId, props.note); knowledgeMenuOpen.value = false } catch (error) { showToast(error?.message || '添加到知识库失败，请重试', { tone: 'error' }) }
 }
 async function saveNoteMetadata() {
   if (!props.note) return
@@ -1029,7 +1030,7 @@ async function togglePinned() {
 async function createKnowledgeFromEditor() {
   const name = await requestPrompt(t('newKnowledge'))
   if (!name?.trim()) return
-  try { await library.create(name.trim(), 'personal'); if (library.activeId) await addToKnowledge(library.activeId) } catch (error) { window.alert(error?.message || '创建知识库失败，请重试') }
+  try { await library.create(name.trim(), 'personal'); if (library.activeId) await addToKnowledge(library.activeId) } catch (error) { showToast(error?.message || '创建知识库失败，请重试', { tone: 'error' }) }
 }
 const title = computed({
   get: () => props.note?.title || '',

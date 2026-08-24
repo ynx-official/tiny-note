@@ -3170,9 +3170,13 @@ fn load_model(
         .lock()
         .map_err(|_| AppError::db("database lock poisoned"))?;
     let sql = if profile_id.is_some() {
-        "SELECT id,base_url,model,provider,api_key,endpoint_type FROM model_profiles WHERE id=?1"
+        "SELECT profile.id,provider.base_url,profile.model,provider.provider,provider.api_key,provider.endpoint_type
+         FROM model_profiles profile JOIN model_providers provider ON provider.id=profile.provider_id
+         WHERE profile.id=?1"
     } else {
-        "SELECT id,base_url,model,provider,api_key,endpoint_type FROM model_profiles WHERE is_default=1 LIMIT 1"
+        "SELECT profile.id,provider.base_url,profile.model,provider.provider,provider.api_key,provider.endpoint_type
+         FROM model_profiles profile JOIN model_providers provider ON provider.id=profile.provider_id
+         WHERE profile.is_default=1 LIMIT 1"
     };
     if let Some(id) = profile_id {
         conn.query_row(sql, params![id], model_profile_from_row)

@@ -10,6 +10,7 @@ import {
 import { useLibraryStore } from '../stores/library'
 import { useNotesStore } from '../stores/notes'
 import { requestPrompt } from '../services/promptDialog'
+import { requestConfirmation, showToast } from '../services/appFeedback'
 
 const store = useLibraryStore()
 const notesStore = useNotesStore()
@@ -58,7 +59,7 @@ async function importList(files) {
   try {
     await store.importFiles(files)
   } catch (error) {
-    window.alert(error?.message || '文件导入失败，请重试')
+    showToast(error?.message || '文件导入失败，请重试', { tone: 'error' })
   } finally {
     importing.value = false
     dropActive.value = false
@@ -71,7 +72,7 @@ async function importUrl() {
   try {
     await store.importUrl(url.trim())
   } catch (error) {
-    window.alert(error?.message || '网页导入失败，请重试')
+    showToast(error?.message || '网页导入失败，请重试', { tone: 'error' })
   }
 }
 async function handleDrop(event) {
@@ -79,7 +80,7 @@ async function handleDrop(event) {
   await importList(Array.from(event.dataTransfer?.files || []))
 }
 async function remove(entry) {
-  if (window.confirm(t('confirmDelete'))) await store.remove(entry.relativePath)
+  if (await requestConfirmation({ title: '删除文件', message: `确定删除「${entry.name}」吗？`, tone: 'danger', confirmLabel: '删除' })) await store.remove(entry.relativePath)
 }
 async function rename(entry) {
   const next = await requestPrompt(t('rename'), entry.name)
@@ -90,7 +91,7 @@ async function renameBase(base) {
   if (next?.trim() && next.trim() !== base.name) await store.updateBase(base, next.trim())
 }
 async function deleteBase(base) {
-  if (window.confirm(`${t('confirmDelete')} ${base.name}`)) await store.deleteBase(base.id)
+  if (await requestConfirmation({ title: '删除知识库', message: `${t('confirmDelete')} ${base.name}`, tone: 'danger', confirmLabel: '删除' })) await store.deleteBase(base.id)
 }
 function openEntry(entry) {
   if (entry.kind === 'folder') store.navigate(entry.relativePath)

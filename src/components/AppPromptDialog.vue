@@ -24,12 +24,11 @@ function confirm() {
     <Transition name="app-prompt-fade">
       <div
         v-if="promptDialogState.visible"
-        class="app-prompt-overlay"
+        class="app-feedback-overlay app-prompt-overlay"
         data-testid="app-prompt-overlay"
-        @click.self="cancelPrompt"
       >
         <section
-          class="app-prompt-dialog"
+          class="app-feedback-dialog app-prompt-dialog"
           data-testid="app-prompt-dialog"
           role="dialog"
           aria-modal="true"
@@ -52,8 +51,8 @@ function confirm() {
             />
           </div>
           <footer class="app-prompt-footer">
-            <button type="button" class="secondary-button" @click="cancelPrompt">{{ t('cancel') }}</button>
-            <button type="button" class="primary-button" @click="confirm">{{ t('confirm') }}</button>
+            <button type="button" class="app-feedback-secondary" @click="cancelPrompt">{{ t('cancel') }}</button>
+            <button type="button" class="app-feedback-primary" @click="confirm">{{ t('confirm') }}</button>
           </footer>
         </section>
       </div>

@@ -4,6 +4,7 @@ import DOMPurify from 'dompurify'
 import { marked } from 'marked'
 import { Eye, Pencil, Plus, Save, Sparkles, Trash2, X } from 'lucide-vue-next'
 import { invoke } from '../services/tauri'
+import { requestConfirmation } from '../services/appFeedback'
 
 const emit = defineEmits(['close'])
 const skills = ref([])
@@ -48,7 +49,7 @@ async function saveSkill() {
 }
 
 async function deleteSkill(skill) {
-  if (skill.builtin || !window.confirm(`确定删除技能「${skill.name}」吗？`)) return
+  if (skill.builtin || !(await requestConfirmation({ title: '删除技能', message: `确定删除「${skill.name}」吗？`, tone: 'danger', confirmLabel: '删除' }))) return
   error.value = ''
   try { await invoke('agent_skill_delete', { name: skill.fileName.split('/')[0] }); await loadSkills() }
   catch (cause) { error.value = cause?.message || '技能删除失败' }

@@ -2,6 +2,7 @@
 import { onMounted, ref } from 'vue'
 import { Cable, Plus, RefreshCw, Save, Trash2, X } from 'lucide-vue-next'
 import { invoke } from '../services/tauri'
+import { requestConfirmation } from '../services/appFeedback'
 
 const emit = defineEmits(['close'])
 const servers = ref([])
@@ -47,7 +48,7 @@ async function refreshServer(server) {
 }
 
 async function removeServer(server) {
-  if (!window.confirm(`确定删除 MCP 服务「${server.name}」吗？`)) return
+  if (!(await requestConfirmation({ title: '删除 MCP 服务', message: `确定删除「${server.name}」吗？`, tone: 'danger', confirmLabel: '删除' }))) return
   try { await invoke('agent_mcp_delete', { id: server.id }); await loadServers() }
   catch (cause) { error.value = cause?.message || 'MCP 服务删除失败' }
 }

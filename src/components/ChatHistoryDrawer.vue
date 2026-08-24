@@ -2,6 +2,7 @@
 import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
 import { Clock3, Loader2, MessageSquare, Trash2, X } from 'lucide-vue-next'
 import { invoke } from '../services/tauri'
+import { requestConfirmation } from '../services/appFeedback'
 
 const props = defineProps({ modelValue: { type: Boolean, default: false } })
 const emit = defineEmits(['update:modelValue', 'open'])
@@ -19,7 +20,7 @@ function openConversation(id) { emit('open', id); visible.value = false }
 function modeLabel(mode) { return mode === 'agent' ? 'Tiny Agent' : '对话' }
 async function remove(event, id) {
   event.stopPropagation()
-  if (!window.confirm('确定删除这条对话及全部消息吗？')) return
+  if (!(await requestConfirmation({ title: '删除对话', message: '确定删除这条对话及全部消息吗？删除后无法恢复。', tone: 'danger', confirmLabel: '删除' }))) return
   await invoke('chat_delete', { id })
   window.dispatchEvent(new CustomEvent('tiny-note-chat-deleted', { detail: { id } }))
   await load()

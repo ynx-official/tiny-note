@@ -5,6 +5,7 @@ import App from './App.vue'
 import router from './router'
 import { messages } from './i18n'
 import { applyCachedTheme, useAppStore } from './stores/app'
+import { startExternalMarkdownOpen } from './services/externalMarkdown'
 import './styles/friday-main.css'
 import './styles.css'
 
@@ -19,6 +20,7 @@ async function bootstrap() {
   i18n.global.locale.value = appStore.settings.language
   localStorage.setItem('tiny-note-language', appStore.settings.language)
   app.mount('#app')
+  await startExternalMarkdownOpen({ pinia, router })
 }
 
 bootstrap()

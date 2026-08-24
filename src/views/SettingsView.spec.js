@@ -7,6 +7,8 @@ import { messages } from '../i18n'
 const model = {
   id: 'custom-model',
   name: '公司模型',
+  providerId: 'company-provider',
+  connectionName: '公司网关',
   provider: '其他',
   baseUrl: 'https://ai.example.com/v1',
   model: 'company-chat',
@@ -22,6 +24,7 @@ vi.mock('../services/appUpdater', () => ({
 }))
 
 import SettingsView from './SettingsView.vue'
+import { confirmAppDialog, feedbackState } from '../services/appFeedback'
 
 describe('SettingsView model services', () => {
   beforeEach(() => {
@@ -51,8 +54,8 @@ describe('SettingsView model services', () => {
 
     expect(wrapper.text()).toContain('OpenAI 兼容服务')
     await wrapper.get('.model-edit-btn').trigger('click')
-    expect(wrapper.get('.settings-model-modal-header').text()).toContain('编辑模型')
-    expect(wrapper.get('input[name="profile-name"]').element.value).toBe('公司模型')
+    expect(wrapper.get('.settings-model-modal-header').text()).toContain('编辑模型服务')
+    expect(wrapper.get('input[name="profile-name"]').element.value).toBe('公司网关')
     expect(wrapper.get('input[name="base-url"]').element.value).toBe('https://ai.example.com/v1')
     expect(wrapper.get('input[name="model-id"]').element.value).toBe('company-chat')
     expect(wrapper.get('.settings-endpoint-trigger').text()).toContain('OpenAI Responses')
@@ -60,7 +63,7 @@ describe('SettingsView model services', () => {
     expect(apiKeyInput.element.value).toBe('')
     expect(apiKeyInput.attributes('placeholder')).toContain('留空保留')
 
-    await wrapper.get('input[name="profile-name"]').setValue('更新后的模型')
+    await wrapper.get('input[name="profile-name"]').setValue('更新后的网关')
     await wrapper.get('input[name="base-url"]').setValue('https://new.example.com/v1')
     await wrapper.get('input[name="model-id"]').setValue('company-chat-v2')
     await wrapper.get('.settings-endpoint-trigger').trigger('click')
@@ -69,9 +72,25 @@ describe('SettingsView model services', () => {
     await wrapper.get('.settings-model-modal-footer .primary').trigger('click')
 
     await vi.waitFor(() => expect(mocks.invoke).toHaveBeenCalledWith('model_upsert', expect.objectContaining({
-      profile: expect.objectContaining({ id: 'custom-model', name: '更新后的模型', provider: 'OpenAI 兼容服务', baseUrl: 'https://new.example.com/v1', model: 'company-chat-v2', endpointType: 'anthropicMessages' }),
+      profile: expect.objectContaining({ id: 'custom-model', providerId: 'company-provider', connectionName: '更新后的网关', provider: 'OpenAI 兼容服务', baseUrl: 'https://new.example.com/v1', model: 'company-chat-v2', endpointType: 'anthropicMessages' }),
       apiKey: ''
     })))
+  })
+
+  it('groups many models under one provider connection instead of repeating credentials', async () => {
+    mocks.invoke.mockImplementation(async command => {
+      if (command === 'settings_get') return { theme: 'light', language: 'zh-CN', fimEnabled: false }
+      if (command === 'model_list') return [model, { ...model, id: 'custom-model-2', name: '推理模型', model: 'company-reasoner', isDefault: false }]
+      if (command === 'search_index_status') return null
+      return null
+    })
+    const wrapper = mount(SettingsView, { global: { plugins: [createPinia(), createI18n({ legacy: false, locale: 'zh-CN', messages })], stubs: { AgentToolsCatalog: true } } })
+    await vi.waitFor(() => expect(wrapper.text()).toContain('模型服务'))
+    await wrapper.findAll('.settings-nav-item').find(button => button.text().includes('模型服务')).trigger('click')
+
+    expect(wrapper.findAll('.settings-connection-card')).toHaveLength(1)
+    expect(wrapper.get('.settings-connection-card').text()).toContain('2 个模型')
+    expect(wrapper.findAll('.settings-connection-model-row')).toHaveLength(2)
   })
 
   it('uses the saved key when fetching models from an existing blank-key draft', async () => {
@@ -127,7 +146,7 @@ describe('SettingsView model services', () => {
     expect(wrapper.get('.settings-model-test-result').text()).toContain('连接成功')
   })
 
-  it('uses a centered in-app confirmation instead of the native browser confirm when deleting a model', async () => {
+  it('uses the shared in-app confirmation instead of the native browser confirm when deleting a model', async () => {
     const confirmSpy = vi.spyOn(window, 'confirm').mockReturnValue(false)
     const wrapper = mount(SettingsView, {
       global: {
@@ -139,17 +158,15 @@ describe('SettingsView model services', () => {
     await wrapper.findAll('.settings-nav-item').find(button => button.text().includes('模型服务')).trigger('click')
     await vi.waitFor(() => expect(wrapper.text()).toContain('公司模型'))
 
-    await wrapper.get('.model-delete-btn').trigger('click')
+    await wrapper.get('.settings-connection-model-row .model-delete-btn').trigger('click')
 
     expect(confirmSpy).not.toHaveBeenCalled()
-    expect(wrapper.get('[role="alertdialog"]').text()).toContain('删除模型')
-    expect(wrapper.get('[role="alertdialog"]').text()).toContain('公司模型')
-    await wrapper.get('.settings-confirm-backdrop').trigger('click')
-    expect(wrapper.find('[role="alertdialog"]').exists()).toBe(true)
+    expect(feedbackState.dialog).toMatchObject({ visible: true, title: '删除模型', tone: 'danger' })
+    expect(feedbackState.dialog.message).toContain('公司模型')
 
-    await wrapper.get('.settings-confirm-delete').trigger('click')
+    confirmAppDialog()
     await vi.waitFor(() => expect(mocks.invoke).toHaveBeenCalledWith('model_delete', { id: 'custom-model' }))
-    await vi.waitFor(() => expect(wrapper.find('[role="alertdialog"]').exists()).toBe(false))
+    expect(feedbackState.dialog.visible).toBe(false)
     confirmSpy.mockRestore()
   })
 })

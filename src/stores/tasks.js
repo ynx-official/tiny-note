@@ -170,13 +170,14 @@ export const useTasksStore = defineStore('tasks', {
     async clearFinished() {
       const removed = await invoke('background_task_clear_finished')
       await this.refresh()
-      const notice = { id: crypto.randomUUID(), taskId: null, message: removed ? `已清理 ${removed} 条任务记录` : '没有可清理的已结束任务', createdAt: Date.now() }
+      const notice = { id: crypto.randomUUID(), taskId: null, message: removed ? `已清理 ${removed} 条任务记录` : '没有可清理的已结束任务', tone: removed ? 'success' : 'info', createdAt: Date.now() }
       this.notices.push(notice)
       window.setTimeout(() => { this.notices = this.notices.filter(item => item.id !== notice.id) }, 5000)
       return removed
     },
     notify(task, message) {
-      const notice = { id: crypto.randomUUID(), taskId: task.id, message, createdAt: Date.now() }
+      const tone = task.status === 'succeeded' ? 'success' : task.status === 'failed' ? 'error' : 'info'
+      const notice = { id: crypto.randomUUID(), taskId: task.id, message, tone, createdAt: Date.now() }
       this.notices.push(notice)
       window.setTimeout(() => { this.notices = this.notices.filter(item => item.id !== notice.id) }, 5000)
     },

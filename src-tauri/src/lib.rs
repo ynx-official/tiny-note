@@ -13,7 +13,7 @@ use std::{
     },
     thread,
 };
-use tauri::{ipc::Channel, Manager, State};
+use tauri::{ipc::Channel, Emitter, Manager, State};
 use thiserror::Error;
 use uuid::Uuid;
 use walkdir::WalkDir;
@@ -89,6 +89,80 @@ pub struct AppState {
     db: Arc<Mutex<Connection>>,
     data_dir: PathBuf,
     cancels: Arc<Mutex<HashMap<String, Arc<AtomicBool>>>>,
+}
+
+#[derive(Default)]
+pub struct PendingMarkdownFiles(Mutex<Vec<PathBuf>>);
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PendingMarkdownFileDto {
+    file_name: String,
+    content: Option<String>,
+    error: Option<String>,
+}
+
+const MAX_EXTERNAL_MARKDOWN_BYTES: u64 = 10 * 1024 * 1024;
+
+fn is_markdown_path(path: &Path) -> bool {
+    path.extension()
+        .and_then(|extension| extension.to_str())
+        .is_some_and(|extension| {
+            extension.eq_ignore_ascii_case("md") || extension.eq_ignore_ascii_case("markdown")
+        })
+}
+
+fn enqueue_markdown_paths<I>(pending: &PendingMarkdownFiles, paths: I, cwd: &Path) -> usize
+where
+    I: IntoIterator<Item = PathBuf>,
+{
+    let Ok(mut queue) = pending.0.lock() else {
+        return 0;
+    };
+    let before = queue.len();
+    for argument in paths {
+        let path = if argument.is_absolute() {
+            argument
+        } else {
+            cwd.join(argument)
+        };
+        if is_markdown_path(&path) && !queue.contains(&path) {
+            queue.push(path);
+        }
+    }
+    queue.len() - before
+}
+
+fn pending_markdown_file(path: PathBuf) -> PendingMarkdownFileDto {
+    let file_name = path
+        .file_name()
+        .map(|name| name.to_string_lossy().into_owned())
+        .unwrap_or_else(|| "Markdown 文件".into());
+    let result = (|| -> Result<String, String> {
+        let metadata = fs::metadata(&path).map_err(|error| error.to_string())?;
+        if !metadata.is_file() {
+            return Err("路径不是文件".into());
+        }
+        if metadata.len() > MAX_EXTERNAL_MARKDOWN_BYTES {
+            return Err("文件超过 10 MB 限制".into());
+        }
+        let bytes = fs::read(&path).map_err(|error| error.to_string())?;
+        let text = String::from_utf8(bytes).map_err(|_| "文件不是 UTF-8 编码".to_string())?;
+        Ok(text.strip_prefix('\u{feff}').unwrap_or(&text).to_string())
+    })();
+
+    match result {
+        Ok(content) => PendingMarkdownFileDto {
+            file_name,
+            content: Some(content),
+            error: None,
+        },
+        Err(error) => PendingMarkdownFileDto {
+            file_name,
+            content: None,
+            error: Some(error),
+        },
+    }
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -208,6 +282,8 @@ pub struct WorkspaceImportRequest {
 pub struct ModelProfileDto {
     pub id: String,
     pub name: String,
+    pub provider_id: Option<String>,
+    pub connection_name: Option<String>,
     pub provider: String,
     pub base_url: String,
     pub model: String,
@@ -491,7 +567,8 @@ fn init_database(conn: &Connection) -> Result<(), AppError> {
       CREATE TABLE IF NOT EXISTS notes (id TEXT PRIMARY KEY, notebook_id TEXT REFERENCES notebooks(id) ON DELETE SET NULL, title TEXT NOT NULL, content_html TEXT NOT NULL, content_text TEXT NOT NULL, content_markdown TEXT NOT NULL DEFAULT '', tags_json TEXT NOT NULL DEFAULT '[]', is_pinned INTEGER NOT NULL DEFAULT 0, deleted_at TEXT, created_at TEXT NOT NULL, updated_at TEXT NOT NULL);
       CREATE INDEX IF NOT EXISTS idx_notes_deleted_updated ON notes(deleted_at, updated_at);
       CREATE TABLE IF NOT EXISTS knowledge_bases (id TEXT PRIMARY KEY, category TEXT NOT NULL CHECK(category IN ('personal','local')), name TEXT NOT NULL, description TEXT NOT NULL DEFAULT '', cover TEXT, root_path TEXT NOT NULL, created_at TEXT NOT NULL, updated_at TEXT NOT NULL);
-      CREATE TABLE IF NOT EXISTS model_profiles (id TEXT PRIMARY KEY, name TEXT NOT NULL, provider TEXT NOT NULL, base_url TEXT NOT NULL, model TEXT NOT NULL, api_key TEXT NOT NULL DEFAULT '', endpoint_type TEXT NOT NULL DEFAULT 'openaiChat', is_default INTEGER NOT NULL DEFAULT 0);
+      CREATE TABLE IF NOT EXISTS model_providers (id TEXT PRIMARY KEY, name TEXT NOT NULL, provider TEXT NOT NULL, base_url TEXT NOT NULL, api_key TEXT NOT NULL DEFAULT '', endpoint_type TEXT NOT NULL DEFAULT 'openaiChat');
+      CREATE TABLE IF NOT EXISTS model_profiles (id TEXT PRIMARY KEY, name TEXT NOT NULL, provider_id TEXT NOT NULL REFERENCES model_providers(id) ON DELETE CASCADE, model TEXT NOT NULL, is_default INTEGER NOT NULL DEFAULT 0);
       CREATE TABLE IF NOT EXISTS usage_records (id TEXT PRIMARY KEY, ts INTEGER NOT NULL, model_id TEXT NOT NULL DEFAULT '', model_name TEXT NOT NULL DEFAULT '', provider TEXT NOT NULL DEFAULT '', source TEXT NOT NULL DEFAULT 'chat', conversation_id TEXT NOT NULL DEFAULT '', prompt_tokens INTEGER NOT NULL DEFAULT 0, completion_tokens INTEGER NOT NULL DEFAULT 0, total_tokens INTEGER NOT NULL DEFAULT 0, reasoning_tokens INTEGER NOT NULL DEFAULT 0);
       CREATE INDEX IF NOT EXISTS idx_usage_records_ts ON usage_records(ts);
       CREATE TABLE IF NOT EXISTS chat_conversations (id TEXT PRIMARY KEY, title TEXT NOT NULL DEFAULT '新对话', model_profile_id TEXT, mode TEXT NOT NULL DEFAULT 'chat' CHECK(mode IN ('chat','memoryless','agent')), created_at TEXT NOT NULL, updated_at TEXT NOT NULL);
@@ -529,17 +606,49 @@ fn init_database(conn: &Connection) -> Result<(), AppError> {
             .map_err(AppError::db)?;
         rows.collect::<Result<Vec<_>, _>>().map_err(AppError::db)?
     };
-    if !model_columns.iter().any(|column| column == "api_key") {
+    if !model_columns.iter().any(|column| column == "provider_id")
+        && !model_columns.iter().any(|column| column == "api_key")
+    {
         conn.execute(
             "ALTER TABLE model_profiles ADD COLUMN api_key TEXT NOT NULL DEFAULT ''",
             [],
         )
         .map_err(AppError::db)?;
     }
-    if !model_columns.iter().any(|column| column == "endpoint_type") {
+    if !model_columns.iter().any(|column| column == "provider_id")
+        && !model_columns.iter().any(|column| column == "endpoint_type")
+    {
         conn.execute(
             "ALTER TABLE model_profiles ADD COLUMN endpoint_type TEXT NOT NULL DEFAULT 'openaiChat'",
             [],
+        )
+        .map_err(AppError::db)?;
+    }
+    if !model_columns.iter().any(|column| column == "provider_id") {
+        conn.execute_batch(
+            "BEGIN;
+             INSERT INTO model_providers(id,name,provider,base_url,api_key,endpoint_type)
+             SELECT lower(hex(randomblob(16))), provider, provider, base_url, api_key, endpoint_type
+             FROM model_profiles
+             GROUP BY provider, base_url, api_key, endpoint_type;
+             CREATE TABLE model_profiles_normalized (
+               id TEXT PRIMARY KEY,
+               name TEXT NOT NULL,
+               provider_id TEXT NOT NULL REFERENCES model_providers(id) ON DELETE CASCADE,
+               model TEXT NOT NULL,
+               is_default INTEGER NOT NULL DEFAULT 0
+             );
+             INSERT INTO model_profiles_normalized(id,name,provider_id,model,is_default)
+             SELECT profile.id, profile.name, provider.id, profile.model, profile.is_default
+             FROM model_profiles profile
+             JOIN model_providers provider
+               ON provider.provider=profile.provider
+              AND provider.base_url=profile.base_url
+              AND provider.api_key=profile.api_key
+              AND provider.endpoint_type=profile.endpoint_type;
+             DROP TABLE model_profiles;
+             ALTER TABLE model_profiles_normalized RENAME TO model_profiles;
+             COMMIT;",
         )
         .map_err(AppError::db)?;
     }
@@ -949,6 +1058,20 @@ fn rebuild_note_links(conn: &Connection) -> Result<(), AppError> {
 
 pub mod commands {
     use super::*;
+
+    #[tauri::command]
+    pub fn app_take_pending_markdown_files(
+        pending: State<'_, PendingMarkdownFiles>,
+    ) -> Result<Vec<PendingMarkdownFileDto>, AppError> {
+        let paths = {
+            let mut queue = pending.0.lock().map_err(|_| AppError::Operation {
+                code: "pending_file_lock_failed".into(),
+                message: "无法读取待打开文件队列".into(),
+            })?;
+            std::mem::take(&mut *queue)
+        };
+        Ok(paths.into_iter().map(pending_markdown_file).collect())
+    }
 
     fn chat_conversation_from_row(
         row: &rusqlite::Row<'_>,
@@ -3060,21 +3183,25 @@ pub mod commands {
             .lock()
             .map_err(|_| AppError::db("database lock poisoned"))?;
         let result = conn.prepare(
-        "SELECT id,name,provider,base_url,model,api_key,endpoint_type,is_default FROM model_profiles ORDER BY name",
+        "SELECT profile.id,profile.name,provider.id,provider.name,provider.provider,provider.base_url,profile.model,provider.api_key,provider.endpoint_type,profile.is_default
+         FROM model_profiles profile JOIN model_providers provider ON provider.id=profile.provider_id
+         ORDER BY provider.name,profile.name",
     )
     .map_err(AppError::db)?
     .query_map([], |r| {
         let id: String = r.get(0)?;
-        let configured = !r.get::<_, String>(5)?.trim().is_empty();
+        let configured = !r.get::<_, String>(7)?.trim().is_empty();
         Ok(ModelProfileDto {
             id,
             name: r.get(1)?,
-            provider: r.get(2)?,
-            base_url: r.get(3)?,
-            model: r.get(4)?,
-            endpoint_type: r.get(6)?,
+            provider_id: Some(r.get(2)?),
+            connection_name: Some(r.get(3)?),
+            provider: r.get(4)?,
+            base_url: r.get(5)?,
+            model: r.get(6)?,
+            endpoint_type: r.get(8)?,
             api_key_configured: configured,
-            is_default: r.get::<_, i64>(7)? != 0,
+            is_default: r.get::<_, i64>(9)? != 0,
         })
     })
     .map_err(AppError::db)?
@@ -3217,7 +3344,9 @@ pub mod commands {
                 .lock()
                 .map_err(|_| AppError::db("database lock poisoned"))?;
             conn.query_row(
-                "SELECT base_url,model,api_key,endpoint_type FROM model_profiles WHERE id=?1",
+                "SELECT provider.base_url,profile.model,provider.api_key,provider.endpoint_type
+                 FROM model_profiles profile JOIN model_providers provider ON provider.id=profile.provider_id
+                 WHERE profile.id=?1",
                 params![model_id],
                 |row| {
                     Ok((
@@ -3303,7 +3432,9 @@ pub mod commands {
                 .lock()
                 .map_err(|_| AppError::db("database lock poisoned"))?;
             conn.query_row(
-                "SELECT provider,base_url,api_key FROM model_profiles WHERE id=?1",
+                "SELECT provider.provider,provider.base_url,provider.api_key
+                 FROM model_profiles profile JOIN model_providers provider ON provider.id=profile.provider_id
+                 WHERE profile.id=?1",
                 params![model_id],
                 |row| {
                     Ok((
@@ -3427,17 +3558,41 @@ pub mod commands {
             .db
             .lock()
             .map_err(|_| AppError::db("database lock poisoned"))?;
+        let existing_provider_id = conn
+            .query_row(
+                "SELECT provider_id FROM model_profiles WHERE id=?1",
+                params![profile.id],
+                |row| row.get::<_, String>(0),
+            )
+            .optional()
+            .map_err(AppError::db)?;
+        let provider_id = profile
+            .provider_id
+            .as_deref()
+            .filter(|value| !value.trim().is_empty())
+            .map(str::to_string)
+            .or(existing_provider_id)
+            .unwrap_or_else(|| Uuid::new_v4().to_string());
         let existing_key = conn
             .query_row(
-                "SELECT api_key FROM model_profiles WHERE id=?1",
-                params![profile.id],
+                "SELECT api_key FROM model_providers WHERE id=?1",
+                params![provider_id],
                 |row| row.get::<_, String>(0),
             )
             .optional()
             .map_err(AppError::db)?
             .unwrap_or_default();
         let key = preserved_api_key(existing_key, api_key.as_deref());
-        conn.execute("INSERT INTO model_profiles(id,name,provider,base_url,model,api_key,endpoint_type,is_default) VALUES (?1,?2,?3,?4,?5,?6,?7,?8) ON CONFLICT(id) DO UPDATE SET name=excluded.name,provider=excluded.provider,base_url=excluded.base_url,model=excluded.model,api_key=excluded.api_key,endpoint_type=excluded.endpoint_type,is_default=excluded.is_default",params![profile.id,profile.name,profile.provider,profile.base_url,profile.model,key,profile.endpoint_type,profile.is_default as i64]).map_err(AppError::db)?;
+        conn.execute(
+            "INSERT INTO model_providers(id,name,provider,base_url,api_key,endpoint_type) VALUES (?1,?2,?3,?4,?5,?6)
+             ON CONFLICT(id) DO UPDATE SET name=excluded.name,provider=excluded.provider,base_url=excluded.base_url,api_key=excluded.api_key,endpoint_type=excluded.endpoint_type",
+            params![provider_id, profile.connection_name.as_deref().unwrap_or(&profile.provider), profile.provider, profile.base_url, key, profile.endpoint_type],
+        ).map_err(AppError::db)?;
+        conn.execute(
+            "INSERT INTO model_profiles(id,name,provider_id,model,is_default) VALUES (?1,?2,?3,?4,?5)
+             ON CONFLICT(id) DO UPDATE SET name=excluded.name,provider_id=excluded.provider_id,model=excluded.model,is_default=excluded.is_default",
+            params![profile.id, profile.name, provider_id, profile.model, profile.is_default as i64],
+        ).map_err(AppError::db)?;
         Ok(())
     }
 
@@ -3453,7 +3608,9 @@ pub mod commands {
             return Ok(None);
         };
         conn.query_row(
-            "SELECT api_key FROM model_profiles WHERE id=?1",
+            "SELECT provider.api_key FROM model_profiles profile
+             JOIN model_providers provider ON provider.id=profile.provider_id
+             WHERE profile.id=?1",
             params![profile_id],
             |row| row.get::<_, String>(0),
         )
@@ -3475,8 +3632,23 @@ pub mod commands {
             .db
             .lock()
             .map_err(|_| AppError::db("database lock poisoned"))?;
+        let provider_id = conn
+            .query_row(
+                "SELECT provider_id FROM model_profiles WHERE id=?1",
+                params![id],
+                |row| row.get::<_, String>(0),
+            )
+            .optional()
+            .map_err(AppError::db)?;
         conn.execute("DELETE FROM model_profiles WHERE id=?1", params![id])
             .map_err(AppError::db)?;
+        if let Some(provider_id) = provider_id {
+            conn.execute(
+                "DELETE FROM model_providers WHERE id=?1 AND NOT EXISTS (SELECT 1 FROM model_profiles WHERE provider_id=?1)",
+                params![provider_id],
+            )
+            .map_err(AppError::db)?;
+        }
         Ok(())
     }
 
@@ -3706,7 +3878,9 @@ pub mod commands {
                 .map_err(|_| "database_lock_failed".to_string())?;
             let query = if let Some(profile_id) = &request.model_profile_id {
                 conn.query_row(
-                    "SELECT id,base_url,model,provider,api_key,endpoint_type FROM model_profiles WHERE id=?1",
+                    "SELECT profile.id,provider.base_url,profile.model,provider.provider,provider.api_key,provider.endpoint_type
+                     FROM model_profiles profile JOIN model_providers provider ON provider.id=profile.provider_id
+                     WHERE profile.id=?1",
                     params![profile_id],
                     |r| {
                         Ok((
@@ -3722,7 +3896,9 @@ pub mod commands {
                 .optional()
             } else {
                 conn.query_row(
-                    "SELECT id,base_url,model,provider,api_key,endpoint_type FROM model_profiles WHERE is_default=1 LIMIT 1",
+                    "SELECT profile.id,provider.base_url,profile.model,provider.provider,provider.api_key,provider.endpoint_type
+                     FROM model_profiles profile JOIN model_providers provider ON provider.id=profile.provider_id
+                     WHERE profile.is_default=1 LIMIT 1",
                     [],
                     |r| {
                         Ok((
@@ -4034,7 +4210,9 @@ pub mod commands {
                 .map_err(|_| AppError::db("database lock poisoned"))?;
             if let Some(profile_id) = model_profile_id {
                 conn.query_row(
-                    "SELECT id,base_url,model,provider,api_key,endpoint_type FROM model_profiles WHERE id=?1",
+                    "SELECT profile.id,provider.base_url,profile.model,provider.provider,provider.api_key,provider.endpoint_type
+                     FROM model_profiles profile JOIN model_providers provider ON provider.id=profile.provider_id
+                     WHERE profile.id=?1",
                     params![profile_id],
                     |row| {
                         Ok((
@@ -4051,7 +4229,9 @@ pub mod commands {
                 .map_err(AppError::db)?
             } else {
                 conn.query_row(
-                    "SELECT id,base_url,model,provider,api_key,endpoint_type FROM model_profiles WHERE is_default=1 LIMIT 1",
+                    "SELECT profile.id,provider.base_url,profile.model,provider.provider,provider.api_key,provider.endpoint_type
+                     FROM model_profiles profile JOIN model_providers provider ON provider.id=profile.provider_id
+                     WHERE profile.is_default=1 LIMIT 1",
                     [],
                     |row| Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?, row.get::<_, String>(2)?, row.get::<_, String>(3)?, row.get::<_, String>(4)?, row.get::<_, String>(5)?)),
                 )
@@ -4179,12 +4359,35 @@ pub mod commands {
 }
 
 pub fn run() {
-    tauri::Builder::default()
+    let app = tauri::Builder::default()
+        .plugin(tauri_plugin_single_instance::init(|app, args, cwd| {
+            let added = enqueue_markdown_paths(
+                &app.state::<PendingMarkdownFiles>(),
+                args.into_iter().map(PathBuf::from),
+                Path::new(&cwd),
+            );
+            if let Some(window) = app.get_webview_window("main") {
+                let _ = window.unminimize();
+                let _ = window.show();
+                let _ = window.set_focus();
+            }
+            if added > 0 {
+                let _ = app.emit("tiny-note://open-markdown", ());
+            }
+        }))
         .plugin(tauri_plugin_process::init())
         .setup(|app| {
             let state =
                 app_state(app.handle()).map_err(|e| Box::new(e) as Box<dyn std::error::Error>)?;
             app.manage(state);
+            let pending = PendingMarkdownFiles::default();
+            let cwd = std::env::current_dir().unwrap_or_default();
+            enqueue_markdown_paths(
+                &pending,
+                std::env::args_os().skip(1).map(PathBuf::from),
+                &cwd,
+            );
+            app.manage(pending);
 
             Ok(())
         })
@@ -4256,6 +4459,7 @@ pub fn run() {
             commands::note_ai_cancel,
             commands::note_fim_stream,
             commands::note_fim_cancel,
+            commands::app_take_pending_markdown_files,
             background_tasks::background_task_enqueue,
             background_tasks::background_task_list,
             background_tasks::background_task_get,
@@ -4282,13 +4486,59 @@ pub fn run() {
             update::app_update_check,
             update::app_update_download
         ])
-        .run(tauri::generate_context!())
-        .expect("error while running Tiny Note");
+        .build(tauri::generate_context!())
+        .expect("error while building Tiny Note");
+
+    #[cfg(target_os = "macos")]
+    app.run(|app, event| {
+        if let tauri::RunEvent::Opened { urls, .. } = event {
+            let paths = urls
+                .into_iter()
+                .filter_map(|url| url.to_file_path().ok())
+                .collect::<Vec<_>>();
+            let cwd = std::env::current_dir().unwrap_or_default();
+            let added = enqueue_markdown_paths(&app.state::<PendingMarkdownFiles>(), paths, &cwd);
+            if added > 0 {
+                let _ = app.emit("tiny-note://open-markdown", ());
+            }
+        }
+    });
+
+    #[cfg(not(target_os = "macos"))]
+    app.run(|_, _| {});
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn external_open_only_queues_markdown_paths_once() {
+        let pending = PendingMarkdownFiles::default();
+        let cwd = Path::new("C:\\notes");
+        let added = enqueue_markdown_paths(
+            &pending,
+            [
+                PathBuf::from("draft.MD"),
+                PathBuf::from("image.png"),
+                PathBuf::from("draft.MD"),
+            ],
+            cwd,
+        );
+        let queued = pending.0.lock().unwrap();
+        assert_eq!(added, 1);
+        assert_eq!(queued.as_slice(), [PathBuf::from("C:\\notes\\draft.MD")]);
+    }
+
+    #[test]
+    fn external_markdown_reader_strips_utf8_bom() {
+        let path = std::env::temp_dir().join(format!("tiny-note-open-{}.md", Uuid::new_v4()));
+        fs::write(&path, b"\xef\xbb\xbf# Heading").unwrap();
+        let file = pending_markdown_file(path.clone());
+        assert_eq!(file.content.as_deref(), Some("# Heading"));
+        assert!(file.error.is_none());
+        fs::remove_file(path).unwrap();
+    }
+
     #[test]
     fn rejects_parent_paths() {
         let root = std::env::temp_dir();
@@ -4312,7 +4562,7 @@ mod tests {
         assert_eq!(n, 1);
     }
     #[test]
-    fn migration_adds_openai_chat_endpoint_to_existing_model_profiles() {
+    fn migration_normalizes_existing_models_under_one_provider_connection() {
         let c = Connection::open_in_memory().unwrap();
         c.execute_batch(
             "CREATE TABLE model_profiles (
@@ -4324,19 +4574,24 @@ mod tests {
                 api_key TEXT NOT NULL DEFAULT '',
                 is_default INTEGER NOT NULL DEFAULT 0
             );
-            INSERT INTO model_profiles(id,name,provider,base_url,model,api_key,is_default)
-            VALUES('legacy','旧配置','OpenAI 兼容服务','https://example.com/v1','legacy-model','',1);",
+            INSERT INTO model_profiles(id,name,provider,base_url,model,api_key,is_default) VALUES
+            ('legacy-a','旧配置 A','OpenAI 兼容服务','https://example.com/v1','legacy-a','saved-key',1),
+            ('legacy-b','旧配置 B','OpenAI 兼容服务','https://example.com/v1','legacy-b','saved-key',0);",
         )
         .unwrap();
 
         init_database(&c).unwrap();
 
-        let endpoint_type: String = c
+        let (provider_count, profile_count): (i64, i64) = c
             .query_row(
-                "SELECT endpoint_type FROM model_profiles WHERE id='legacy'",
+                "SELECT (SELECT COUNT(*) FROM model_providers), (SELECT COUNT(*) FROM model_profiles)",
                 [],
-                |row| row.get(0),
+                |row| Ok((row.get(0)?, row.get(1)?)),
             )
+            .unwrap();
+        assert_eq!((provider_count, profile_count), (1, 2));
+        let endpoint_type: String = c
+            .query_row("SELECT endpoint_type FROM model_providers", [], |row| row.get(0))
             .unwrap();
         assert_eq!(endpoint_type, "openaiChat");
     }
@@ -4344,11 +4599,8 @@ mod tests {
     fn model_edit_reuses_saved_key_until_a_replacement_is_entered() {
         let c = Connection::open_in_memory().unwrap();
         init_database(&c).unwrap();
-        c.execute(
-            "INSERT INTO model_profiles(id,name,provider,base_url,model,api_key,endpoint_type,is_default) VALUES('saved','模型','OpenAI 兼容服务','https://example.com/v1','model-a','saved-key','openaiChat',1)",
-            [],
-        )
-        .unwrap();
+        c.execute("INSERT INTO model_providers(id,name,provider,base_url,api_key,endpoint_type) VALUES('provider','公司连接','OpenAI 兼容服务','https://example.com/v1','saved-key','openaiChat')", []).unwrap();
+        c.execute("INSERT INTO model_profiles(id,name,provider_id,model,is_default) VALUES('saved','模型','provider','model-a',1)", []).unwrap();
 
         assert_eq!(
             commands::model_request_api_key(&c, Some("saved"), Some(""))

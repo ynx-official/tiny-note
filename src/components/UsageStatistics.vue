@@ -3,6 +3,7 @@ import { computed, onMounted, ref } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { AlertCircle, BarChart3, Loader2, RefreshCw, Trash2, X } from 'lucide-vue-next'
 import { invoke } from '../services/tauri'
+import { requestConfirmation, showToast } from '../services/appFeedback'
 
 const { t, locale } = useI18n()
 const emit = defineEmits(['close'])
@@ -36,9 +37,10 @@ async function loadStats() {
 }
 
 async function clearRecords() {
-  if (!window.confirm(t('clearUsageConfirm'))) return
+  if (!(await requestConfirmation({ title: '清理用量记录', message: t('clearUsageConfirm'), tone: 'danger', confirmLabel: t('clearUsage') }))) return
   await invoke('usage_clear')
   await loadStats()
+  showToast('用量记录已清理', { tone: 'success' })
 }
 
 function formatNumber(value) {

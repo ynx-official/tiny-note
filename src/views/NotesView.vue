@@ -7,6 +7,7 @@ import { useNotesStore } from '../stores/notes'
 import { useLibraryStore } from '../stores/library'
 import NoteEditor from '../components/NoteEditor.vue'
 import { requestPrompt } from '../services/promptDialog'
+import { requestConfirmation, showToast } from '../services/appFeedback'
 
 const store = useNotesStore()
 const library = useLibraryStore()
@@ -84,7 +85,7 @@ async function togglePinned(note) {
   await store.setPinned(note.id, !note.pinned)
   await store.load()
 }
-async function remove(id) { if (confirm(t('confirmDelete'))) await store.remove(id) }
+async function remove(id) { if (await requestConfirmation({ title: '移入最近删除', message: t('confirmDelete'), tone: 'danger', confirmLabel: '删除' })) await store.remove(id) }
 async function importFiles(event) {
   for (const file of event.target.files || []) await store.importText(file)
   event.target.value = ''
@@ -118,7 +119,7 @@ async function renameNotebook() {
 }
 async function deleteNotebook() {
   const folder = folderItemMenu.value
-  if (!folder || !window.confirm(t('confirmDelete') + ' ' + folder.name)) return
+  if (!folder || !(await requestConfirmation({ title: '删除笔记本', message: `${t('confirmDelete')} ${folder.name}`, tone: 'danger', confirmLabel: '删除' }))) return
   await store.deleteNotebook(folder.id)
   if (store.selectedNotebook === folder.id) store.selectedNotebook = 'all'
   folderItemMenu.value = null
@@ -199,7 +200,7 @@ async function addContextNoteToKnowledge(knowledgeBaseId) {
     await library.addNoteReference(knowledgeBaseId, note)
     closeContextMenu()
   } catch (error) {
-    window.alert(error?.message || '添加到知识库失败，请重试')
+    showToast(error?.message || '添加到知识库失败，请重试', { tone: 'error' })
   }
 }
 async function createKnowledgeBaseForContext() {
@@ -209,7 +210,7 @@ async function createKnowledgeBaseForContext() {
     await library.create(name.trim(), 'personal')
     if (library.activeId) await addContextNoteToKnowledge(library.activeId)
   } catch (error) {
-    window.alert(error?.message || '创建知识库失败，请重试')
+    showToast(error?.message || '创建知识库失败，请重试', { tone: 'error' })
   }
 }
 function positionMoveSubmenu() {
@@ -244,8 +245,8 @@ async function deleteContextNote() {
   const note = contextNote.value
   if (!note) return
   if (showDeleted.value) {
-    if (window.confirm(t('confirmDelete'))) await store.purge(note.id)
-  } else if (window.confirm(t('confirmDelete'))) {
+    if (await requestConfirmation({ title: '永久删除笔记', message: '删除后无法恢复，确定继续吗？', tone: 'danger', confirmLabel: '永久删除' })) await store.purge(note.id)
+  } else if (await requestConfirmation({ title: '移入最近删除', message: t('confirmDelete'), tone: 'danger', confirmLabel: '删除' })) {
     await store.remove(note.id)
   }
   closeContextMenu()

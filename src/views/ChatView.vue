@@ -6,6 +6,7 @@ import { Channel } from '@tauri-apps/api/core'
 import { marked } from 'marked'
 import { ArrowLeft, BookOpen, ChevronDown, Copy, File, FileText, LoaderCircle, MessageCircle, NotebookPen, Paperclip, Plus, Save, Send, Square, Wrench, X } from 'lucide-vue-next'
 import { invoke } from '../services/tauri'
+import { requestConfirmation } from '../services/appFeedback'
 import { useNotesStore } from '../stores/notes'
 import { useLibraryStore } from '../stores/library'
 import { useAppStore } from '../stores/app'
@@ -158,12 +159,12 @@ function parseInputResponse(output) {
   if (typeof output === 'object') return output
   try { return JSON.parse(output) } catch { return null }
 }
-function ensureContextConsent() {
+async function ensureContextConsent() {
   const modelId = selectedModel.value?.id
   if (!modelId) return false
   const consentKey = `tiny-note-context-consent:${modelId}`
   if (localStorage.getItem(consentKey) === 'granted') return true
-  const allowed = window.confirm('Tiny Note 会把本轮命中的本地笔记或知识库片段发送给当前模型。只发送相关片段，并在回答下方展示来源。是否允许？')
+  const allowed = await requestConfirmation({ title: '允许发送相关片段', message: 'Tiny Note 会把本轮命中的本地笔记或知识库片段发送给当前模型，只发送相关片段，并在回答下方展示来源。', confirmLabel: '允许' })
   if (allowed) localStorage.setItem(consentKey, 'granted')
   return allowed
 }
@@ -224,7 +225,7 @@ async function performNoteCommand(command, messageReferences) {
     if (!notebook) await addAssistantNotice(`没有找到名为「${command.value}」的笔记本，请先创建该笔记本。`)
     else { await notesStore.move(target.id, notebook.id); await addAssistantNotice(`已将「${target.title}」移动到「${notebook.name}」。`) }
   } else if (command.action === 'delete') {
-    if (!window.confirm(`确定把「${target.title}」移到最近删除吗？`)) await addAssistantNotice('已取消删除。')
+    if (!(await requestConfirmation({ title: '移入最近删除', message: `确定把「${target.title}」移到最近删除吗？`, tone: 'danger', confirmLabel: '删除' }))) await addAssistantNotice('已取消删除。')
     else { await notesStore.remove(target.id); references.value = references.value.filter(item => item.noteId !== target.id); await addAssistantNotice(`已将「${target.title}」移到最近删除，可在 30 天内恢复。`) }
   }
   return true
@@ -337,7 +338,7 @@ async function sendMessage(value, messageReferences = references.value) {
   agentTextSequence = 0
   currentAgentRunId.value = ''
   pendingSummary.value = isConversationSummaryIntent(message)
-  const contextAllowed = ensureContextConsent()
+  const contextAllowed = await ensureContextConsent()
   try {
     if (currentMode.value === 'agent') {
       if (!window.__TAURI_INTERNALS__) {
