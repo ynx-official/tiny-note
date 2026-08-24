@@ -2994,6 +2994,7 @@ pub fn run() {
             commands::note_fim_cancel,
             agent::agent_invoke,
             agent::agent_resume,
+            agent::agent_respond_input,
             agent::agent_cancel,
             agent::agent_get_run,
             agent::agent_get_pending_run,
@@ -3015,6 +3016,16 @@ pub fn run() {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn local_updater_config_is_deserializable() {
+        let config: serde_json::Value =
+            serde_json::from_str(include_str!("../tauri.conf.json")).unwrap();
+        serde_json::from_value::<tauri_plugin_updater::Config>(
+            config["plugins"]["updater"].clone(),
+        )
+        .expect("local updater config must be an object with a pubkey");
+    }
+
     #[test]
     fn rejects_parent_paths() {
         let root = std::env::temp_dir();

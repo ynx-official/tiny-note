@@ -257,4 +257,60 @@ describe('ChatView Agent approval', () => {
     expect(events[1].text()).toContain('真实返回')
     wrapper.unmount()
   })
+
+  it('renders a structured input card and resumes with a semantic option id', async () => {
+    const fallbackInvoke = testState.invoke.getMockImplementation()
+    testState.invoke.mockImplementation(async (command, args = {}) => {
+      if (command === 'agent_invoke') {
+        await args.onEvent.onmessage({ type: 'started', runId: 'run-input' })
+        await args.onEvent.onmessage({
+          type: 'inputRequired',
+          runId: 'run-input',
+          toolCallId: 'call-input',
+          inputHash: 'input-hash',
+          request: {
+            title: '选择保存方式',
+            question: '这篇文章应该保存到哪里？',
+            options: [
+              { id: 'uncategorized', label: '保存到未分类', recommended: true },
+              { id: 'knowledge_base', label: '选择知识库' }
+            ],
+            allowOther: true
+          }
+        })
+        return null
+      }
+      if (command === 'agent_respond_input') {
+        await args.onEvent.onmessage({ type: 'toolResult', toolCallId: 'call-input', toolName: 'request_user_input', status: 'answered', output: '{"outcome":"answered","selectedOptionId":"knowledge_base","selectedLabel":"选择知识库"}' })
+        await args.onEvent.onmessage({ type: 'completed', runId: 'run-input', content: '好的，继续选择知识库。' })
+        return null
+      }
+      return fallbackInvoke(command, args)
+    })
+    const wrapper = mount(ChatView, {
+      attachTo: window.document.body,
+      global: { plugins: [createPinia()], stubs: { MarkdownMessage: true } }
+    })
+    await flushPromises()
+
+    await wrapper.findAll('.chat-mode-switch button')[1].trigger('click')
+    await wrapper.find('textarea').setValue('帮我保存文章')
+    await wrapper.find('form').trigger('submit')
+    await flushPromises()
+    expect(wrapper.text()).toContain('这篇文章应该保存到哪里？')
+
+    await wrapper.get('[data-option-id="knowledge_base"]').trigger('click')
+    await flushPromises()
+    const responseCall = testState.invoke.mock.calls.find(([command]) => command === 'agent_respond_input')
+    expect(responseCall?.[1].request).toMatchObject({
+      runId: 'run-input',
+      toolCallId: 'call-input',
+      inputHash: 'input-hash',
+      outcome: 'answered',
+      selectedOptionId: 'knowledge_base',
+      otherText: null
+    })
+    expect(wrapper.findAll('markdown-message-stub').some(node => node.attributes('content') === '好的，继续选择知识库。')).toBe(true)
+    wrapper.unmount()
+  })
 })

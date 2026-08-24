@@ -39,7 +39,7 @@ cargo clippy --all-targets --all-features -- -D warnings
 - 个人/本地知识库、文件夹、相对路径安全校验、文本导入、递归名称搜索、预览和系统回收站。
 - 主题/语言、SQLite 模型配置（包含 API Key）、OpenAI-compatible SSE、停止/插入/替换/复制/放弃和默认关闭的 FIM。
 - 首页对话模式与笔记 AI 共用 OpenAI-compatible SSE；首页请求按 `chat` 来源写入用量统计，笔记 AI 按 `note_ai` 来源统计。模型返回的 prompt、completion、reasoning 和 total token 会记录到本地 SQLite。
-- Agent 模式已经接入：Rust 负责 OpenAI-compatible Tool Calling 循环、运行状态、审批恢复、工具审计和用户审批策略；当前提供笔记增删改查（修改为待审阅提案、删除进入最近删除）、知识库元数据增删改查与内容检索、记忆更新、SANDBOX 文件工具、按需加载的本地 Skills、stdio MCP 工具桥接、隔离式子 Agent 和纯计算脚本沙箱。设置页可按单个工具或业务分类批量切换“每次审批/无需审批”并恢复系统默认，真实执行始终由 Rust 读取当前策略。
+- Agent 模式已经接入：Rust 负责 OpenAI-compatible Tool Calling 循环、运行状态、审批/用户输入恢复、工具审计和用户审批策略；Agent 可通过 `request_user_input` 发起可恢复的结构化单选，Vue 会以内联卡片提供 A–D 快捷键、推荐项和“其他”输入。当前工具还包括笔记增删改查（修改为待审阅提案、删除进入最近删除）、知识库元数据增删改查与内容检索、记忆更新、SANDBOX 文件工具、按需加载的本地 Skills、stdio MCP 工具桥接、隔离式子 Agent 和纯计算脚本沙箱。设置页可按单个工具或业务分类批量切换“每次审批/无需审批”并恢复系统默认，真实执行始终由 Rust 读取当前策略。
 
 AI 未配置模型时使用离线演示流；配置模型后请求只从 Rust 发出，API Key 不返回前端。
 
