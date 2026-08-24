@@ -4,7 +4,8 @@ import LibraryView from '../views/LibraryView.vue'
 import SettingsView from '../views/SettingsView.vue'
 import HomeView from '../views/HomeView.vue'
 import ChatView from '../views/ChatView.vue'
+import TasksView from '../views/TasksView.vue'
 
 export default createRouter({ history: createWebHashHistory(), routes: [
-  { path: '/', component: HomeView }, { path: '/home', component: HomeView }, { path: '/chat', component: ChatView }, { path: '/notes', component: NotesView }, { path: '/library', component: LibraryView }, { path: '/settings', component: SettingsView }, { path: '/:pathMatch(.*)*', redirect: '/' }
+  { path: '/', component: HomeView }, { path: '/home', component: HomeView }, { path: '/chat', component: ChatView }, { path: '/notes', component: NotesView }, { path: '/library', component: LibraryView }, { path: '/tasks', component: TasksView }, { path: '/settings', component: SettingsView }, { path: '/:pathMatch(.*)*', redirect: '/' }
 ] })

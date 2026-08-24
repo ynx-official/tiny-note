@@ -112,6 +112,9 @@ export async function invoke(command, args = {}) {
   if (!state.usageRecords) state.usageRecords = []
   if (!state.chatConversations) state.chatConversations = []
   if (!state.chatMessages) state.chatMessages = []
+  if (!state.backgroundTasks) state.backgroundTasks = []
+  state.backgroundTasks = state.backgroundTasks.filter(task => !['chat_response', 'agent_run'].includes(task.kind))
+  state.backgroundTasks = state.backgroundTasks.filter(task => !(['succeeded', 'failed', 'cancelled', 'interrupted'].includes(task.status) && task.completedAt && new Date(task.completedAt).getTime() < Date.now() - 30 * 86400000))
   if (!state.editProposals) state.editProposals = []
   if (!state.noteRevisions) state.noteRevisions = []
   if (!state.noteLinks) {
@@ -122,7 +125,25 @@ export async function invoke(command, args = {}) {
   state.notes.forEach(note => { note.tags = normalizeTags(note.tags); note.pinned = Boolean(note.pinned) })
   state.noteRevisions.forEach(revision => { if (typeof revision.contentMarkdown !== 'string') revision.contentMarkdown = '' })
   let result
-  if (command === 'chat_list') result = state.chatConversations.map(conversation => { const messages = state.chatMessages.filter(message => message.conversationId === conversation.id); return { ...conversation, messageCount: messages.length, preview: messages.at(-1)?.content || '' } }).sort((a, b) => b.updatedAt.localeCompare(a.updatedAt))
+  if (command === 'background_task_list') result = state.backgroundTasks.slice().sort((a, b) => b.createdAt.localeCompare(a.createdAt))
+  else if (command === 'background_task_get') result = state.backgroundTasks.find(task => task.id === args.id) || null
+  else if (command === 'background_task_enqueue') {
+    const input = args.input || {}
+    if (!['conversation_summary', 'note_ai'].includes(input.kind)) throw new Error('无效的后台任务类型')
+    const id = crypto.randomUUID()
+    const resourceKey = input.conversationId ? `conversation:${input.conversationId}` : input.targetNoteId ? `note:${input.targetNoteId}` : `task:${id}`
+    if (input.kind === 'conversation_summary' && state.backgroundTasks.some(task => task.kind === input.kind && task.conversationId === input.conversationId && ['queued', 'running', 'awaiting_approval', 'awaiting_input'].includes(task.status))) throw new Error('当前对话已有正在处理的总结任务')
+    result = { id, kind: input.kind, title: input.title, status: 'queued', payload: input.payload || {}, output: '', result: null, errorCode: null, errorMessage: null, conversationId: input.conversationId || null, targetNoteId: input.targetNoteId || null, resourceKey, modelProfileId: input.modelProfileId || null, agentRunId: null, retryOf: null, createdAt: now, startedAt: null, completedAt: null, updatedAt: now }
+    state.backgroundTasks.unshift(result)
+  }
+  else if (command === 'background_task_transition') {
+    const input = args.input || {}; const task = state.backgroundTasks.find(item => item.id === input.id); if (!task) throw new Error('后台任务不存在')
+    Object.assign(task, { status: input.status, output: task.output + (input.outputDelta || ''), result: input.result ?? task.result, errorCode: input.errorCode || null, errorMessage: input.errorMessage || null, agentRunId: input.agentRunId || task.agentRunId, startedAt: task.startedAt || (input.status === 'running' ? now : null), completedAt: ['succeeded', 'failed', 'cancelled'].includes(input.status) ? now : task.completedAt, updatedAt: now }); result = { ...task }
+  }
+  else if (command === 'background_task_cancel') { const task = state.backgroundTasks.find(item => item.id === args.id); if (!task) throw new Error('后台任务不存在'); Object.assign(task, { status: 'cancelled', completedAt: now, updatedAt: now }); result = { ...task } }
+  else if (command === 'background_task_retry') { const original = state.backgroundTasks.find(item => item.id === args.id); if (!original) throw new Error('后台任务不存在'); const id = crypto.randomUUID(); result = { ...original, id, status: 'queued', output: '', result: null, errorCode: null, errorMessage: null, agentRunId: null, retryOf: original.id, createdAt: now, startedAt: null, completedAt: null, updatedAt: now }; state.backgroundTasks.unshift(result) }
+  else if (command === 'background_task_clear_finished') { const before = state.backgroundTasks.length; state.backgroundTasks = state.backgroundTasks.filter(task => !['succeeded', 'failed', 'cancelled', 'interrupted'].includes(task.status)); result = before - state.backgroundTasks.length }
+  else if (command === 'chat_list') result = state.chatConversations.map(conversation => { const messages = state.chatMessages.filter(message => message.conversationId === conversation.id); return { ...conversation, messageCount: messages.length, preview: messages.at(-1)?.content || '' } }).sort((a, b) => b.updatedAt.localeCompare(a.updatedAt))
   else if (command === 'chat_create') { result = { id: crypto.randomUUID(), title: '新对话', modelProfileId: args.modelProfileId || null, mode: args.mode || 'chat', messageCount: 0, preview: '', createdAt: now, updatedAt: now }; state.chatConversations.unshift(result) }
   else if (command === 'chat_set_mode') { const conversation = state.chatConversations.find(item => item.id === args.id); if (!conversation) throw new Error('对话不存在'); if (!['chat', 'memoryless', 'agent'].includes(args.mode)) throw new Error('无效的对话模式'); conversation.mode = args.mode; conversation.updatedAt = now; result = { ...conversation } }
   else if (command === 'chat_get') { const conversation = state.chatConversations.find(item => item.id === args.id); result = conversation ? { conversation: { ...conversation, messageCount: state.chatMessages.filter(message => message.conversationId === conversation.id).length, preview: state.chatMessages.filter(message => message.conversationId === conversation.id).at(-1)?.content || '' }, messages: state.chatMessages.filter(message => message.conversationId === conversation.id) } : null }
@@ -359,7 +380,7 @@ export async function invoke(command, args = {}) {
     const model = (state.models || []).find(item => item.id === args.modelId)
     result = { supported: false, available: null, currency: null, totalBalance: 0, grantedBalance: 0, toppedUpBalance: 0, voucherBalance: 0, cashBalance: 0, updatedAt: now, error: model?.provider?.toLowerCase().includes('deepseek') ? '余额查询需要桌面端凭据服务。' : null }
   }
-  else if (command === 'model_upsert') { state.models = [...(state.models || []).filter(m => m.id !== args.profile.id), { ...args.profile, apiKeyConfigured: Boolean(args.apiKey) || args.profile.apiKeyConfigured }]; result = null }
+  else if (command === 'model_upsert') { state.models = [...(state.models || []).filter(m => m.id !== args.profile.id), { endpointType: 'openaiChat', ...args.profile, apiKeyConfigured: Boolean(args.apiKey) || args.profile.apiKeyConfigured }]; result = null }
   else if (command === 'model_delete') { state.models = (state.models || []).filter(m => m.id !== args.id); result = null }
   else result = []
   saveBrowserState(state); return result

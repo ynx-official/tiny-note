@@ -1,6 +1,6 @@
 # MVP 验收标准（Approved）
 
-最后更新：2026-08-21
+最后更新：2026-08-24
 
 - Given 首次启动，When 创建笔记并输入内容，Then 800ms 内重启后可恢复标题和正文。
 - Given 笔记已删除，When 在最近删除选择恢复，Then 笔记回到原笔记本；超过 30 天的记录不再显示。
@@ -18,3 +18,11 @@
 - Given 源码包含脚本、事件属性、危险 URL 或非白名单样式，When 生成预览，Then 原始源码可保留，但持久化 HTML 不包含可执行内容。
 - Given 修改独立标题，When 切换任一模式或导出 Markdown，Then 标题保持保存且正文 Markdown 不被静默添加标题 H1。
 - Given AI 提供全文替换，When 用户在任意模式应用替换，Then 三种内容表示同步且模式不变；非即时编辑模式的“应用插入”不可用。
+- Given 对话或笔记 AI 正在生成，When 用户切换到其他 Tab 后再返回，Then 任务继续执行并从持久状态恢复进度和结果。
+- Given 用户点击“总结为笔记”，When 后台任务成功，Then 只创建一篇基于点击时快照的笔记，原对话不新增总结问答消息。
+- Given 应用在任务运行期间退出，When 再次启动，Then 任务显示为“已中断”且不会自动重复模型调用或写操作，用户可以手动重试。
+- Given Agent 等待审批或结构化输入，When 用户仍在或重新打开原对话，Then 可以在对话时间线内处理请求并继续运行，任务中心中不出现该 Agent 对话。
+- Given 任一后台任务已开始执行，When 用户查看任务中心，Then 运行中任务的执行时间逐秒更新，结束后保留该次尝试的最终耗时。
+- Given 已存在模型配置，When 用户编辑名称、厂商、端点类型、Base URL 或模型 ID 并保存，Then 原配置被更新且空白 API Key 不覆盖已有凭据；原“其他”类型明确显示为“OpenAI 兼容服务”。
+- Given 已存在带 Key 的模型配置，When 打开编辑页且不填写新 Key，Then 输入框保持空白并明确提示；获取模型列表和保存均由 Rust 使用原 Key，前端不会收到原 Key 明文。
+- Given 模型选择 OpenAI Responses、OpenAI Chat 或 Anthropic，When 发起普通生成、Agent 或子 Agent 请求，Then Rust 使用对应的路径、认证头、请求体和流事件格式；旧配置继续使用 OpenAI Chat。

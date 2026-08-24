@@ -3,26 +3,35 @@ import { computed, onMounted, onUnmounted, ref } from 'vue'
 import { useRouter } from 'vue-router'
 import { useI18n } from 'vue-i18n'
 import { getCurrentWindow } from '@tauri-apps/api/window'
-import { BookOpen, FileText, Settings, Plus, Minus, Square, Copy, X, PanelLeftClose, PanelLeftOpen, Home } from 'lucide-vue-next'
+import { AlertCircle, BookOpen, CheckCircle2, FileText, ListTodo, LoaderCircle, Settings, Plus, Minus, Square, Copy, X, PanelLeftClose, PanelLeftOpen, Home } from 'lucide-vue-next'
+import { useTasksStore } from '../stores/tasks'
 import AvatarDrawer from './AvatarDrawer.vue'
 import ChatHistoryDrawer from './ChatHistoryDrawer.vue'
 
 const props = defineProps({ active: String })
 const router = useRouter()
 const { t } = useI18n()
+const tasksStore = useTasksStore()
 const railCollapsed = ref(false)
 const isMaximized = ref(false)
 const avatarOpen = ref(false)
 const historyOpen = ref(false)
+const taskArrival = ref(false)
 let appWindow = null
 let stopResizeListener = null
-const nav = computed(() => [{ key: 'notes', label: t('notes'), icon: FileText, path: '/notes' }, { key: 'library', label: t('library'), icon: BookOpen, path: '/library' }, { key: 'settings', label: t('settings'), icon: Settings, path: '/settings' }])
+let taskArrivalTimer = null
+const nav = computed(() => [{ key: 'notes', label: t('notes'), icon: FileText, path: '/notes' }, { key: 'library', label: t('library'), icon: BookOpen, path: '/library' }, { key: 'tasks', label: '任务中心', icon: ListTodo, path: '/tasks' }, { key: 'settings', label: t('settings'), icon: Settings, path: '/settings' }])
 function navigate(path) { router.push(path) }
 function openConversation(id) { router.push({ path: '/chat', query: { id } }) }
 function closeHistoryOnOutsideClick(event) {
   if (!historyOpen.value || !(event.target instanceof Element)) return
   if (event.target.closest('.history-drawer, .rail-clock')) return
   historyOpen.value = false
+}
+function handleTaskArrival() {
+  taskArrival.value = true
+  window.clearTimeout(taskArrivalTimer)
+  taskArrivalTimer = window.setTimeout(() => { taskArrival.value = false }, 700)
 }
 
 function tauriWindow() {
@@ -61,12 +70,13 @@ async function startWindowDrag(event) {
 
 onMounted(async () => {
   document.addEventListener('pointerdown', closeHistoryOnOutsideClick)
+  window.addEventListener('tiny-note-task-flight-arrival', handleTaskArrival)
   const current = tauriWindow()
   if (!current) return
   await syncMaximized()
   try { stopResizeListener = await current.onResized(syncMaximized) } catch { /* keep controls usable if event permission is unavailable */ }
 })
-onUnmounted(() => { if (stopResizeListener) stopResizeListener(); document.removeEventListener('pointerdown', closeHistoryOnOutsideClick) })
+onUnmounted(() => { if (stopResizeListener) stopResizeListener(); window.clearTimeout(taskArrivalTimer); window.removeEventListener('tiny-note-task-flight-arrival', handleTaskArrival); document.removeEventListener('pointerdown', closeHistoryOnOutsideClick) })
 </script>
 <template>
   <div class="window-shell app-container">
@@ -79,8 +89,9 @@ onUnmounted(() => { if (stopResizeListener) stopResizeListener(); document.remov
       <aside class="rail sidebar" :class="{ 'is-collapsed': railCollapsed }">
         <button class="rail-avatar" aria-label="Tiny Note" @click="avatarOpen = true"><span>🐶</span><i class="avatar-status"></i></button>
         <button class="rail-add" aria-label="New" @click="navigate('/notes?new=1')"><Plus :size="18" /></button>
-        <nav><button v-for="item in nav.filter(item => item.key !== 'settings')" :key="item.key" :class="['rail-item', { active: props.active === item.key }]" :title="item.label" @click="navigate(item.path)"><component :is="item.icon" :size="19" /><span>{{ item.label }}</span></button></nav>
+        <nav><button v-for="item in nav.filter(item => !['settings', 'tasks'].includes(item.key))" :key="item.key" :class="['rail-item', { active: props.active === item.key }]" :title="item.label" :aria-label="item.label" @click="navigate(item.path)"><component :is="item.icon" :size="19" /><span>{{ item.label }}</span></button></nav>
         <div class="rail-spacer"></div>
+        <button data-task-center-target class="rail-item rail-tasks" :class="{ active: props.active === 'tasks', 'has-running-task': tasksStore.runningCount, 'task-center-arrival': taskArrival, 'has-failed-task': tasksStore.failedCount }" title="任务中心" aria-label="任务中心" @click="navigate('/tasks')"><AlertCircle v-if="tasksStore.failedCount" class="rail-task-state is-failed" :size="20" /><LoaderCircle v-else-if="tasksStore.runningCount" class="rail-task-state is-running" :size="20" /><CheckCircle2 v-else-if="tasksStore.succeededCount && !tasksStore.waitingCount" class="rail-task-state is-succeeded" :size="20" /><ListTodo v-else :size="19" /><span>任务中心</span><b v-if="tasksStore.failedCount || tasksStore.waitingCount" class="rail-task-badge" :class="{ 'is-failed': tasksStore.failedCount }">{{ Math.min(tasksStore.failedCount || tasksStore.waitingCount, 99) }}</b></button>
         <button class="rail-item rail-clock" :class="{ active: historyOpen }" title="历史记录" @click="historyOpen = !historyOpen"><span>◷</span></button>
         <button class="rail-item" :class="{ active: props.active === 'settings' }" :title="t('settings')" @click="navigate('/settings')"><Settings :size="19" /><span>{{ t('settings') }}</span></button>
       </aside>

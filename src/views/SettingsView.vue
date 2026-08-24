@@ -2,10 +2,11 @@
 import { computed, onMounted, ref, watch } from 'vue'
 import { storeToRefs } from 'pinia'
 import { useI18n } from 'vue-i18n'
-import { Check, ChevronDown, ChevronRight, Cpu, Globe2, Info, Languages, Moon, Monitor, Palette, Plus, RefreshCw, Search, Sparkles, Sun, Trash2, Wrench, X } from 'lucide-vue-next'
+import { Check, ChevronDown, ChevronRight, Cpu, Globe2, Info, Languages, Moon, Monitor, Palette, Pencil, Plus, RefreshCw, Search, Sparkles, Sun, Trash2, Wrench, X } from 'lucide-vue-next'
 import { invoke } from '../services/tauri'
 import { appUpdater } from '../services/appUpdater'
 import { useAppStore } from '../stores/app'
+import { modelProviderLabel } from '../utils/modelProvider'
 import AgentToolsCatalog from '../components/AgentToolsCatalog.vue'
 import doubaoIcon from '../assets/providers/doubao.png'
 import qwenIcon from '../assets/providers/qwen.png'
@@ -21,6 +22,7 @@ const { settings, models } = storeToRefs(appStore)
 const draft = ref(null)
 const showLanguageDropdown = ref(false)
 const providerMenuOpen = ref(false)
+const endpointMenuOpen = ref(false)
 const primaryModelMenuOpen = ref(false)
 const searchQuery = ref('')
 const activeSectionId = ref('appearance')
@@ -49,7 +51,12 @@ const providerOptions = [
   { key: 'deepseek', label: 'DeepSeek', mark: 'DS', icon: deepseekIcon, baseUrl: 'https://api.deepseek.com' },
   { key: 'kimi', label: 'Kimi', mark: 'K', icon: kimiIcon, baseUrl: 'https://api.moonshot.cn/v1' },
   { key: 'minimax', label: 'MiniMax', mark: 'M', icon: minimaxIcon, baseUrl: 'https://api.minimaxi.com/v1' },
-  { key: 'custom', label: '其他', mark: '···', icon: otherIcon, baseUrl: '' }
+  { key: 'custom', label: 'OpenAI 兼容服务', mark: 'AI', icon: otherIcon, baseUrl: '' }
+]
+const endpointOptions = [
+  { key: 'openaiResponses', label: 'OpenAI Responses', description: 'POST /responses' },
+  { key: 'openaiChat', label: 'OpenAI Chat', description: 'POST /chat/completions' },
+  { key: 'anthropicMessages', label: 'Anthropic', description: 'POST /messages' }
 ]
 
 const themeOptions = computed(() => [
@@ -76,6 +83,8 @@ const filteredSections = computed(() => {
 })
 const activeSection = computed(() => settingsSections.value.find(section => section.id === activeSectionId.value) || settingsSections.value[0])
 const selectedProvider = computed(() => providerOptions.find(option => option.key === draft.value?.providerKey) || providerOptions[3])
+const isEditingModel = computed(() => Boolean(draft.value?.id))
+const selectedEndpoint = computed(() => endpointOptions.find(option => option.key === draft.value?.endpointType) || endpointOptions[1])
 const selectedCatalogModels = computed(() => modelCatalog.value.filter(option => selectedModelIds.value.includes(option.id)))
 const primaryModel = computed(() => models.value.find(model => model.isDefault) || models.value[0] || null)
 const balanceModels = computed(() => {
@@ -106,7 +115,7 @@ const updateMessage = computed(() => {
 
 function emptyDraft() {
   const provider = providerOptions[3]
-  return { id: '', name: '', providerKey: provider.key, provider: provider.label, baseUrl: provider.baseUrl, model: '', isDefault: models.value.length === 0, apiKey: '' }
+  return { id: '', name: '', providerKey: provider.key, provider: provider.label, baseUrl: provider.baseUrl, model: '', endpointType: 'openaiChat', isDefault: models.value.length === 0, apiKey: '' }
 }
 
 async function save() {
@@ -133,6 +142,7 @@ async function selectLanguage(value) {
 function closeDropdowns() {
   showLanguageDropdown.value = false
   providerMenuOpen.value = false
+  endpointMenuOpen.value = false
   primaryModelMenuOpen.value = false
 }
 
@@ -182,12 +192,39 @@ function addModel() {
   providerMenuOpen.value = false
 }
 
+function editModel(model) {
+  const provider = providerForModel(model)
+  draft.value = {
+    ...model,
+    providerKey: provider.key,
+    provider: provider.label,
+    name: model.name || '',
+    endpointType: model.endpointType || 'openaiChat',
+    apiKey: ''
+  }
+  modelCatalog.value = []
+  selectedModelIds.value = []
+  modelFetchError.value = ''
+  providerMenuOpen.value = false
+  endpointMenuOpen.value = false
+}
+
 function cancelModel() {
   draft.value = null
   modelCatalog.value = []
   selectedModelIds.value = []
   modelFetchError.value = ''
   providerMenuOpen.value = false
+  endpointMenuOpen.value = false
+}
+
+function selectEndpoint(option) {
+  if (!draft.value) return
+  draft.value.endpointType = option.key
+  endpointMenuOpen.value = false
+  modelCatalog.value = []
+  selectedModelIds.value = []
+  modelFetchError.value = ''
 }
 
 function selectProvider(option) {
@@ -206,6 +243,17 @@ function toggleAllModels() {
   selectedModelIds.value = selectedModelIds.value.length === modelCatalog.value.length ? [] : modelCatalog.value.map(option => option.id)
 }
 
+function toggleCatalogModel(id) {
+  if (isEditingModel.value) {
+    selectedModelIds.value = [id]
+    draft.value.model = id
+    return
+  }
+  selectedModelIds.value = selectedModelIds.value.includes(id)
+    ? selectedModelIds.value.filter(item => item !== id)
+    : [...selectedModelIds.value, id]
+}
+
 async function fetchModels() {
   if (!draft.value?.baseUrl.trim() || modelFetchBusy.value) return
   modelFetchBusy.value = true
@@ -213,7 +261,9 @@ async function fetchModels() {
   try {
     modelCatalog.value = await invoke('model_fetch_models', { request: {
       provider: draft.value.provider,
+      profileId: draft.value.id || null,
       baseUrl: draft.value.baseUrl.trim(),
+      endpointType: draft.value.endpointType,
       apiKey: draft.value.apiKey
     } })
     selectedModelIds.value = []
@@ -235,16 +285,19 @@ async function saveModel() {
   }
   modelSaving.value = true
   try {
-    for (const [index, option] of selected.entries()) {
+    const options = isEditingModel.value ? selected.slice(0, 1) : selected
+    for (const [index, option] of options.entries()) {
+      const editing = isEditingModel.value
       await invoke('model_upsert', {
         profile: {
-          id: crypto.randomUUID(),
-          name: draft.value.provider + ' ' + option.id,
+          id: editing ? draft.value.id : crypto.randomUUID(),
+          name: (options.length === 1 && draft.value.name.trim()) || draft.value.provider + ' ' + option.id,
           provider: draft.value.provider,
           baseUrl: draft.value.baseUrl.trim(),
           model: option.id,
-          isDefault: models.value.length === 0 && index === 0,
-          apiKeyConfigured: false
+          endpointType: draft.value.endpointType,
+          isDefault: editing ? Boolean(draft.value.isDefault) : models.value.length === 0 && index === 0,
+          apiKeyConfigured: editing ? Boolean(draft.value.apiKeyConfigured) : false
         },
         apiKey: draft.value.apiKey
       })
@@ -287,6 +340,9 @@ function providerForModel(model) {
   const value = String(model?.provider || '').toLowerCase()
   return providerOptions.find(option => option.key === value || option.label.toLowerCase() === value || value.includes(option.key)) || providerOptions.at(-1)
 }
+
+function providerLabel(model) { return modelProviderLabel(model?.provider) }
+function endpointLabel(model) { return endpointOptions.find(option => option.key === (model?.endpointType || 'openaiChat'))?.label || 'OpenAI Chat' }
 
 function providerIcon(model) {
   return providerForModel(model).icon
@@ -437,7 +493,7 @@ watch(filteredSections, sections => {
               <strong>首选模型</strong>
               <div class="settings-primary-select-wrap">
                 <button type="button" class="settings-primary-select" @click.stop="primaryModelMenuOpen = !primaryModelMenuOpen; providerMenuOpen = false">
-                  <span v-if="primaryModel" class="settings-primary-model"><img :src="providerIcon(primaryModel)" :alt="primaryModel.provider" class="provider-icon-image" /><span><b>{{ primaryModel.name }}</b><small>{{ primaryModel.provider }} · {{ primaryModel.model }}</small></span></span>
+                  <span v-if="primaryModel" class="settings-primary-model"><img :src="providerIcon(primaryModel)" :alt="providerLabel(primaryModel)" class="provider-icon-image" /><span><b>{{ primaryModel.name }}</b><small>{{ providerLabel(primaryModel) }} · {{ endpointLabel(primaryModel) }} · {{ primaryModel.model }}</small></span></span>
                   <span v-else class="settings-primary-empty">{{ t('noModels') }}</span>
                   <ChevronDown :size="15" :class="{ expanded: primaryModelMenuOpen }" />
                 </button>
@@ -453,9 +509,10 @@ watch(filteredSections, sections => {
             <button type="button" class="settings-add-model-row" @click="addModel"><Plus :size="17" /><span>{{ t('addModel') }}</span><ChevronRight :size="15" /></button>
             <div v-if="models.length" class="settings-model-list">
               <div v-for="model in models" :key="model.id" class="settings-model-card">
-                <img :src="providerIcon(model)" :alt="model.provider" class="provider-icon-image" />
-                <div class="settings-model-card-copy"><strong>{{ model.name }}</strong><small>{{ model.provider }} · {{ model.model }}</small></div>
+                <img :src="providerIcon(model)" :alt="providerLabel(model)" class="provider-icon-image" />
+                <div class="settings-model-card-copy"><strong>{{ model.name }}</strong><small>{{ providerLabel(model) }} · {{ endpointLabel(model) }} · {{ model.model }}</small></div>
                 <span class="settings-model-status">{{ model.apiKeyConfigured ? t('configured') : t('notConfigured') }}</span>
+                <button type="button" class="model-edit-btn" title="编辑模型服务" aria-label="编辑模型服务" @click="editModel(model)"><Pencil :size="15" /></button>
                 <button type="button" class="model-delete-btn" :title="t('delete')" @click="removeModel(model.id)"><Trash2 :size="16" /></button>
               </div>
             </div>
@@ -465,7 +522,7 @@ watch(filteredSections, sections => {
               <article v-for="model in balanceModels" :key="'balance-' + model.provider" class="settings-balance-card">
                 <header class="settings-balance-card-head">
                   <img :src="providerIcon(model)" :alt="model.provider" class="provider-icon-image" />
-                  <div class="settings-balance-card-copy"><strong>{{ model.name }}</strong><small>{{ model.provider }}</small></div>
+                  <div class="settings-balance-card-copy"><strong>{{ model.name }}</strong><small>{{ providerLabel(model) }}</small></div>
                   <button type="button" class="settings-balance-query" :disabled="!isDeepSeek(model) || balanceStates[model.id]?.loading" @click="queryBalanceFor(model)"><RefreshCw v-if="balanceStates[model.id]?.loading" :size="13" class="spinning" /><span v-else>查询余额</span></button>
                 </header>
                 <div v-if="!isDeepSeek(model)" class="settings-balance-muted">该厂商暂不提供标准余额接口</div>
@@ -513,8 +570,8 @@ watch(filteredSections, sections => {
       </main>
     </div>
     <div v-if="draft" class="settings-model-modal-backdrop" @click.self="cancelModel">
-      <section class="settings-model-modal" role="dialog" aria-modal="true" aria-label="添加模型">
-        <header class="settings-model-modal-header"><strong>添加模型</strong><button type="button" aria-label="关闭" @click="cancelModel"><X :size="20" /></button></header>
+      <section class="settings-model-modal" role="dialog" aria-modal="true" :aria-label="isEditingModel ? '编辑模型' : '添加模型'">
+        <header class="settings-model-modal-header"><strong>{{ isEditingModel ? '编辑模型' : '添加模型' }}</strong><button type="button" aria-label="关闭" @click="cancelModel"><X :size="20" /></button></header>
         <div class="settings-model-modal-body">
           <label class="settings-modal-label">模型厂商</label>
           <div class="settings-provider-control">
@@ -525,20 +582,33 @@ watch(filteredSections, sections => {
               <button v-for="option in providerOptions" :key="option.key" type="button" :class="{ active: option.key === draft.providerKey }" @click="selectProvider(option)"><img :src="option.icon" :alt="option.label" class="provider-icon-image" /><span>{{ option.label }}</span><Check v-if="option.key === draft.providerKey" :size="15" /></button>
             </div>
           </div>
+          <p v-if="selectedProvider.key === 'custom'" class="settings-provider-note">连接实现 OpenAI 兼容协议的服务；实际生成端点由下方“端点类型”决定。</p>
+          <label class="settings-modal-label settings-endpoint-label">端点类型</label>
+          <div class="settings-endpoint-control">
+            <button type="button" class="settings-endpoint-trigger" @click.stop="endpointMenuOpen = !endpointMenuOpen; providerMenuOpen = false">
+              <span class="settings-endpoint-symbol">◎</span><span><b>{{ selectedEndpoint.label }}</b><small>{{ selectedEndpoint.description }}</small></span><ChevronDown :size="15" :class="{ expanded: endpointMenuOpen }" />
+            </button>
+            <div v-if="endpointMenuOpen" class="settings-endpoint-menu" @click.stop>
+              <button v-for="option in endpointOptions" :key="option.key" type="button" :class="{ active: option.key === draft.endpointType }" @click="selectEndpoint(option)">
+                <span class="settings-endpoint-symbol" :class="`is-${option.key}`">{{ option.key === 'anthropicMessages' ? '✳' : '◎' }}</span><span><b>{{ option.label }}</b><small>{{ option.description }}</small></span><Check v-if="option.key === draft.endpointType" :size="15" />
+              </button>
+            </div>
+          </div>
           <div class="settings-modal-form-grid">
-            <label><span>{{ t('baseUrl') }}</span><input v-model="draft.baseUrl" type="url" placeholder="https://api.example.com/v1" /></label>
-            <label><span>{{ t('apiKey') }}</span><input v-model="draft.apiKey" type="password" :placeholder="t('apiKey')" autocomplete="new-password" /></label>
+            <label><span>配置名称</span><input v-model="draft.name" name="profile-name" type="text" placeholder="例如：公司内部模型" /></label>
+            <label><span>{{ t('baseUrl') }}</span><input v-model="draft.baseUrl" name="base-url" type="url" placeholder="https://api.example.com/v1" /></label>
+            <label><span>{{ t('apiKey') }}</span><input v-model="draft.apiKey" name="api-key" type="password" :placeholder="isEditingModel && draft.apiKeyConfigured ? '留空保留已保存的 API Key' : t('apiKey')" autocomplete="new-password" /><small v-if="isEditingModel && draft.apiKeyConfigured" class="settings-key-hint">已保存的 Key 不会回显；留空时获取模型和保存都会继续使用原 Key。</small></label>
           </div>
           <div class="settings-fetch-row"><span>从 {{ draft.baseUrl || '接口地址' }}/models 获取可用模型</span><button type="button" class="settings-fetch-button" :disabled="modelFetchBusy || !draft.baseUrl.trim()" @click="fetchModels"><RefreshCw :size="14" :class="{ spinning: modelFetchBusy }" />{{ modelFetchBusy ? '获取中…' : '获取模型列表' }}</button></div>
           <p v-if="modelFetchError" class="settings-model-error">{{ modelFetchError }}</p>
           <div v-if="modelCatalog.length" class="settings-model-picker">
-            <div class="settings-model-picker-header"><span>选择模型 <small>已选 {{ selectedModelIds.length }} 个</small></span><button type="button" @click="toggleAllModels">{{ selectedModelIds.length === modelCatalog.length ? '取消全选' : '全选' }}</button></div>
-            <label v-for="option in modelCatalog" :key="option.id" class="settings-model-check-row"><input v-model="selectedModelIds" type="checkbox" :value="option.id" /><span class="settings-model-check"></span><span><b>{{ option.name || option.id }}</b><small>{{ option.id }}<template v-if="option.ownedBy"> · {{ option.ownedBy }}</template></small></span></label>
+            <div class="settings-model-picker-header"><span>选择模型 <small>已选 {{ selectedModelIds.length }} 个</small></span><button v-if="!isEditingModel" type="button" @click="toggleAllModels">{{ selectedModelIds.length === modelCatalog.length ? '取消全选' : '全选' }}</button></div>
+            <label v-for="option in modelCatalog" :key="option.id" class="settings-model-check-row"><input :checked="selectedModelIds.includes(option.id)" :type="isEditingModel ? 'radio' : 'checkbox'" :value="option.id" @change="toggleCatalogModel(option.id)" /><span class="settings-model-check"></span><span><b>{{ option.name || option.id }}</b><small>{{ option.id }}<template v-if="option.ownedBy"> · {{ option.ownedBy }}</template></small></span></label>
           </div>
-          <label v-if="!modelCatalog.length" class="settings-custom-model-field"><span>自定义模型 ID（可选）</span><input v-model="draft.model" type="text" placeholder="例如 deepseek-chat" /></label>
+          <label v-if="!modelCatalog.length" class="settings-custom-model-field"><span>模型 ID</span><input v-model="draft.model" name="model-id" type="text" placeholder="例如 gpt-4.1-mini" /></label>
           <p class="settings-modal-hint">自定义配置，请遵守法规并关注模型使用 Token 消耗。</p>
         </div>
-        <footer class="settings-model-modal-footer"><button type="button" class="settings-text-button" @click="cancelModel">{{ t('cancel') }}</button><button type="button" class="settings-action-button primary" :disabled="modelSaving || (!selectedModelIds.length && !draft.model.trim())" @click="saveModel">{{ modelSaving ? t('saving') : (locale === 'zh-CN' ? '保存' : 'Save') }}</button></footer>
+        <footer class="settings-model-modal-footer"><button type="button" class="settings-text-button" @click="cancelModel">{{ t('cancel') }}</button><button type="button" class="settings-action-button primary" :disabled="modelSaving || (!selectedModelIds.length && !draft.model.trim())" @click="saveModel">{{ modelSaving ? t('saving') : (isEditingModel ? '保存修改' : (locale === 'zh-CN' ? '保存' : 'Save')) }}</button></footer>
       </section>
     </div>
   </div>

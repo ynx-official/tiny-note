@@ -22,6 +22,8 @@ mod agent;
 mod agent_mcp;
 mod agent_script;
 mod agent_skills;
+mod background_tasks;
+mod model_endpoint;
 mod search;
 mod update;
 
@@ -209,6 +211,8 @@ pub struct ModelProfileDto {
     pub provider: String,
     pub base_url: String,
     pub model: String,
+    #[serde(default = "default_endpoint_type")]
+    pub endpoint_type: String,
     pub api_key_configured: bool,
     pub is_default: bool,
 }
@@ -225,8 +229,22 @@ pub struct ModelOptionDto {
 #[serde(rename_all = "camelCase")]
 pub struct ModelFetchRequest {
     pub provider: String,
+    pub profile_id: Option<String>,
     pub base_url: String,
     pub api_key: Option<String>,
+    #[serde(default = "default_endpoint_type")]
+    pub endpoint_type: String,
+}
+
+fn default_endpoint_type() -> String {
+    "openaiChat".into()
+}
+
+fn valid_endpoint_type(value: &str) -> bool {
+    matches!(
+        value,
+        "openaiChat" | "openaiResponses" | "anthropicMessages"
+    )
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -465,7 +483,7 @@ fn init_database(conn: &Connection) -> Result<(), AppError> {
       CREATE TABLE IF NOT EXISTS notes (id TEXT PRIMARY KEY, notebook_id TEXT REFERENCES notebooks(id) ON DELETE SET NULL, title TEXT NOT NULL, content_html TEXT NOT NULL, content_text TEXT NOT NULL, content_markdown TEXT NOT NULL DEFAULT '', tags_json TEXT NOT NULL DEFAULT '[]', is_pinned INTEGER NOT NULL DEFAULT 0, deleted_at TEXT, created_at TEXT NOT NULL, updated_at TEXT NOT NULL);
       CREATE INDEX IF NOT EXISTS idx_notes_deleted_updated ON notes(deleted_at, updated_at);
       CREATE TABLE IF NOT EXISTS knowledge_bases (id TEXT PRIMARY KEY, category TEXT NOT NULL CHECK(category IN ('personal','local')), name TEXT NOT NULL, description TEXT NOT NULL DEFAULT '', cover TEXT, root_path TEXT NOT NULL, created_at TEXT NOT NULL, updated_at TEXT NOT NULL);
-      CREATE TABLE IF NOT EXISTS model_profiles (id TEXT PRIMARY KEY, name TEXT NOT NULL, provider TEXT NOT NULL, base_url TEXT NOT NULL, model TEXT NOT NULL, api_key TEXT NOT NULL DEFAULT '', is_default INTEGER NOT NULL DEFAULT 0);
+      CREATE TABLE IF NOT EXISTS model_profiles (id TEXT PRIMARY KEY, name TEXT NOT NULL, provider TEXT NOT NULL, base_url TEXT NOT NULL, model TEXT NOT NULL, api_key TEXT NOT NULL DEFAULT '', endpoint_type TEXT NOT NULL DEFAULT 'openaiChat', is_default INTEGER NOT NULL DEFAULT 0);
       CREATE TABLE IF NOT EXISTS usage_records (id TEXT PRIMARY KEY, ts INTEGER NOT NULL, model_id TEXT NOT NULL DEFAULT '', model_name TEXT NOT NULL DEFAULT '', provider TEXT NOT NULL DEFAULT '', source TEXT NOT NULL DEFAULT 'chat', conversation_id TEXT NOT NULL DEFAULT '', prompt_tokens INTEGER NOT NULL DEFAULT 0, completion_tokens INTEGER NOT NULL DEFAULT 0, total_tokens INTEGER NOT NULL DEFAULT 0, reasoning_tokens INTEGER NOT NULL DEFAULT 0);
       CREATE INDEX IF NOT EXISTS idx_usage_records_ts ON usage_records(ts);
       CREATE TABLE IF NOT EXISTS chat_conversations (id TEXT PRIMARY KEY, title TEXT NOT NULL DEFAULT '新对话', model_profile_id TEXT, mode TEXT NOT NULL DEFAULT 'chat' CHECK(mode IN ('chat','memoryless','agent')), created_at TEXT NOT NULL, updated_at TEXT NOT NULL);
@@ -493,6 +511,7 @@ fn init_database(conn: &Connection) -> Result<(), AppError> {
         .map_err(AppError::db)?;
     }
     agent::init_schema(conn)?;
+    background_tasks::init_schema(conn)?;
     let model_columns = {
         let mut statement = conn
             .prepare("PRAGMA table_info(model_profiles)")
@@ -505,6 +524,13 @@ fn init_database(conn: &Connection) -> Result<(), AppError> {
     if !model_columns.iter().any(|column| column == "api_key") {
         conn.execute(
             "ALTER TABLE model_profiles ADD COLUMN api_key TEXT NOT NULL DEFAULT ''",
+            [],
+        )
+        .map_err(AppError::db)?;
+    }
+    if !model_columns.iter().any(|column| column == "endpoint_type") {
+        conn.execute(
+            "ALTER TABLE model_profiles ADD COLUMN endpoint_type TEXT NOT NULL DEFAULT 'openaiChat'",
             [],
         )
         .map_err(AppError::db)?;
@@ -3026,7 +3052,7 @@ pub mod commands {
             .lock()
             .map_err(|_| AppError::db("database lock poisoned"))?;
         let result = conn.prepare(
-        "SELECT id,name,provider,base_url,model,api_key,is_default FROM model_profiles ORDER BY name",
+        "SELECT id,name,provider,base_url,model,api_key,endpoint_type,is_default FROM model_profiles ORDER BY name",
     )
     .map_err(AppError::db)?
     .query_map([], |r| {
@@ -3038,8 +3064,9 @@ pub mod commands {
             provider: r.get(2)?,
             base_url: r.get(3)?,
             model: r.get(4)?,
+            endpoint_type: r.get(6)?,
             api_key_configured: configured,
-            is_default: r.get::<_, i64>(6)? != 0,
+            is_default: r.get::<_, i64>(7)? != 0,
         })
     })
     .map_err(AppError::db)?
@@ -3050,8 +3077,15 @@ pub mod commands {
 
     #[tauri::command]
     pub async fn model_fetch_models(
+        state: State<'_, AppState>,
         request: ModelFetchRequest,
     ) -> Result<Vec<ModelOptionDto>, AppError> {
+        if !valid_endpoint_type(&request.endpoint_type) {
+            return Err(AppError::invalid(
+                "invalid_endpoint_type",
+                "Endpoint type is invalid",
+            ));
+        }
         let base_url = request.base_url.trim().trim_end_matches('/');
         if base_url.is_empty() {
             return Err(AppError::invalid(
@@ -3061,6 +3095,8 @@ pub mod commands {
         }
         let base_url = base_url
             .strip_suffix("/chat/completions")
+            .or_else(|| base_url.strip_suffix("/responses"))
+            .or_else(|| base_url.strip_suffix("/messages"))
             .unwrap_or(base_url)
             .trim_end_matches('/');
         let endpoint = format!("{base_url}/models");
@@ -3074,10 +3110,27 @@ pub mod commands {
             ));
         }
 
+        let api_key = {
+            let conn = state
+                .db
+                .lock()
+                .map_err(|_| AppError::db("database lock poisoned"))?;
+            model_request_api_key(
+                &conn,
+                request.profile_id.as_deref(),
+                request.api_key.as_deref(),
+            )?
+        };
         let client = reqwest::Client::new();
         let mut builder = client.get(parsed).header("Accept", "application/json");
-        if let Some(api_key) = request.api_key.filter(|value| !value.trim().is_empty()) {
-            builder = builder.bearer_auth(api_key);
+        if let Some(api_key) = api_key {
+            builder = if request.endpoint_type == "anthropicMessages" {
+                builder
+                    .header("x-api-key", api_key)
+                    .header("anthropic-version", "2023-06-01")
+            } else {
+                builder.bearer_auth(api_key)
+            };
         }
         let response = builder.send().await.map_err(|_| AppError::Operation {
             code: "provider_request_failed".into(),
@@ -3270,6 +3323,12 @@ pub mod commands {
         profile: ModelProfileDto,
         api_key: Option<String>,
     ) -> Result<(), AppError> {
+        if !valid_endpoint_type(&profile.endpoint_type) {
+            return Err(AppError::invalid(
+                "invalid_endpoint_type",
+                "Endpoint type is invalid",
+            ));
+        }
         let conn = state
             .db
             .lock()
@@ -3283,11 +3342,37 @@ pub mod commands {
             .optional()
             .map_err(AppError::db)?
             .unwrap_or_default();
-        let key = api_key
-            .filter(|value| !value.trim().is_empty())
-            .unwrap_or(existing_key);
-        conn.execute("INSERT INTO model_profiles(id,name,provider,base_url,model,api_key,is_default) VALUES (?1,?2,?3,?4,?5,?6,?7) ON CONFLICT(id) DO UPDATE SET name=excluded.name,provider=excluded.provider,base_url=excluded.base_url,model=excluded.model,api_key=excluded.api_key,is_default=excluded.is_default",params![profile.id,profile.name,profile.provider,profile.base_url,profile.model,key,profile.is_default as i64]).map_err(AppError::db)?;
+        let key = preserved_api_key(existing_key, api_key.as_deref());
+        conn.execute("INSERT INTO model_profiles(id,name,provider,base_url,model,api_key,endpoint_type,is_default) VALUES (?1,?2,?3,?4,?5,?6,?7,?8) ON CONFLICT(id) DO UPDATE SET name=excluded.name,provider=excluded.provider,base_url=excluded.base_url,model=excluded.model,api_key=excluded.api_key,endpoint_type=excluded.endpoint_type,is_default=excluded.is_default",params![profile.id,profile.name,profile.provider,profile.base_url,profile.model,key,profile.endpoint_type,profile.is_default as i64]).map_err(AppError::db)?;
         Ok(())
+    }
+
+    pub(crate) fn model_request_api_key(
+        conn: &Connection,
+        profile_id: Option<&str>,
+        entered_key: Option<&str>,
+    ) -> Result<Option<String>, AppError> {
+        if let Some(key) = entered_key.filter(|value| !value.trim().is_empty()) {
+            return Ok(Some(key.to_string()));
+        }
+        let Some(profile_id) = profile_id.filter(|value| !value.trim().is_empty()) else {
+            return Ok(None);
+        };
+        conn.query_row(
+            "SELECT api_key FROM model_profiles WHERE id=?1",
+            params![profile_id],
+            |row| row.get::<_, String>(0),
+        )
+        .optional()
+        .map_err(AppError::db)
+        .map(|key| key.filter(|value| !value.trim().is_empty()))
+    }
+
+    pub(crate) fn preserved_api_key(existing_key: String, entered_key: Option<&str>) -> String {
+        entered_key
+            .filter(|value| !value.trim().is_empty())
+            .map(str::to_string)
+            .unwrap_or(existing_key)
     }
 
     #[tauri::command]
@@ -3527,7 +3612,7 @@ pub mod commands {
                 .map_err(|_| "database_lock_failed".to_string())?;
             let query = if let Some(profile_id) = &request.model_profile_id {
                 conn.query_row(
-                    "SELECT id,base_url,model,provider,api_key FROM model_profiles WHERE id=?1",
+                    "SELECT id,base_url,model,provider,api_key,endpoint_type FROM model_profiles WHERE id=?1",
                     params![profile_id],
                     |r| {
                         Ok((
@@ -3536,13 +3621,14 @@ pub mod commands {
                             r.get::<_, String>(2)?,
                             r.get::<_, String>(3)?,
                             r.get::<_, String>(4)?,
+                            r.get::<_, String>(5)?,
                         ))
                     },
                 )
                 .optional()
             } else {
                 conn.query_row(
-                    "SELECT id,base_url,model,provider,api_key FROM model_profiles WHERE is_default=1 LIMIT 1",
+                    "SELECT id,base_url,model,provider,api_key,endpoint_type FROM model_profiles WHERE is_default=1 LIMIT 1",
                     [],
                     |r| {
                         Ok((
@@ -3551,6 +3637,7 @@ pub mod commands {
                             r.get::<_, String>(2)?,
                             r.get::<_, String>(3)?,
                             r.get::<_, String>(4)?,
+                            r.get::<_, String>(5)?,
                         ))
                     },
                 )
@@ -3558,17 +3645,14 @@ pub mod commands {
             };
             query.map_err(|_| "model_profile_unavailable".to_string())?
         };
-        let Some((profile_id, base_url, model, provider, key)) = profile else {
+        let Some((profile_id, base_url, model, provider, key, endpoint_type)) = profile else {
             return demo_ai(request, on_event, cancel).await;
         };
         if key.trim().is_empty() {
             return Err("api_key_not_configured".into());
         }
-        let endpoint = if base_url.ends_with("/chat/completions") {
-            base_url
-        } else {
-            format!("{}/chat/completions", base_url.trim_end_matches('/'))
-        };
+        let endpoint_type = model_endpoint::EndpointType::parse(&endpoint_type);
+        let endpoint = endpoint_type.endpoint(&base_url);
         let thinking_hint = if request.thinking_mode.as_deref() == Some("deep") {
             "Reason carefully before answering. Explore the problem step by step internally, then return only the concise final answer."
         } else {
@@ -3632,12 +3716,19 @@ pub mod commands {
                 thinking_hint, action_instruction, bounded_context
             )
         };
-        let body =
-            build_ai_request_body(&model, &provider, &prompt, request.thinking_mode.as_deref());
-        let response = reqwest::Client::new()
-            .post(endpoint)
-            .bearer_auth(key)
-            .json(&body)
+        let mut body = endpoint_type.text_body(
+            &model,
+            "You are Tiny Note writing assistant.",
+            &prompt,
+            true,
+        );
+        if endpoint_type == model_endpoint::EndpointType::OpenAiChat {
+            body =
+                build_ai_request_body(&model, &provider, &prompt, request.thinking_mode.as_deref());
+        }
+        let request_builder = reqwest::Client::new().post(endpoint).json(&body);
+        let response = endpoint_type
+            .authenticate(request_builder, &key)
             .send()
             .await
             .map_err(|_| "provider_request_failed".to_string())?;
@@ -3667,16 +3758,17 @@ pub mod commands {
                         continue;
                     }
                     if let Ok(value) = serde_json::from_str::<serde_json::Value>(data) {
-                        if let Some(text) = value["choices"][0]["delta"]["content"].as_str() {
+                        let (text, event_usage) = endpoint_type.stream_event(&value);
+                        if let Some(text) = text {
                             completion_characters += text.chars().count() as i64;
-                            completion.push_str(text);
+                            completion.push_str(&text);
                             let _ = on_event.send(AiEvent::Delta {
                                 request_id: id.clone(),
-                                text: text.into(),
+                                text,
                             });
                         }
-                        if value.get("usage").is_some() {
-                            usage = value.get("usage").cloned();
+                        if let Some(event_usage) = event_usage {
+                            model_endpoint::merge_usage(&mut usage, event_usage);
                         }
                     }
                 }
@@ -3848,7 +3940,7 @@ pub mod commands {
                 .map_err(|_| AppError::db("database lock poisoned"))?;
             if let Some(profile_id) = model_profile_id {
                 conn.query_row(
-                    "SELECT id,base_url,model,provider,api_key FROM model_profiles WHERE id=?1",
+                    "SELECT id,base_url,model,provider,api_key,endpoint_type FROM model_profiles WHERE id=?1",
                     params![profile_id],
                     |row| {
                         Ok((
@@ -3857,6 +3949,7 @@ pub mod commands {
                             row.get::<_, String>(2)?,
                             row.get::<_, String>(3)?,
                             row.get::<_, String>(4)?,
+                            row.get::<_, String>(5)?,
                         ))
                     },
                 )
@@ -3864,37 +3957,43 @@ pub mod commands {
                 .map_err(AppError::db)?
             } else {
                 conn.query_row(
-                    "SELECT id,base_url,model,provider,api_key FROM model_profiles WHERE is_default=1 LIMIT 1",
+                    "SELECT id,base_url,model,provider,api_key,endpoint_type FROM model_profiles WHERE is_default=1 LIMIT 1",
                     [],
-                    |row| Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?, row.get::<_, String>(2)?, row.get::<_, String>(3)?, row.get::<_, String>(4)?)),
+                    |row| Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?, row.get::<_, String>(2)?, row.get::<_, String>(3)?, row.get::<_, String>(4)?, row.get::<_, String>(5)?)),
                 )
                 .optional()
                 .map_err(AppError::db)?
             }
         };
         let mut title = fallback;
-        if let Some((profile_id, base_url, model, provider, api_key)) = profile {
+        if let Some((profile_id, base_url, model, provider, api_key, endpoint_type)) = profile {
             if !api_key.trim().is_empty() {
-                let body = chat_title_request_body(&model, &provider, &base_url, &transcript);
-                let endpoint = if base_url.ends_with("/chat/completions") {
-                    base_url
+                let endpoint_type = model_endpoint::EndpointType::parse(&endpoint_type);
+                let title_system = "Summarize the conversation into a specific, concise title in the user's language. Return only the title, without quotes or ending punctuation.";
+                let body = if endpoint_type == model_endpoint::EndpointType::OpenAiChat {
+                    chat_title_request_body(&model, &provider, &base_url, &transcript)
                 } else {
-                    format!("{}/chat/completions", base_url.trim_end_matches('/'))
+                    endpoint_type.text_body(&model, title_system, &transcript, false)
                 };
-                if let Ok(response) = reqwest::Client::new()
-                    .post(endpoint)
-                    .bearer_auth(api_key)
-                    .json(&body)
-                    .send()
-                    .await
-                {
+                let builder = reqwest::Client::new()
+                    .post(endpoint_type.endpoint(&base_url))
+                    .json(&body);
+                if let Ok(response) = endpoint_type.authenticate(builder, &api_key).send().await {
                     if response.status().is_success() {
                         if let Ok(payload) = response.json::<serde_json::Value>().await {
-                            if let Some(candidate) = chat_title_candidate(&payload) {
+                            let candidate = if endpoint_type
+                                == model_endpoint::EndpointType::OpenAiChat
+                            {
+                                chat_title_candidate(&payload)
+                            } else {
+                                endpoint_type.response_text(&payload).and_then(|text| chat_title_candidate(&serde_json::json!({"choices":[{"message":{"content":text}}]})))
+                            };
+                            if let Some(candidate) = candidate {
                                 title = candidate;
                             }
                             let estimated_usage;
-                            let usage = if let Some(usage) = payload.get("usage") {
+                            let provider_usage = endpoint_type.response_usage(&payload);
+                            let usage = if let Some(usage) = provider_usage.as_ref() {
                                 usage
                             } else {
                                 let prompt_tokens =
@@ -4062,6 +4161,13 @@ pub fn run() {
             commands::note_ai_cancel,
             commands::note_fim_stream,
             commands::note_fim_cancel,
+            background_tasks::background_task_enqueue,
+            background_tasks::background_task_list,
+            background_tasks::background_task_get,
+            background_tasks::background_task_transition,
+            background_tasks::background_task_cancel,
+            background_tasks::background_task_retry,
+            background_tasks::background_task_clear_finished,
             agent::agent_invoke,
             agent::agent_resume,
             agent::agent_respond_input,
@@ -4109,6 +4215,62 @@ mod tests {
             .query_row("SELECT COUNT(*) FROM notebooks", [], |r| r.get(0))
             .unwrap();
         assert_eq!(n, 1);
+    }
+    #[test]
+    fn migration_adds_openai_chat_endpoint_to_existing_model_profiles() {
+        let c = Connection::open_in_memory().unwrap();
+        c.execute_batch(
+            "CREATE TABLE model_profiles (
+                id TEXT PRIMARY KEY,
+                name TEXT NOT NULL,
+                provider TEXT NOT NULL,
+                base_url TEXT NOT NULL,
+                model TEXT NOT NULL,
+                api_key TEXT NOT NULL DEFAULT '',
+                is_default INTEGER NOT NULL DEFAULT 0
+            );
+            INSERT INTO model_profiles(id,name,provider,base_url,model,api_key,is_default)
+            VALUES('legacy','旧配置','OpenAI 兼容服务','https://example.com/v1','legacy-model','',1);",
+        )
+        .unwrap();
+
+        init_database(&c).unwrap();
+
+        let endpoint_type: String = c
+            .query_row(
+                "SELECT endpoint_type FROM model_profiles WHERE id='legacy'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(endpoint_type, "openaiChat");
+    }
+    #[test]
+    fn model_edit_reuses_saved_key_until_a_replacement_is_entered() {
+        let c = Connection::open_in_memory().unwrap();
+        init_database(&c).unwrap();
+        c.execute(
+            "INSERT INTO model_profiles(id,name,provider,base_url,model,api_key,endpoint_type,is_default) VALUES('saved','模型','OpenAI 兼容服务','https://example.com/v1','model-a','saved-key','openaiChat',1)",
+            [],
+        )
+        .unwrap();
+
+        assert_eq!(
+            commands::model_request_api_key(&c, Some("saved"), Some(""))
+                .unwrap()
+                .as_deref(),
+            Some("saved-key")
+        );
+        assert_eq!(
+            commands::model_request_api_key(&c, Some("saved"), Some("replacement"))
+                .unwrap()
+                .as_deref(),
+            Some("replacement")
+        );
+        assert_eq!(
+            commands::preserved_api_key("saved-key".into(), Some("   ")),
+            "saved-key"
+        );
     }
     #[test]
     fn migration_adds_markdown_columns_to_existing_note_tables() {

@@ -20,10 +20,11 @@ function scrollToBottom() {
     if (container) container.scrollTop = container.scrollHeight
   })
 }
-function submit() {
+function submit(event) {
   const text = input.value.trim()
   if (!text || props.busy) return
-  emit('send', text)
+  const source = event?.submitter || event?.currentTarget?.closest?.('form')?.querySelector('.tiny-note-assistant-send') || event?.currentTarget
+  emit('send', text, source)
   input.value = ''
 }
 function selectionPreview(text) {

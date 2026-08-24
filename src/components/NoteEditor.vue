@@ -26,13 +26,15 @@ import { BookOpen, Bold, CalendarDays, Check, ChevronDown, CircleHelp, Columns2,
 import { useNotesStore } from '../stores/notes'
 import { useLibraryStore } from '../stores/library'
 import { useAppStore } from '../stores/app'
+import { useTasksStore } from '../stores/tasks'
 import { useI18n } from 'vue-i18n'
 import { createNoteExtensions } from '../editor/noteExtensions'
 import { DEFAULT_NOTE_MODE, NOTE_MODES, applyMarkdownSourceToEditor, clampSplitRatio, isRichClipboardHtml, markdownToEditorHtml, sanitizeEditorHtml, scrollOffset, scrollProgress } from '../utils/noteMarkdown'
+import { prepareTaskFlight } from '../utils/taskFlight'
 
 const lowlight = createLowlight()
 lowlight.register('javascript', javascript); lowlight.register('typescript', typescript); lowlight.register('python', python); lowlight.register('json', json); lowlight.register('html', xml); lowlight.register('xml', xml); lowlight.register('css', css); lowlight.register('bash', bash); lowlight.register('sql', sql); lowlight.register('markdown', markdown); lowlight.register('yaml', yaml); lowlight.register('rust', rust)
-const props = defineProps({ note: Object, tocVisible: { type: Boolean, default: false }, proposalId: { type: String, default: '' } }); const emit = defineEmits(['deleted', 'toggle-toc', 'proposal-reviewed']); const store = useNotesStore(); const library = useLibraryStore(); const appStore = useAppStore(); const { t } = useI18n(); const aiBusy = ref(false); const aiText = ref(''); const aiRequestId = ref(''); const aiAction = ref('summarize'); const aiResultAction = ref(''); const aiProposal = ref(null); const aiSources = ref([]); const aiConsentOpen = ref(false); const assistantOpen = ref(false); const assistantTriggerVisible = ref(true); const assistantBusy = ref(false); const assistantRequestId = ref(''); const assistantStreamingText = ref(''); const assistantMessages = ref([]); const assistantSelection = ref(null); const assistantResponseSources = ref([]); const assistantResponseProposal = ref(null); const aiPanelOpen = ref(false); const aiPanelSelectionText = ref(''); const commandMenuOpen = ref(false); const aiPrompt = ref(''); const aiInputRef = ref(null); const commandMenuDirection = ref('down'); const moreOpen = ref(false); const revisionsOpen = ref(false); const revisions = ref([]); const revisionsBusy = ref(false); const insertOpen = ref(false); const tablePickerOpen = ref(false); const textColorOpen = ref(false); const highlightOpen = ref(false); const headingOpen = ref(false); const knowledgeMenuOpen = ref(false); const imageDialogOpen = ref(false); const imageUrl = ref(''); const imageAlt = ref(''); const imageInput = ref(null); const imageFileInput = ref(null); const tableRows = ref(0); const tableCols = ref(0); const fimEnabled = computed(() => appStore.settings.fimEnabled === true); const fimSuggestion = ref(''); const editorStateTick = ref(0); let fimTimer; let assistantTriggerTimer; let savedSelection = null; let pendingAiRequest = null; let pendingAiChange = null
+const props = defineProps({ note: Object, tocVisible: { type: Boolean, default: false }, proposalId: { type: String, default: '' } }); const emit = defineEmits(['deleted', 'toggle-toc', 'proposal-reviewed']); const store = useNotesStore(); const library = useLibraryStore(); const appStore = useAppStore(); const tasksStore = useTasksStore(); const { t } = useI18n(); const aiBusy = ref(false); const aiText = ref(''); const aiRequestId = ref(''); const aiAction = ref('summarize'); const aiResultAction = ref(''); const aiProposal = ref(null); const aiSources = ref([]); const aiConsentOpen = ref(false); const assistantOpen = ref(false); const assistantTriggerVisible = ref(true); const assistantBusy = ref(false); const assistantRequestId = ref(''); const assistantStreamingText = ref(''); const assistantMessages = ref([]); const assistantSelection = ref(null); const assistantResponseSources = ref([]); const assistantResponseProposal = ref(null); const aiPanelOpen = ref(false); const aiPanelSelectionText = ref(''); const commandMenuOpen = ref(false); const aiPrompt = ref(''); const aiInputRef = ref(null); const commandMenuDirection = ref('down'); const moreOpen = ref(false); const revisionsOpen = ref(false); const revisions = ref([]); const revisionsBusy = ref(false); const insertOpen = ref(false); const tablePickerOpen = ref(false); const textColorOpen = ref(false); const highlightOpen = ref(false); const headingOpen = ref(false); const knowledgeMenuOpen = ref(false); const imageDialogOpen = ref(false); const imageUrl = ref(''); const imageAlt = ref(''); const imageInput = ref(null); const imageFileInput = ref(null); const tableRows = ref(0); const tableCols = ref(0); const fimEnabled = computed(() => appStore.settings.fimEnabled === true); const fimSuggestion = ref(''); const editorStateTick = ref(0); let fimTimer; let assistantTriggerTimer; let savedSelection = null; let pendingAiRequest = null; let pendingAiChange = null
 const modeIcons = { rich: PenLine, markdown: FileCode2, read: Eye }
 const noteLinks = ref([])
 const tagDraft = ref('')
@@ -455,6 +457,28 @@ watch(() => props.note?.id, async (id, previousId) => {
 
 watch(assistantOpen, () => nextTick(setupSplitObserver))
 
+async function handleBackgroundNoteTask(event) {
+  const task = event.detail
+  if (!task || ![aiRequestId.value, assistantRequestId.value].includes(task.id)) return
+  const active = ['queued', 'running', 'awaiting_approval', 'awaiting_input'].includes(task.status)
+  if (task.id === aiRequestId.value) {
+    aiBusy.value = active
+    if (task.output) aiText.value = task.output
+    if (task.status === 'failed') aiText.value = `AI 写作失败：${aiEventErrorMessage({ message: task.errorMessage })}`
+    if (task.status === 'cancelled') aiText.value = '已停止生成。'
+    if (task.status === 'succeeded' && task.result?.proposalId) await loadExternalProposal(task.result.proposalId)
+  }
+  if (task.id === assistantRequestId.value) {
+    assistantBusy.value = active
+    assistantStreamingText.value = active ? (task.output || '正在思考…') : ''
+    if (task.status === 'succeeded') {
+      pushAssistantResponse(task.output || '模型没有返回内容，请换个问法再试。')
+      if (task.result?.proposalId) await loadExternalProposal(task.result.proposalId)
+    }
+    if (task.status === 'failed') pushAssistantResponse(`请求失败：${aiEventErrorMessage({ message: task.errorMessage })}`)
+  }
+}
+
 onBeforeUnmount(() => {
   clearTimeout(fimTimer)
   clearTimeout(assistantTriggerTimer)
@@ -465,6 +489,7 @@ onBeforeUnmount(() => {
   splitResizeObserver?.disconnect()
   cancelAnimationFrame(scrollSyncFrame)
   document.removeEventListener('pointerdown', handleDocumentPointerDown)
+  window.removeEventListener('tiny-note-task-updated', handleBackgroundNoteTask)
   void flushLatestContent({ save: true })
   editor.value?.destroy()
 })
@@ -486,7 +511,9 @@ async function loadExternalProposal(id = props.proposalId) {
 watch(() => props.proposalId, id => loadExternalProposal(id))
 onMounted(async () => {
   document.addEventListener('pointerdown', handleDocumentPointerDown)
+  window.addEventListener('tiny-note-task-updated', handleBackgroundNoteTask)
   await appStore.initialize()
+  await tasksStore.initialize()
   if (!library.bases.length) { try { await library.load() } catch {} }
   await loadExternalProposal()
   setupSplitObserver()
@@ -505,13 +532,13 @@ function confirmAiConsent() {
   const request = pendingAiRequest
   pendingAiRequest = null
   aiConsentOpen.value = false
-  if (request?.kind === 'assistant') sendAssistantMessage(request.prompt)
-  else if (request) runAi(request.action, request.requestText, request.instruction)
+  if (request?.kind === 'assistant') sendAssistantMessage(request.prompt, null, request.taskFlight)
+  else if (request) runAi(request.action, request.requestText, request.instruction, request.taskFlight)
 }
-async function runAi(action = aiAction.value, requestText = null, instruction = null) {
+async function runAi(action = aiAction.value, requestText = null, instruction = null, taskFlight = null) {
   if (!props.note || aiBusy.value) return
   if (!hasNoteContextConsent()) {
-    pendingAiRequest = { kind: 'editor', action, requestText, instruction }
+    pendingAiRequest = { kind: 'editor', action, requestText, instruction, taskFlight }
     aiConsentOpen.value = true
     return
   }
@@ -539,24 +566,11 @@ async function runAi(action = aiAction.value, requestText = null, instruction = 
     aiBusy.value = false
     return
   }
-  if (!window.__TAURI_INTERNALS__) { setTimeout(() => { aiText.value = `(${action})\n${instruction ? `${instruction}\n` : ''}${requestText.slice(0, 140)}`; if (action !== 'interpret') aiProposal.value = { id: `browser-${crypto.randomUUID()}`, noteId: props.note.id, action, originalText: requestText, replacementMarkdown: aiText.value, selectionFrom: savedSelection?.from ?? null, selectionTo: savedSelection?.to ?? null, baseUpdatedAt: props.note.updatedAt, status: 'draft', sources: [] }; aiBusy.value = false }, 700); return }
-  const channel = new Channel()
-  channel.onmessage = event => {
-    if (event.type === 'delta') {
-      if (aiText.value === `正在生成${actionLabel}…`) aiText.value = ''
-      aiText.value += event.text
-    }
-    if (event.type === 'sources') aiSources.value = event.sources || []
-    if (event.type === 'editProposal') aiProposal.value = event.proposal
-    if (event.type === 'error') {
-      aiText.value = `${actionLabel}失败：${aiEventErrorMessage(event)}`
-      aiBusy.value = false
-    }
-    if (event.type === 'cancelled') { aiText.value = '已停止生成。'; aiBusy.value = false }
-    if (event.type === 'completed') aiBusy.value = false
-  }
   const selection = savedSelection ? { ...savedSelection, text: editor.value?.state.doc.textBetween(savedSelection.from, savedSelection.to, '\n') || requestText } : null
-  try { await (await import('../services/tauri')).invoke('note_ai_stream', { request: { requestId: aiRequestId.value, action, mode: action === 'interpret' ? 'chat' : 'edit', text: requestText, instruction, targetNoteId: props.note.id, selection, autoRetrieve: !selection, modelProfileId: null, thinkingMode: 'disabled' }, onEvent: channel }) } catch { aiText.value = 'AI 请求失败，请检查模型设置。'; aiBusy.value = false }
+  try {
+    const task = await tasksStore.enqueue({ kind: 'note_ai', title: `${props.note.title || '未命名笔记'} · ${actionLabel}`, targetNoteId: props.note.id, payload: { previewOutput: `(${action})\n${instruction ? `${instruction}\n` : ''}${requestText.slice(0, 140)}`, request: { action, mode: action === 'interpret' ? 'chat' : 'edit', text: requestText, instruction, targetNoteId: props.note.id, selection, autoRetrieve: !selection, modelProfileId: null, thinkingMode: 'disabled', source: 'note_ai' } } }, { preparedFlight: taskFlight })
+    aiRequestId.value = task.id
+  } catch { aiText.value = 'AI 请求失败，请检查模型设置。'; aiBusy.value = false }
 }
 function captureAssistantSelection() {
   const instance = editor.value
@@ -599,10 +613,11 @@ function pushAssistantResponse(content, sources = assistantResponseSources.value
   assistantMessages.value.push({ role: 'assistant', content: content.trim(), sources: sources || [], proposal: proposal || null })
 }
 function assistantEditIntent(message) { return /(扩写|改写|修改|润色|精炼|替换|翻译|续写|修正|重写|rewrite|translate|polish|edit)/i.test(message) }
-async function sendAssistantMessage(prompt) {
+async function sendAssistantMessage(prompt, sourceElement = null, preparedFlight = null) {
   if (!props.note || assistantBusy.value || !prompt?.trim()) return
+  const taskFlight = preparedFlight || prepareTaskFlight(sourceElement)
   if (!hasNoteContextConsent()) {
-    pendingAiRequest = { kind: 'assistant', prompt: prompt.trim() }
+    pendingAiRequest = { kind: 'assistant', prompt: prompt.trim(), taskFlight }
     aiConsentOpen.value = true
     return
   }
@@ -617,45 +632,9 @@ async function sendAssistantMessage(prompt) {
   assistantResponseSources.value = []
   assistantResponseProposal.value = null
   const context = assistantContext()
-  if (!window.__TAURI_INTERNALS__) {
-    window.setTimeout(() => {
-      pushAssistantResponse(`我已参考当前文章${assistantSelection.value?.text ? '和你选中的文字' : ''}。\n\n你的问题：${message}`)
-      assistantStreamingText.value = ''
-      assistantBusy.value = false
-    }, 700)
-    return
-  }
-  const channel = new Channel()
-  channel.onmessage = event => {
-    if (event.type === 'delta') {
-      if (assistantStreamingText.value === '正在思考…') assistantStreamingText.value = ''
-      assistantStreamingText.value += event.text
-    }
-    if (event.type === 'sources') assistantResponseSources.value = event.sources || []
-    if (event.type === 'editProposal') assistantResponseProposal.value = event.proposal
-    if (event.type === 'error') {
-      pushAssistantResponse(`请求失败：${aiEventErrorMessage(event)}`)
-      assistantStreamingText.value = ''
-      assistantBusy.value = false
-    }
-    if (event.type === 'cancelled') { assistantStreamingText.value = ''; assistantBusy.value = false }
-    if (event.type === 'completed') {
-      pushAssistantResponse(assistantStreamingText.value === '正在思考…' ? '模型没有返回内容，请换个问法再试。' : assistantStreamingText.value)
-      if (assistantResponseProposal.value) {
-        aiProposal.value = assistantResponseProposal.value
-        aiSources.value = assistantResponseSources.value
-        aiText.value = assistantResponseProposal.value.replacementMarkdown
-        aiResultAction.value = assistantResponseProposal.value.action
-        aiOutputOpen.value = true
-        aiOriginalText.value = assistantResponseProposal.value.originalText || assistantSelection.value?.text || ''
-        savedSelection = assistantResponseProposal.value.selectionFrom != null ? { from: assistantResponseProposal.value.selectionFrom, to: assistantResponseProposal.value.selectionTo } : null
-      }
-      assistantStreamingText.value = ''
-      assistantBusy.value = false
-    }
-  }
   try {
-    await (await import('../services/tauri')).invoke('note_ai_stream', { request: { requestId: assistantRequestId.value, action: 'custom', mode: assistantEditIntent(message) ? 'edit' : 'chat', text: context, instruction: message, targetNoteId: props.note.id, selection: assistantSelection.value, autoRetrieve: true, modelProfileId: null, source: 'note_ai' }, onEvent: channel })
+    const task = await tasksStore.enqueue({ kind: 'note_ai', title: `${props.note.title || '未命名笔记'} · 助手`, targetNoteId: props.note.id, payload: { previewOutput: `我已参考当前文章${assistantSelection.value?.text ? '和你选中的文字' : ''}。\n\n你的问题：${message}`, request: { action: 'custom', mode: assistantEditIntent(message) ? 'edit' : 'chat', text: context, instruction: message, targetNoteId: props.note.id, selection: assistantSelection.value, autoRetrieve: true, modelProfileId: null, source: 'note_ai' } } }, { preparedFlight: taskFlight })
+    assistantRequestId.value = task.id
   } catch {
     pushAssistantResponse('AI 请求失败，请检查模型设置。')
     assistantStreamingText.value = ''
@@ -664,12 +643,12 @@ async function sendAssistantMessage(prompt) {
 }
 async function stopAssistant() {
   if (!assistantRequestId.value || !assistantBusy.value) return
-  if (window.__TAURI_INTERNALS__) { try { await (await import('../services/tauri')).invoke('note_ai_cancel', { requestId: assistantRequestId.value }) } catch {} }
+  await tasksStore.cancel(assistantRequestId.value)
   assistantBusy.value = false
   assistantStreamingText.value = ''
 }
 async function copyAssistantMessage(content) { if (content) await navigator.clipboard?.writeText(content) }
-async function stopAi() { if (!aiRequestId.value) return; if (window.__TAURI_INTERNALS__) await (await import('../services/tauri')).invoke('note_ai_cancel', { requestId: aiRequestId.value }); aiBusy.value = false }
+async function stopAi() { if (!aiRequestId.value) return; await tasksStore.cancel(aiRequestId.value); aiBusy.value = false }
 async function exportMarkdown() { if (!props.note || !editor.value || !await flushLatestContent()) return; const markdown = props.note.contentMarkdown || getEditorMarkdown(); const blob = new Blob([markdown], { type: 'text/markdown;charset=utf-8' }); const url = URL.createObjectURL(blob); const link = document.createElement('a'); link.href = url; link.download = `${props.note.title || 'note'}.md`; link.click(); URL.revokeObjectURL(url) }
 function printNote() { window.print() }
 async function openRevisions() { if (!props.note) return; moreOpen.value = false; revisionsOpen.value = true; revisionsBusy.value = true; try { revisions.value = await (await import('../services/tauri')).invoke('note_revision_list', { noteId: props.note.id }) } finally { revisionsBusy.value = false } }
@@ -898,7 +877,7 @@ function startAiDrag(event) {
   window.addEventListener('pointercancel', stopAiDrag)
   event.preventDefault()
 }
-function rewriteAi() {
+function rewriteAi(event) {
   if (aiBusy.value || !aiResultAction.value) return
   const action = aiResultAction.value
   let text = selectedText.value
@@ -907,7 +886,7 @@ function rewriteAi() {
     const proposalId = aiProposal.value.id
     void import('../services/tauri').then(({ invoke }) => invoke('note_edit_discard', { proposalId })).catch(() => {})
   }
-  runAi(action, text || props.note?.contentText || '')
+  runAi(action, text || props.note?.contentText || '', null, prepareTaskFlight(event?.currentTarget))
 }
 function saveCurrentSelection() { const selection = editor.value?.state.selection; if (selection && !selection.empty) savedSelection = { from: selection.from, to: selection.to } }
 function closeAiPanel() { aiPanelOpen.value = false; aiPanelSelectionText.value = ''; commandMenuOpen.value = false; aiPrompt.value = '' }
@@ -923,9 +902,9 @@ async function openAiPanel() {
   await nextTick(); aiInputRef.value?.focus(); positionCommandMenu(); commandMenuOpen.value = true
 }
 function toggleCommandMenu(event) { event.stopPropagation(); if (!commandMenuOpen.value) positionCommandMenu(); commandMenuOpen.value = !commandMenuOpen.value }
-function selectAiCommand(action) { saveCurrentSelection(); const text = aiPanelSelectionText.value || selectedText.value || props.note?.contentText || ''; let instruction = null; if (action === 'translate') { const previous = localStorage.getItem('tiny-note-translation-language') || '英文'; const language = window.prompt('请输入目标语言', previous); if (!language?.trim()) return; localStorage.setItem('tiny-note-translation-language', language.trim()); instruction = `翻译为${language.trim()}` }; closeAiPanel(); runAi(action, text, instruction) }
-function sendCustomAi() { const instruction = aiPrompt.value.trim(); if (!instruction || aiBusy.value) return; saveCurrentSelection(); const text = aiPanelSelectionText.value || selectedText.value || props.note?.contentText || ''; closeAiPanel(); runAi('custom', text, instruction) }
-function runSelectedAi(action) { const text = selectedText.value; if (!text || aiBusy.value) return; saveCurrentSelection(); runAi(action, text) }
+function selectAiCommand(action, event) { const taskFlight = prepareTaskFlight(event?.currentTarget); saveCurrentSelection(); const text = aiPanelSelectionText.value || selectedText.value || props.note?.contentText || ''; let instruction = null; if (action === 'translate') { const previous = localStorage.getItem('tiny-note-translation-language') || '英文'; const language = window.prompt('请输入目标语言', previous); if (!language?.trim()) return; localStorage.setItem('tiny-note-translation-language', language.trim()); instruction = `翻译为${language.trim()}` }; closeAiPanel(); runAi(action, text, instruction, taskFlight) }
+function sendCustomAi(event) { const instruction = aiPrompt.value.trim(); if (!instruction || aiBusy.value) return; const source = event?.currentTarget?.closest?.('.tiny-note-ai-panel')?.querySelector('.tiny-note-send-btn') || event?.currentTarget; const taskFlight = prepareTaskFlight(source); saveCurrentSelection(); const text = aiPanelSelectionText.value || selectedText.value || props.note?.contentText || ''; closeAiPanel(); runAi('custom', text, instruction, taskFlight) }
+function runSelectedAi(action, event) { const text = selectedText.value; if (!text || aiBusy.value) return; const taskFlight = prepareTaskFlight(event?.currentTarget); saveCurrentSelection(); runAi(action, text, null, taskFlight) }
 function openInConversation() {
   const text = selectedText.value
   if (!text) return
@@ -1166,12 +1145,12 @@ const title = computed({
               <button class="tiny-note-command-btn" :class="{ active: commandMenuOpen }" @click.stop="toggleCommandMenu"><Zap :size="13" /><span>AI 指令</span><ChevronDown :size="12" /></button>
               <Transition name="tiny-note-command-transition">
                 <div v-if="commandMenuOpen" class="tiny-note-command-menu" :class="`menu-${commandMenuDirection}`" @click.stop>
-                  <button class="tiny-note-command-item" @click="selectAiCommand('translate')"><Languages :size="14" /><span>翻译</span></button>
-                  <button class="tiny-note-command-item" @click="selectAiCommand('summarize')"><FileText :size="14" /><span>总结</span></button>
-                  <button class="tiny-note-command-item" @click="selectAiCommand('continue_write')"><PenLine :size="14" /><span>续写</span></button>
-                  <button class="tiny-note-command-item" @click="selectAiCommand('fix_grammar')"><CircleHelp :size="14" /><span>语法修正</span></button>
-                  <button class="tiny-note-command-item" @click="selectAiCommand('generate_plan')"><CalendarDays :size="14" /><span>生成任务计划</span></button>
-                  <button class="tiny-note-command-item" @click="selectAiCommand('generate_table')"><Table2 :size="14" /><span>生成表格</span></button>
+                  <button class="tiny-note-command-item" @click="selectAiCommand('translate', $event)"><Languages :size="14" /><span>翻译</span></button>
+                  <button class="tiny-note-command-item" @click="selectAiCommand('summarize', $event)"><FileText :size="14" /><span>总结</span></button>
+                  <button class="tiny-note-command-item" @click="selectAiCommand('continue_write', $event)"><PenLine :size="14" /><span>续写</span></button>
+                  <button class="tiny-note-command-item" @click="selectAiCommand('fix_grammar', $event)"><CircleHelp :size="14" /><span>语法修正</span></button>
+                  <button class="tiny-note-command-item" @click="selectAiCommand('generate_plan', $event)"><CalendarDays :size="14" /><span>生成任务计划</span></button>
+                  <button class="tiny-note-command-item" @click="selectAiCommand('generate_table', $event)"><Table2 :size="14" /><span>生成表格</span></button>
                 </div>
               </Transition>
             </div>
@@ -1184,10 +1163,10 @@ const title = computed({
       <div v-else class="bubble-menu-container tiny-note-bubble-content" @mousedown.prevent>
         <button class="bubble-btn ai-write-btn bubble-ai-button" title="AI 写作" @mousedown.prevent="openAiPanel"><Sparkles :size="14" /><span>AI 写作</span></button>
         <span class="bubble-divider"></span>
-        <button class="bubble-btn" title="解读" @mousedown.prevent="runSelectedAi('interpret')"><CircleHelp :size="14" /><span>解读</span></button>
-        <button class="bubble-btn" title="精炼" @mousedown.prevent="runSelectedAi('refine')"><Zap :size="14" /><span>精炼</span></button>
-        <button class="bubble-btn" title="润色" @mousedown.prevent="runSelectedAi('polish')"><PenLine :size="14" /><span>润色</span></button>
-        <button class="bubble-btn" title="扩写" @mousedown.prevent="runSelectedAi('expand')"><Maximize2 :size="14" /><span>扩写</span></button>
+        <button class="bubble-btn" title="解读" @mousedown.prevent="runSelectedAi('interpret', $event)"><CircleHelp :size="14" /><span>解读</span></button>
+        <button class="bubble-btn" title="精炼" @mousedown.prevent="runSelectedAi('refine', $event)"><Zap :size="14" /><span>精炼</span></button>
+        <button class="bubble-btn" title="润色" @mousedown.prevent="runSelectedAi('polish', $event)"><PenLine :size="14" /><span>润色</span></button>
+        <button class="bubble-btn" title="扩写" @mousedown.prevent="runSelectedAi('expand', $event)"><Maximize2 :size="14" /><span>扩写</span></button>
         <span class="bubble-divider"></span>
         <button class="bubble-btn" title="在对话中打开" @mousedown.prevent="openInConversation"><MessageSquare :size="14" /><span>在对话中打开</span></button>
       </div>
