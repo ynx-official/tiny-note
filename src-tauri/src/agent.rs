@@ -22,7 +22,7 @@ use tauri::{ipc::Channel, State};
 use uuid::Uuid;
 use walkdir::WalkDir;
 
-const MAX_AGENT_ITERATIONS: usize = 8;
+const MAX_AGENT_TOOL_TURNS: usize = 12;
 const MAX_TOOL_OUTPUT_CHARS: usize = 12_000;
 const MAX_HISTORY_MESSAGES: usize = 20;
 const MAX_SANDBOX_FILE_BYTES: usize = 2 * 1024 * 1024;
@@ -228,6 +228,7 @@ struct ModelTurnInput<'a> {
     on_event: &'a Channel<AgentEvent>,
     request_id: &'a str,
     cancel: Arc<AtomicBool>,
+    allow_tools: bool,
 }
 
 struct StepInput<'a> {
@@ -1296,7 +1297,7 @@ async fn drive_agent(
         return Ok(());
     }
 
-    for iteration in (current_iteration as usize + 1)..=MAX_AGENT_ITERATIONS {
+    for iteration in (current_iteration as usize + 1)..=MAX_AGENT_TOOL_TURNS {
         if cancel.load(Ordering::Relaxed) {
             finish_run(state, &descriptor.run_id, "cancelled", None)
                 .map_err(|_| fail("agent_store_failed", "无法保存取消状态"))?;
@@ -1318,6 +1319,7 @@ async fn drive_agent(
             on_event,
             request_id: &descriptor.request_id,
             cancel: cancel.clone(),
+            allow_tools: true,
         })
         .await
         {
@@ -1408,10 +1410,109 @@ async fn drive_agent(
             return Ok(());
         }
     }
-    Err(fail(
-        "agent_iteration_limit",
-        "Agent 达到最大工具调用轮数，请缩小任务范围后重试",
-    ))
+    finalize_after_tool_budget(
+        state,
+        descriptor,
+        continuation,
+        &profile,
+        &endpoint,
+        on_event,
+        cancel,
+    )
+    .await
+}
+
+async fn finalize_after_tool_budget(
+    state: &AppState,
+    descriptor: RunDescriptor,
+    mut continuation: ContinuationState,
+    profile: &ModelProfileConfig,
+    endpoint: &str,
+    on_event: &Channel<AgentEvent>,
+    cancel: Arc<AtomicBool>,
+) -> Result<(), (Option<String>, String, String)> {
+    let fail = |code: &str, message: &str| {
+        (
+            Some(descriptor.run_id.clone()),
+            code.to_string(),
+            message.to_string(),
+        )
+    };
+    if cancel.load(Ordering::Relaxed) {
+        finish_run(state, &descriptor.run_id, "cancelled", None)
+            .map_err(|_| fail("agent_store_failed", "无法保存取消状态"))?;
+        let _ = on_event.send(AgentEvent::Cancelled {
+            request_id: descriptor.request_id,
+            run_id: descriptor.run_id,
+        });
+        return Ok(());
+    }
+
+    continuation.messages.push(json!({
+        "role":"system",
+        "content":"工具调用预算已经用完。不要再调用任何工具。请基于已有工具结果直接给出简洁结论；如果任务尚未完全完成，明确列出已完成内容、未完成内容和建议的下一步，不要声称已执行未执行的操作。"
+    }));
+    let final_iteration = MAX_AGENT_TOOL_TURNS + 1;
+    set_iteration(state, &descriptor.run_id, final_iteration as i64)
+        .map_err(|_| fail("agent_store_failed", "无法保存 Agent 状态"))?;
+    let turn = stream_model_turn(ModelTurnInput {
+        endpoint,
+        api_key: &profile.api_key,
+        model: &profile.model,
+        provider: &profile.provider,
+        thinking_mode: continuation.thinking_mode.as_deref(),
+        messages: &continuation.messages,
+        on_event,
+        request_id: &descriptor.request_id,
+        cancel,
+        allow_tools: false,
+    })
+    .await
+    .map_err(|(code, message)| fail(&code, &message))?;
+    record_usage(
+        state,
+        UsageInput {
+            model_id: &profile.id,
+            provider: &profile.provider,
+            model: &profile.model,
+            conversation_id: &descriptor.conversation_id,
+            usage: turn.usage.as_ref(),
+            messages: &continuation.messages,
+            completion: &turn.content,
+        },
+    )
+    .map_err(|_| fail("usage_record_failed", "无法记录 Agent 用量"))?;
+    if turn.content.trim().is_empty() {
+        return Err(fail(
+            "agent_iteration_limit",
+            "Agent 已用完工具调用预算，且模型未能生成收尾说明",
+        ));
+    }
+    continuation.final_content.push_str(&turn.content);
+    insert_step(
+        state,
+        StepInput {
+            run_id: &descriptor.run_id,
+            kind: "text",
+            tool_call_id: None,
+            tool_name: None,
+            arguments: &json!({}),
+            output: Some(&turn.content),
+            status: "completed",
+            approval_hash: None,
+        },
+    )
+    .map_err(|_| fail("agent_store_failed", "无法保存 Agent 文本"))?;
+    save_continuation(state, &descriptor.run_id, &continuation)
+        .map_err(|_| fail("agent_store_failed", "无法保存 Agent 状态"))?;
+    finish_run(state, &descriptor.run_id, "completed", None)
+        .map_err(|_| fail("agent_store_failed", "无法完成 Agent 运行"))?;
+    let _ = on_event.send(AgentEvent::Completed {
+        request_id: descriptor.request_id,
+        run_id: descriptor.run_id,
+        content: continuation.final_content,
+    });
+    Ok(())
 }
 
 async fn resume_agent(
@@ -1897,14 +1998,7 @@ fn approval_description(name: &str) -> &'static str {
 }
 
 async fn stream_model_turn(input: ModelTurnInput<'_>) -> Result<ModelTurn, (String, String)> {
-    let mut body = json!({
-        "model": input.model,
-        "stream": true,
-        "stream_options": {"include_usage":true},
-        "messages": input.messages,
-        "tools": tool_specs(),
-        "tool_choice": "auto"
-    });
+    let mut body = model_turn_body(input.model, input.messages, input.allow_tools);
     if input.thinking_mode == Some("deep") && input.provider.to_lowercase().contains("deepseek") {
         body["thinking"] = json!({"type":"enabled"});
     }
@@ -1961,6 +2055,20 @@ async fn stream_model_turn(input: ModelTurnInput<'_>) -> Result<ModelTurn, (Stri
         tool_calls: calls.into_values().collect(),
         usage,
     })
+}
+
+fn model_turn_body(model: &str, messages: &[Value], allow_tools: bool) -> Value {
+    let mut body = json!({
+        "model": model,
+        "stream": true,
+        "stream_options": {"include_usage":true},
+        "messages": messages
+    });
+    if allow_tools {
+        body["tools"] = Value::Array(tool_specs());
+        body["tool_choice"] = Value::String("auto".into());
+    }
+    body
 }
 
 fn parse_stream_line(
@@ -3193,6 +3301,18 @@ mod tests {
         let call = calls.get(&0).unwrap();
         assert_eq!(call.name, "search_notes");
         assert_eq!(call.arguments, "{\"query\":\"项目\"}");
+    }
+
+    #[test]
+    fn finalization_turn_disables_tools() {
+        let messages = vec![json!({"role":"user","content":"完成任务"})];
+        let regular = model_turn_body("test-model", &messages, true);
+        assert!(regular.get("tools").is_some());
+        assert_eq!(regular["tool_choice"], "auto");
+
+        let finalization = model_turn_body("test-model", &messages, false);
+        assert!(finalization.get("tools").is_none());
+        assert!(finalization.get("tool_choice").is_none());
     }
 
     #[test]
