@@ -177,8 +177,10 @@ body, button, input, select, textarea { font-family: -apple-system, BlinkMacSyst
 .note-editor-shell > .tiny-note-assistant-sidebar { flex:0 0 420px; width:420px; }
 .editor-head { padding:28px 56px 12px; margin-bottom:0; }
 .title-input { font-size:22px; font-weight:500; letter-spacing:-.02em; }
-.note-pin-button { width:26px; height:26px; border-radius:7px; color:var(--text-tertiary); background:transparent; font-size:16px; line-height:1; }
-.note-pin-button:hover,.note-pin-button.active { color:#d28b24; background:var(--bg-hover); }
+.note-pin-button { display:grid; place-items:center; width:26px; height:26px; border:1px solid transparent; border-radius:6px; color:var(--text-tertiary); background:transparent; }
+.note-pin-button:hover { color:var(--text-primary); background:var(--bg-hover); }
+.note-pin-button.active { border-color:var(--line); color:var(--text-primary); background:var(--bg-active); }
+.note-pin-button:focus-visible { outline:2px solid var(--accent-color); outline-offset:2px; }
 .note-metadata { display:flex; flex-wrap:wrap; align-items:center; gap:8px 16px; margin:-4px 56px 14px; color:var(--text-tertiary); font-size:11px; }
 .note-tag-list { display:flex; flex-wrap:wrap; align-items:center; gap:5px; }
 .note-tag { display:inline-flex; align-items:center; gap:3px; padding:3px 7px; border-radius:999px; color:var(--accent-color); background:var(--accent-light); }
@@ -354,15 +356,19 @@ body, button, input, select, textarea { font-family: -apple-system, BlinkMacSyst
 .note-sidebar .note-item { width:100%; display:block; padding:10px 16px; border:0; border-left:3px solid transparent; border-radius:0; background:transparent; color:var(--text-primary); text-align:left; cursor:pointer; transition:background-color .12s; }
 .note-sidebar .note-item:hover { background:var(--bg-hover); }
 .note-sidebar .note-item.active { background:var(--bg-active); border-left-color:var(--text-primary); }
-.note-sidebar .note-title { display:block; overflow:hidden; margin-bottom:1px; color:var(--text-primary); font-size:14px; font-weight:400; line-height:1.35; text-overflow:ellipsis; white-space:nowrap; }
+.note-sidebar .note-title { display:flex; align-items:center; gap:6px; min-width:0; margin-bottom:1px; color:var(--text-primary); font-size:14px; font-weight:400; line-height:1.35; }
+.note-sidebar .note-title-text { min-width:0; flex:1; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
 .note-sidebar .note-meta { display:flex; align-items:center; gap:6px; margin-top:0; color:var(--text-tertiary); font-size:11px; }
 .note-sidebar .note-meta span:last-child { overflow:hidden; white-space:nowrap; text-overflow:ellipsis; }
 .note-sidebar .sidebar-header { height:auto; min-height:48px; flex-direction:column; align-items:stretch; gap:4px; }
 .note-sidebar .note-filter-row { display:flex; align-items:center; gap:6px; padding:0 8px 4px; }
 .note-sidebar .note-filter-row select { min-width:0; flex:1; height:28px; padding:0 7px; border:1px solid var(--border-color); border-radius:6px; outline:0; color:var(--text-secondary); background:var(--bg-primary); font-size:11px; }
-.note-sidebar .note-filter-pin { width:28px; height:28px; flex:0 0 28px; border-radius:6px; color:var(--text-tertiary); background:transparent; font-size:15px; }
-.note-sidebar .note-filter-pin:hover,.note-sidebar .note-filter-pin.active { color:#d28b24; background:var(--bg-hover); }
-.note-sidebar .note-pin-mark { margin-right:4px; color:#d28b24; font-size:11px; }
+.note-sidebar .note-filter-pin { display:grid; place-items:center; width:28px; height:28px; flex:0 0 28px; border:1px solid transparent; border-radius:6px; color:var(--text-tertiary); background:transparent; }
+.note-sidebar .note-filter-pin:hover { color:var(--text-primary); background:var(--bg-hover); }
+.note-sidebar .note-filter-pin.active { border-color:var(--border-color); color:var(--text-primary); background:var(--bg-active); }
+.note-sidebar .note-filter-pin:focus-visible { outline:2px solid var(--accent-color); outline-offset:2px; }
+.note-sidebar .note-pin-mark { flex:0 0 auto; color:var(--text-tertiary); }
+.note-sidebar .note-item.active .note-pin-mark { color:var(--text-secondary); }
 .note-sidebar .note-tags-preview { display:block; overflow:hidden; margin-top:4px; color:var(--text-tertiary); font-size:10px; text-overflow:ellipsis; white-space:nowrap; }
 .note-sidebar .note-items::-webkit-scrollbar { width:4px; }
 .note-sidebar .note-items::-webkit-scrollbar-track { background:transparent; }

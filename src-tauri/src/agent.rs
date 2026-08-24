@@ -23,6 +23,7 @@ use uuid::Uuid;
 use walkdir::WalkDir;
 
 const MAX_AGENT_TOOL_TURNS: usize = 12;
+const TOOL_BUDGET_CALL_PREFIX: &str = "tiny_note_tool_budget_";
 const MAX_TOOL_OUTPUT_CHARS: usize = 12_000;
 const MAX_HISTORY_MESSAGES: usize = 20;
 const MAX_SANDBOX_FILE_BYTES: usize = 2 * 1024 * 1024;
@@ -202,6 +203,12 @@ struct ContinuationState {
     final_content: String,
     references: Vec<search::ContextReference>,
     thinking_mode: Option<String>,
+    #[serde(default = "default_tool_turn_limit")]
+    tool_turn_limit: usize,
+}
+
+fn default_tool_turn_limit() -> usize {
+    MAX_AGENT_TOOL_TURNS
 }
 
 struct ModelTurn {
@@ -1255,6 +1262,7 @@ async fn run_agent(
         final_content: String::new(),
         references: request.references.clone(),
         thinking_mode: request.thinking_mode.clone(),
+        tool_turn_limit: default_tool_turn_limit(),
     };
     save_continuation(state, &descriptor.run_id, &continuation)
         .map_err(|_| fail("agent_store_failed", "无法保存 Agent 状态"))?;
@@ -1297,7 +1305,7 @@ async fn drive_agent(
         return Ok(());
     }
 
-    for iteration in (current_iteration as usize + 1)..=MAX_AGENT_TOOL_TURNS {
+    for iteration in (current_iteration as usize + 1)..=continuation.tool_turn_limit {
         if cancel.load(Ordering::Relaxed) {
             finish_run(state, &descriptor.run_id, "cancelled", None)
                 .map_err(|_| fail("agent_store_failed", "无法保存取消状态"))?;
@@ -1410,24 +1418,13 @@ async fn drive_agent(
             return Ok(());
         }
     }
-    finalize_after_tool_budget(
-        state,
-        descriptor,
-        continuation,
-        &profile,
-        &endpoint,
-        on_event,
-        cancel,
-    )
-    .await
+    pause_for_tool_budget(state, descriptor, continuation, on_event, cancel)
 }
 
-async fn finalize_after_tool_budget(
+fn pause_for_tool_budget(
     state: &AppState,
     descriptor: RunDescriptor,
     mut continuation: ContinuationState,
-    profile: &ModelProfileConfig,
-    endpoint: &str,
     on_event: &Channel<AgentEvent>,
     cancel: Arc<AtomicBool>,
 ) -> Result<(), (Option<String>, String, String)> {
@@ -1448,70 +1445,24 @@ async fn finalize_after_tool_budget(
         return Ok(());
     }
 
+    let call = PendingToolCall {
+        id: format!("{TOOL_BUDGET_CALL_PREFIX}{}", Uuid::new_v4().simple()),
+        name: "request_user_input".into(),
+        arguments: tool_budget_input_request().to_string(),
+    };
     continuation.messages.push(json!({
-        "role":"system",
-        "content":"工具调用预算已经用完。不要再调用任何工具。请基于已有工具结果直接给出简洁结论；如果任务尚未完全完成，明确列出已完成内容、未完成内容和建议的下一步，不要声称已执行未执行的操作。"
+        "role":"assistant",
+        "content":Value::Null,
+        "tool_calls":[{"id":call.id,"type":"function","function":{"name":call.name,"arguments":call.arguments}}]
     }));
-    let final_iteration = MAX_AGENT_TOOL_TURNS + 1;
-    set_iteration(state, &descriptor.run_id, final_iteration as i64)
-        .map_err(|_| fail("agent_store_failed", "无法保存 Agent 状态"))?;
-    let turn = stream_model_turn(ModelTurnInput {
-        endpoint,
-        api_key: &profile.api_key,
-        model: &profile.model,
-        provider: &profile.provider,
-        thinking_mode: continuation.thinking_mode.as_deref(),
-        messages: &continuation.messages,
-        on_event,
-        request_id: &descriptor.request_id,
-        cancel,
-        allow_tools: false,
-    })
-    .await
-    .map_err(|(code, message)| fail(&code, &message))?;
-    record_usage(
-        state,
-        UsageInput {
-            model_id: &profile.id,
-            provider: &profile.provider,
-            model: &profile.model,
-            conversation_id: &descriptor.conversation_id,
-            usage: turn.usage.as_ref(),
-            messages: &continuation.messages,
-            completion: &turn.content,
-        },
-    )
-    .map_err(|_| fail("usage_record_failed", "无法记录 Agent 用量"))?;
-    if turn.content.trim().is_empty() {
-        return Err(fail(
-            "agent_iteration_limit",
-            "Agent 已用完工具调用预算，且模型未能生成收尾说明",
-        ));
-    }
-    continuation.final_content.push_str(&turn.content);
-    insert_step(
-        state,
-        StepInput {
-            run_id: &descriptor.run_id,
-            kind: "text",
-            tool_call_id: None,
-            tool_name: None,
-            arguments: &json!({}),
-            output: Some(&turn.content),
-            status: "completed",
-            approval_hash: None,
-        },
-    )
-    .map_err(|_| fail("agent_store_failed", "无法保存 Agent 文本"))?;
+    continuation.pending_calls = vec![call];
     save_continuation(state, &descriptor.run_id, &continuation)
         .map_err(|_| fail("agent_store_failed", "无法保存 Agent 状态"))?;
-    finish_run(state, &descriptor.run_id, "completed", None)
-        .map_err(|_| fail("agent_store_failed", "无法完成 Agent 运行"))?;
-    let _ = on_event.send(AgentEvent::Completed {
-        request_id: descriptor.request_id,
-        run_id: descriptor.run_id,
-        content: continuation.final_content,
-    });
+    if !process_pending_calls(state, &descriptor, &mut continuation, on_event, &cancel)
+        .map_err(|message| fail("tool_execution_failed", &message))?
+    {
+        return Err(fail("agent_store_failed", "无法暂停 Agent 等待用户选择"));
+    }
     Ok(())
 }
 
@@ -1608,6 +1559,7 @@ async fn resume_agent_input(
     if call.id != request.tool_call_id || call.name != "request_user_input" {
         return Err(fail("input_call_mismatch", "等待回答的问题已经变化"));
     }
+    let is_budget_choice = is_tool_budget_call(&call);
     let prompt = validate_input_request(&parse_tool_arguments(&call))
         .map_err(|message| fail("invalid_input_request", &message))?;
     let expected_hash = approval_hash(&call.name, &prompt.value);
@@ -1634,6 +1586,28 @@ async fn resume_agent_input(
         &mut continuation,
     );
     continuation.pending_calls.remove(0);
+    if is_budget_choice {
+        let should_continue = request.outcome == "answered"
+            && request.selected_option_id.as_deref() == Some("continue");
+        if !should_continue {
+            save_continuation(state, &descriptor.run_id, &continuation)
+                .map_err(|_| fail("agent_store_failed", "无法保存 Agent 状态"))?;
+            finish_run(state, &descriptor.run_id, "cancelled", None)
+                .map_err(|_| fail("agent_store_failed", "无法终止 Agent"))?;
+            let _ = on_event.send(AgentEvent::Cancelled {
+                request_id: descriptor.request_id,
+                run_id: descriptor.run_id,
+            });
+            return Ok(());
+        }
+        continuation.tool_turn_limit = continuation
+            .tool_turn_limit
+            .saturating_add(MAX_AGENT_TOOL_TURNS);
+        continuation.messages.push(json!({
+            "role":"system",
+            "content":format!("用户选择继续执行。你获得了额外 {MAX_AGENT_TOOL_TURNS} 个工具调用回合；请从现有进度继续完成任务。")
+        }));
+    }
     save_continuation(state, &descriptor.run_id, &continuation)
         .map_err(|_| fail("agent_store_failed", "无法保存 Agent 状态"))?;
     set_run_status(state, &descriptor.run_id, "running")
@@ -1834,6 +1808,32 @@ fn parse_tool_arguments(call: &PendingToolCall) -> Value {
 
 fn approval_hash(name: &str, arguments: &Value) -> String {
     search::content_hash(&format!("{name}:{}", arguments))
+}
+
+fn tool_budget_input_request() -> Value {
+    json!({
+        "title":"工具调用轮次已用完",
+        "question":format!("Tiny Agent 已完成本批 {MAX_AGENT_TOOL_TURNS} 个工具回合。要继续执行当前任务，还是在这里终止？"),
+        "options":[
+            {
+                "id":"continue",
+                "label":"继续执行",
+                "description":format!("保留当前上下文并追加 {MAX_AGENT_TOOL_TURNS} 个工具回合"),
+                "recommended":true
+            },
+            {
+                "id":"terminate",
+                "label":"终止任务",
+                "description":"停止当前 Agent 运行，保留已经完成的结果",
+                "recommended":false
+            }
+        ],
+        "allowOther":false
+    })
+}
+
+fn is_tool_budget_call(call: &PendingToolCall) -> bool {
+    call.name == "request_user_input" && call.id.starts_with(TOOL_BUDGET_CALL_PREFIX)
 }
 
 fn validate_input_request(arguments: &Value) -> Result<ValidatedInputRequest, String> {
@@ -3470,6 +3470,46 @@ mod tests {
     }
 
     #[test]
+    fn tool_budget_exhaustion_builds_continue_or_terminate_choice() {
+        let prompt = tool_budget_input_request();
+        let validated = validate_input_request(&prompt).unwrap();
+
+        assert_eq!(validated.value["title"], "工具调用轮次已用完");
+        assert_eq!(validated.value["allowOther"], false);
+        assert_eq!(validated.value["options"][0]["id"], "continue");
+        assert_eq!(validated.value["options"][0]["recommended"], true);
+        assert_eq!(validated.value["options"][1]["id"], "terminate");
+    }
+
+    #[test]
+    fn tool_budget_choice_is_identified_without_matching_normal_questions() {
+        assert!(is_tool_budget_call(&PendingToolCall {
+            id: "tiny_note_tool_budget_1".into(),
+            name: "request_user_input".into(),
+            arguments: tool_budget_input_request().to_string(),
+        }));
+        assert!(!is_tool_budget_call(&PendingToolCall {
+            id: "call-1".into(),
+            name: "request_user_input".into(),
+            arguments: tool_budget_input_request().to_string(),
+        }));
+    }
+
+    #[test]
+    fn legacy_continuation_defaults_to_one_tool_budget_batch() {
+        let continuation: ContinuationState = serde_json::from_value(json!({
+            "messages":[],
+            "pending_calls":[],
+            "final_content":"",
+            "references":[],
+            "thinking_mode":null
+        }))
+        .unwrap();
+
+        assert_eq!(continuation.tool_turn_limit, MAX_AGENT_TOOL_TURNS);
+    }
+
+    #[test]
     fn request_user_input_is_registered_without_approval() {
         let tool = list_tools()
             .into_iter()
@@ -3871,6 +3911,7 @@ mod tests {
             final_content: String::new(),
             references: Vec::new(),
             thinking_mode: None,
+            tool_turn_limit: default_tool_turn_limit(),
         };
         save_continuation(&state, &run_id, &continuation).unwrap();
         set_run_status(&state, &run_id, "awaiting_approval").unwrap();
@@ -3936,6 +3977,7 @@ mod tests {
             final_content: String::new(),
             references: Vec::new(),
             thinking_mode: None,
+            tool_turn_limit: default_tool_turn_limit(),
         };
         save_continuation(&state, &run_id, &continuation).unwrap();
         set_run_status(&state, &run_id, "awaiting_input").unwrap();

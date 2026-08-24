@@ -2,7 +2,7 @@
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { useI18n } from 'vue-i18n'
-import { BookOpen, ChevronRight, CirclePlus, Copy, Download, FolderInput, Pencil, Plus, RotateCcw, Trash2 } from 'lucide-vue-next'
+import { BookOpen, ChevronRight, CirclePlus, Copy, Download, FolderInput, Pencil, Pin, PinOff, Plus, RotateCcw, Trash2 } from 'lucide-vue-next'
 import { useNotesStore } from '../stores/notes'
 import { useLibraryStore } from '../stores/library'
 import NoteEditor from '../components/NoteEditor.vue'
@@ -353,7 +353,7 @@ onBeforeUnmount(() => {
               <option value="">全部标签</option>
               <option v-for="tag in store.allTags" :key="tag" :value="tag">#{{ tag }}</option>
             </select>
-            <button type="button" class="note-filter-pin" :class="{ active: store.pinnedOnly }" title="只看置顶" @click="store.pinnedOnly = !store.pinnedOnly">★</button>
+            <button type="button" class="note-filter-pin" :class="{ active: store.pinnedOnly }" :aria-pressed="store.pinnedOnly" aria-label="只看置顶笔记" title="只看置顶笔记" @click="store.pinnedOnly = !store.pinnedOnly"><Pin :size="14" /></button>
           </div>
           <div v-if="folderItemMenu" class="folder-item-menu" :style="folderItemMenuStyle" @click.stop>
             <button class="folder-item-menu-option" @click="renameNotebook"><Pencil :size="12" />{{ t('rename') }}</button>
@@ -363,7 +363,7 @@ onBeforeUnmount(() => {
 
         <div class="note-items">
           <button v-for="note in list" :key="note.id" class="note-item" :class="{ active: note.id === store.activeId }" @click="selectNote(note.id)" @contextmenu.prevent.stop="openContextMenu($event, note)">
-            <span class="note-title"><span v-if="note.pinned" class="note-pin-mark">★</span>{{ note.title || t('untitled') }}</span>
+            <span class="note-title"><span class="note-title-text">{{ note.title || t('untitled') }}</span><Pin v-if="note.pinned" class="note-pin-mark" :size="12" aria-label="已置顶" /></span>
             <span class="note-meta"><span>{{ new Date(note.updatedAt).toLocaleDateString() }}</span><span>{{ store.notebooks.find(book => book.id === note.notebookId)?.name || t('uncategorized') }}</span><span v-if="note.knowledgeBaseId">{{ library.bases.find(base => base.id === note.knowledgeBaseId)?.name || '知识库' }}</span></span>
             <span v-if="note.tags?.length" class="note-tags-preview">{{ note.tags.map(tag => '#' + tag).join(' ') }}</span>
           </button>
@@ -382,7 +382,7 @@ onBeforeUnmount(() => {
           <button class="has-submenu"><FolderInput :size="15" /><span>移动到笔记本</span><ChevronRight class="context-arrow" :size="14" /></button>
         </div>
         <button @click="duplicateContextNote"><Copy :size="15" /><span>复制</span></button>
-        <button @click="togglePinned(contextNote); closeContextMenu()"><span class="context-star">★</span><span>{{ contextNote?.pinned ? '取消置顶' : '置顶笔记' }}</span></button>
+        <button @click="togglePinned(contextNote); closeContextMenu()"><PinOff v-if="contextNote?.pinned" :size="15" /><Pin v-else :size="15" /><span>{{ contextNote?.pinned ? '取消置顶' : '置顶笔记' }}</span></button>
         <div class="note-context-divider"></div>
         <button class="danger" @click="deleteContextNote"><Trash2 :size="15" /><span>删除</span></button>
       </template>
