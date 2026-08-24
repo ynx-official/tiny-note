@@ -43,7 +43,8 @@ const providerIcons = { doubao: doubaoIcon, qwen: qwenIcon, zhipu: zhipuIcon, de
 const providerAliases = { doubao: ['doubao', '豆包'], qwen: ['qwen', '千问', '通义'], zhipu: ['zhipu', '智谱'], deepseek: ['deepseek'], kimi: ['kimi', 'moonshot'], minimax: ['minimax'], custom: ['custom', '其他', 'openai'] }
 const modelButtonLabel = computed(() => {
   const mode = thinkingMode.value === 'deep' ? (locale.value === 'en' ? 'Deep' : '深度') : (locale.value === 'en' ? 'Quick' : '快速')
-  return selectedModel.value ? `${selectedModel.value.connectionName || selectedModel.value.name} · ${selectedModel.value.model} · ${mode}` : (locale.value === 'en' ? `Local AI · ${mode}` : `本地 AI · ${mode}`)
+  if (!selectedModel.value) return locale.value === 'en' ? `Local AI · ${mode}` : `本地 AI · ${mode}`
+  return `${selectedModel.value.model || selectedModel.value.name} · ${mode}`
 })
 
 const copy = computed(() => locale.value === 'en' ? {
