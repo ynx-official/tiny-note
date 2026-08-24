@@ -4734,7 +4734,7 @@ mod tests {
     #[test]
     fn external_open_only_queues_markdown_paths_once() {
         let pending = PendingMarkdownFiles::default();
-        let cwd = Path::new("C:\\notes");
+        let cwd = Path::new("notes");
         let added = enqueue_markdown_paths(
             &pending,
             [
@@ -4746,10 +4746,7 @@ mod tests {
         );
         let queued = pending.0.lock().unwrap();
         assert_eq!(added, 1);
-        assert_eq!(
-            queued.queue.as_slice(),
-            [PathBuf::from("C:\\notes\\draft.MD")]
-        );
+        assert_eq!(queued.queue.as_slice(), [cwd.join("draft.MD")]);
     }
 
     #[test]

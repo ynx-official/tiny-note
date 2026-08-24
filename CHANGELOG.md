@@ -2,6 +2,15 @@
 
 本文件记录 Tiny Note 各版本面向用户的主要变化，版本号遵循 Semantic Versioning。完整的升级说明统一维护在 [`docs/upgrade/`](docs/upgrade/README.md)，Release Notes 从对应版本详情自动生成。
 
+## [0.1.9] - 2026-08-24
+
+### 修复
+
+- 修复 GitHub Actions Ubuntu Runner 上 Rust 跨平台路径单测失败的问题，恢复跨平台安装包构建流程。
+- 使用平台原生路径拼接验证外部 Markdown 文件打开队列，避免测试写死 Windows 路径分隔符。
+
+[0.1.9]: docs/upgrade/tiny-note-v0.1.9/README.md
+
 ## [0.1.7] - 2026-08-23
 
 ### 新增
