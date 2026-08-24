@@ -64,6 +64,29 @@ impl EndpointType {
         }
     }
 
+    pub fn connection_test_body(self, model: &str) -> Value {
+        match self {
+            Self::OpenAiChat => json!({
+                "model": model,
+                "stream": false,
+                "max_tokens": 16,
+                "messages": [{"role": "user", "content": "Reply with OK."}]
+            }),
+            Self::OpenAiResponses => json!({
+                "model": model,
+                "stream": false,
+                "max_output_tokens": 16,
+                "input": "Reply with OK."
+            }),
+            Self::AnthropicMessages => json!({
+                "model": model,
+                "stream": false,
+                "max_tokens": 16,
+                "messages": [{"role": "user", "content": "Reply with OK."}]
+            }),
+        }
+    }
+
     pub fn stream_event(self, value: &Value) -> (Option<String>, Option<Value>) {
         match self {
             Self::OpenAiChat => (
@@ -202,5 +225,21 @@ mod tests {
         let (text, usage) = EndpointType::AnthropicMessages.stream_event(&json!({"type":"content_block_delta","delta":{"type":"text_delta","text":"ok"},"usage":{"output_tokens":2}}));
         assert_eq!(text.as_deref(), Some("ok"));
         assert_eq!(usage.unwrap()["completion_tokens"], 2);
+    }
+
+    #[test]
+    fn connection_test_bodies_limit_the_test_output() {
+        assert_eq!(
+            EndpointType::OpenAiChat.connection_test_body("gpt")["max_tokens"],
+            16
+        );
+        assert_eq!(
+            EndpointType::OpenAiResponses.connection_test_body("gpt")["max_output_tokens"],
+            16
+        );
+        assert_eq!(
+            EndpointType::AnthropicMessages.connection_test_body("claude")["max_tokens"],
+            16
+        );
     }
 }

@@ -2,7 +2,7 @@
 import { computed, onMounted, ref, watch } from 'vue'
 import { storeToRefs } from 'pinia'
 import { useI18n } from 'vue-i18n'
-import { Check, ChevronDown, ChevronRight, Cpu, Globe2, Info, Languages, Moon, Monitor, Palette, Pencil, Plus, RefreshCw, Search, Sparkles, Sun, Trash2, Wrench, X } from 'lucide-vue-next'
+import { AlertCircle, Check, ChevronDown, ChevronRight, Cpu, FlaskConical, Globe2, Info, Languages, LoaderCircle, Moon, Monitor, Palette, Pencil, Plus, RefreshCw, Search, Sparkles, Sun, Trash2, Wrench, X } from 'lucide-vue-next'
 import { invoke } from '../services/tauri'
 import { appUpdater } from '../services/appUpdater'
 import { useAppStore } from '../stores/app'
@@ -32,6 +32,7 @@ const modelCatalog = ref([])
 const selectedModelIds = ref([])
 const modelFetchBusy = ref(false)
 const modelFetchError = ref('')
+const modelTestStates = ref({})
 const balanceStates = ref({})
 const balanceRefreshingAll = ref(false)
 const indexStatus = ref(null)
@@ -341,6 +342,18 @@ function providerForModel(model) {
   return providerOptions.find(option => option.key === value || option.label.toLowerCase() === value || value.includes(option.key)) || providerOptions.at(-1)
 }
 
+async function testModel(model) {
+  if (!model?.id || modelTestStates.value[model.id]?.loading) return
+  modelTestStates.value = { ...modelTestStates.value, [model.id]: { loading: true, status: 'loading', message: '正在测试…' } }
+  try {
+    const result = await invoke('model_test', { modelId: model.id })
+    const latency = Number(result?.latencyMs)
+    modelTestStates.value = { ...modelTestStates.value, [model.id]: { loading: false, status: 'success', message: Number.isFinite(latency) ? `连接成功 · ${latency} ms` : (result?.message || '连接成功') } }
+  } catch (error) {
+    modelTestStates.value = { ...modelTestStates.value, [model.id]: { loading: false, status: 'error', message: error?.message || error?.code || (typeof error === 'string' ? error : '') || '连接测试失败' } }
+  }
+}
+
 function providerLabel(model) { return modelProviderLabel(model?.provider) }
 function endpointLabel(model) { return endpointOptions.find(option => option.key === (model?.endpointType || 'openaiChat'))?.label || 'OpenAI Chat' }
 
@@ -510,9 +523,10 @@ watch(filteredSections, sections => {
             <div v-if="models.length" class="settings-model-list">
               <div v-for="model in models" :key="model.id" class="settings-model-card">
                 <img :src="providerIcon(model)" :alt="providerLabel(model)" class="provider-icon-image" />
-                <div class="settings-model-card-copy"><strong>{{ model.name }}</strong><small>{{ providerLabel(model) }} · {{ endpointLabel(model) }} · {{ model.model }}</small></div>
+                <div class="settings-model-card-copy"><strong>{{ model.name }}</strong><small>{{ providerLabel(model) }} · {{ endpointLabel(model) }} · {{ model.model }}</small><span v-if="modelTestStates[model.id]" class="settings-model-test-result" :class="`is-${modelTestStates[model.id].status}`"><Check v-if="modelTestStates[model.id].status === 'success'" :size="11" /><AlertCircle v-else-if="modelTestStates[model.id].status === 'error'" :size="11" /><LoaderCircle v-else class="spinning" :size="11" />{{ modelTestStates[model.id].message }}</span></div>
                 <span class="settings-model-status">{{ model.apiKeyConfigured ? t('configured') : t('notConfigured') }}</span>
                 <button type="button" class="model-edit-btn" title="编辑模型服务" aria-label="编辑模型服务" @click="editModel(model)"><Pencil :size="15" /></button>
+                <button v-if="model.apiKeyConfigured" type="button" class="model-test-btn" :disabled="modelTestStates[model.id]?.loading" title="测试模型连接" aria-label="测试模型连接" @click="testModel(model)"><LoaderCircle v-if="modelTestStates[model.id]?.loading" class="spinning" :size="15" /><FlaskConical v-else :size="15" /></button>
                 <button type="button" class="model-delete-btn" :title="t('delete')" @click="removeModel(model.id)"><Trash2 :size="16" /></button>
               </div>
             </div>
@@ -569,7 +583,7 @@ watch(filteredSections, sections => {
         </div>
       </main>
     </div>
-    <div v-if="draft" class="settings-model-modal-backdrop" @click.self="cancelModel">
+    <div v-if="draft" class="settings-model-modal-backdrop">
       <section class="settings-model-modal" role="dialog" aria-modal="true" :aria-label="isEditingModel ? '编辑模型' : '添加模型'">
         <header class="settings-model-modal-header"><strong>{{ isEditingModel ? '编辑模型' : '添加模型' }}</strong><button type="button" aria-label="关闭" @click="cancelModel"><X :size="20" /></button></header>
         <div class="settings-model-modal-body">

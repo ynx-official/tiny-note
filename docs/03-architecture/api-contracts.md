@@ -6,7 +6,7 @@
 
 命令组：`note_*`、`notebook_*`、`knowledge_base_*`、`library_*`、`model_*`、`settings_*`、`note_ai_stream/cancel`、`note_fim_stream/cancel`。路径命令只接受 `knowledgeBaseId + relativePath`。文件导入区分文本与二进制：`library_write_file_bytes` 接收字节数组，图片返回安全的 data URI 预览，PDF/EPUB 保存但明确标记为暂不支持预览/全文索引；`library_import_url` 只允许 HTTP/HTTPS，响应体上限 5MB。
 
-模型命令：`model_list/upsert/delete/fetch_models/query_balance`。`model_upsert` 的 `endpointType` 必须是 `openaiChat`、`openaiResponses` 或 `anthropicMessages`；列表返回相同字段供编辑回填。编辑表单不接收明文旧 Key：`model_fetch_models` 可接收 `profileId`，当 `apiKey` 为空时由 Rust 从该配置读取已保存 Key；`model_upsert` 同样在空 Key 时保留数据库原值，只有非空新值才替换。Rust 分别使用 `/chat/completions` + Bearer、`/responses` + Bearer、`/messages` + `x-api-key`/`anthropic-version`，并按协议转换普通文本、流式内容、用量及 Agent 工具调用。未携带该字段的旧客户端请求按 `openaiChat` 处理。
+模型命令：`model_list/upsert/delete/fetch_models/test/query_balance`。`model_upsert` 的 `endpointType` 必须是 `openaiChat`、`openaiResponses` 或 `anthropicMessages`；列表返回相同字段供编辑回填。编辑表单不接收明文旧 Key：`model_fetch_models` 可接收 `profileId`，当 `apiKey` 为空时由 Rust 从该配置读取已保存 Key；`model_upsert` 同样在空 Key 时保留数据库原值，只有非空新值才替换。`model_test` 只接收模型配置 ID，由 Rust 使用已保存 Key 按端点协议发起带 30 秒超时的低输出连接测试，前端不会取得明文凭据。Rust 分别使用 `/chat/completions` + Bearer、`/responses` + Bearer、`/messages` + `x-api-key`/`anthropic-version`，并按协议转换普通文本、流式内容、用量及 Agent 工具调用。未携带该字段的旧客户端请求按 `openaiChat` 处理。
 
 后台任务命令：`background_task_enqueue/list/get/transition/cancel/retry/clear_finished`。`enqueue` 的 `kind` 仅为 `conversation_summary` 或 `note_ai`；普通对话继续使用页面内 `note_ai_stream`，Tiny Agent 使用页面内 `agent_invoke`，两者都不创建任务中心记录。任务输入只引用模型配置 ID，不接受名称包含 api-key、token、password 或 secret 的字段。`transition` 校验状态机并追加流式输出；`retry` 只接受失败、取消或中断任务并创建带 `retryOf` 的新尝试；启动时自动清理超过 30 天的终态记录，`clear_finished` 立即清理全部终态记录。
 

@@ -225,6 +225,14 @@ pub struct ModelOptionDto {
     pub owned_by: Option<String>,
 }
 
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ModelTestDto {
+    pub ok: bool,
+    pub message: String,
+    pub latency_ms: u128,
+}
+
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ModelFetchRequest {
@@ -3199,6 +3207,92 @@ pub mod commands {
     }
 
     #[tauri::command]
+    pub async fn model_test(
+        state: State<'_, AppState>,
+        model_id: String,
+    ) -> Result<ModelTestDto, AppError> {
+        let (base_url, model, api_key, endpoint_type) = {
+            let conn = state
+                .db
+                .lock()
+                .map_err(|_| AppError::db("database lock poisoned"))?;
+            conn.query_row(
+                "SELECT base_url,model,api_key,endpoint_type FROM model_profiles WHERE id=?1",
+                params![model_id],
+                |row| {
+                    Ok((
+                        row.get::<_, String>(0)?,
+                        row.get::<_, String>(1)?,
+                        row.get::<_, String>(2)?,
+                        row.get::<_, String>(3)?,
+                    ))
+                },
+            )
+            .map_err(|_| AppError::not_found("model_not_found", "Model profile not found"))?
+        };
+        if api_key.trim().is_empty() {
+            return Err(AppError::Operation {
+                code: "api_key_not_configured".into(),
+                message: "尚未配置 API Key".into(),
+            });
+        }
+        let endpoint_type = model_endpoint::EndpointType::parse(&endpoint_type);
+        let endpoint = endpoint_type.endpoint(&base_url);
+        let parsed = reqwest::Url::parse(&endpoint).map_err(|_| {
+            AppError::invalid("invalid_model_endpoint", "Model endpoint is invalid")
+        })?;
+        if !matches!(parsed.scheme(), "http" | "https") {
+            return Err(AppError::invalid(
+                "invalid_model_endpoint",
+                "Model endpoint is invalid",
+            ));
+        }
+        let client = reqwest::Client::builder()
+            .timeout(std::time::Duration::from_secs(30))
+            .build()
+            .map_err(|_| AppError::Operation {
+                code: "provider_request_failed".into(),
+                message: "无法创建模型测试请求".into(),
+            })?;
+        let started = std::time::Instant::now();
+        let builder = client
+            .post(parsed)
+            .header("Accept", "application/json")
+            .json(&endpoint_type.connection_test_body(&model));
+        let response = endpoint_type
+            .authenticate(builder, &api_key)
+            .send()
+            .await
+            .map_err(|error| AppError::Operation {
+                code: "provider_request_failed".into(),
+                message: if error.is_timeout() {
+                    "模型连接测试超时（30 秒）".into()
+                } else {
+                    "无法连接模型服务，请检查地址和网络".into()
+                },
+            })?;
+        let status = response.status();
+        if !status.is_success() {
+            return Err(AppError::Operation {
+                code: "provider_request_failed".into(),
+                message: format!("模型服务拒绝了测试请求（HTTP {}）", status.as_u16()),
+            });
+        }
+        response
+            .json::<serde_json::Value>()
+            .await
+            .map_err(|_| AppError::Operation {
+                code: "provider_response_invalid".into(),
+                message: "模型服务返回了无法识别的测试响应".into(),
+            })?;
+        Ok(ModelTestDto {
+            ok: true,
+            message: "连接成功".into(),
+            latency_ms: started.elapsed().as_millis(),
+        })
+    }
+
+    #[tauri::command]
     pub async fn model_query_balance(
         state: State<'_, AppState>,
         model_id: String,
@@ -4154,6 +4248,7 @@ pub fn run() {
             commands::usage_clear,
             commands::model_list,
             commands::model_fetch_models,
+            commands::model_test,
             commands::model_query_balance,
             commands::model_upsert,
             commands::model_delete,

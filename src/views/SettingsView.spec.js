@@ -31,6 +31,7 @@ describe('SettingsView model services', () => {
       if (command === 'settings_get') return { theme: 'light', language: 'zh-CN', fimEnabled: false }
       if (command === 'model_list') return [model]
       if (command === 'model_fetch_models') return [{ id: 'company-chat', name: 'Company Chat' }]
+      if (command === 'model_test') return { ok: true, message: '连接成功' }
       if (command === 'search_index_status') return null
       if (command === 'model_upsert') return args
       return null
@@ -90,5 +91,39 @@ describe('SettingsView model services', () => {
     await vi.waitFor(() => expect(mocks.invoke).toHaveBeenCalledWith('model_fetch_models', {
       request: expect.objectContaining({ profileId: 'custom-model', apiKey: '' })
     }))
+  })
+
+  it('does not close the model editor when the backdrop is clicked', async () => {
+    const wrapper = mount(SettingsView, {
+      global: {
+        plugins: [createPinia(), createI18n({ legacy: false, locale: 'zh-CN', messages })],
+        stubs: { AgentToolsCatalog: true }
+      }
+    })
+    await vi.waitFor(() => expect(wrapper.text()).toContain('模型服务'))
+    await wrapper.findAll('.settings-nav-item').find(button => button.text().includes('模型服务')).trigger('click')
+    await vi.waitFor(() => expect(wrapper.text()).toContain('公司模型'))
+    await wrapper.get('.model-edit-btn').trigger('click')
+
+    await wrapper.get('.settings-model-modal-backdrop').trigger('click')
+
+    expect(wrapper.find('.settings-model-modal').exists()).toBe(true)
+  })
+
+  it('tests a configured model from the icon beside edit and shows success', async () => {
+    const wrapper = mount(SettingsView, {
+      global: {
+        plugins: [createPinia(), createI18n({ legacy: false, locale: 'zh-CN', messages })],
+        stubs: { AgentToolsCatalog: true }
+      }
+    })
+    await vi.waitFor(() => expect(wrapper.text()).toContain('模型服务'))
+    await wrapper.findAll('.settings-nav-item').find(button => button.text().includes('模型服务')).trigger('click')
+    await vi.waitFor(() => expect(wrapper.text()).toContain('公司模型'))
+
+    await wrapper.get('.model-test-btn').trigger('click')
+
+    await vi.waitFor(() => expect(mocks.invoke).toHaveBeenCalledWith('model_test', { modelId: 'custom-model' }))
+    expect(wrapper.get('.settings-model-test-result').text()).toContain('连接成功')
   })
 })

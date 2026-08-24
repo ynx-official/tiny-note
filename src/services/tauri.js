@@ -376,6 +376,7 @@ export async function invoke(command, args = {}) {
     const presets = provider.includes('deepseek') ? ['deepseek-chat', 'deepseek-reasoner'] : provider.includes('智谱') || provider.includes('zhipu') ? ['glm-4-flash', 'glm-4-plus'] : provider.includes('kimi') || provider.includes('moonshot') ? ['moonshot-v1-8k', 'moonshot-v1-32k'] : provider.includes('minimax') ? ['MiniMax-Text-01'] : provider.includes('千问') || provider.includes('qwen') ? ['qwen-turbo', 'qwen-plus', 'qwen-max'] : ['gpt-4o-mini', 'gpt-4.1-mini']
     result = presets.map(id => ({ id, name: id, ownedBy: request.provider || 'OpenAI-compatible' }))
   }
+  else if (command === 'model_test') result = { ok: true, message: '连接成功', latencyMs: 86 }
   else if (command === 'model_query_balance') {
     const model = (state.models || []).find(item => item.id === args.modelId)
     result = { supported: false, available: null, currency: null, totalBalance: 0, grantedBalance: 0, toppedUpBalance: 0, voucherBalance: 0, cashBalance: 0, updatedAt: now, error: model?.provider?.toLowerCase().includes('deepseek') ? '余额查询需要桌面端凭据服务。' : null }
