@@ -1,5 +1,5 @@
 <script setup>
-import { computed, onMounted, ref } from 'vue'
+import { computed, nextTick, onMounted, ref } from 'vue'
 import { storeToRefs } from 'pinia'
 import { useRouter } from 'vue-router'
 import { useI18n } from 'vue-i18n'
@@ -32,6 +32,9 @@ const thinkingMode = ref('fast')
 const chatMode = ref('agent')
 const modeMenuOpen = ref(false)
 const modelMenuOpen = ref(false)
+const modelMenuPlacement = ref('below')
+const modelMenuMaxHeight = ref(460)
+const modelSelectButton = ref(null)
 const personalBases = computed(() => library.bases.filter(item => item.category === 'personal'))
 const localBases = computed(() => library.bases.filter(item => item.category === 'local'))
 const noteCandidates = computed(() => notes.notes.filter(note => !note.deletedAt))
@@ -95,6 +98,19 @@ function selectChatMode(mode) {
 function selectModel(model) {
   selectedModelId.value = model.id
   modelMenuOpen.value = false
+}
+async function toggleModelMenu() {
+  modelMenuOpen.value = !modelMenuOpen.value
+  modeMenuOpen.value = false
+  referenceMenuOpen.value = false
+  if (!modelMenuOpen.value) return
+  await nextTick()
+  const rect = modelSelectButton.value?.getBoundingClientRect()
+  if (!rect) return
+  const below = Math.max(0, window.innerHeight - rect.bottom - 16)
+  const above = Math.max(0, rect.top - 16)
+  modelMenuPlacement.value = below >= 140 || below >= above ? 'below' : 'above'
+  modelMenuMaxHeight.value = Math.max(120, Math.min(460, modelMenuPlacement.value === 'below' ? below : above))
 }
 function providerIcon(model) {
   const provider = String(model?.provider || '').toLowerCase()
@@ -189,8 +205,8 @@ onMounted(async () => {
               </div>
             </div>
             <div class="home-model-anchor" @click.stop>
-              <button class="home-select-button" type="button" :class="{ active: modelMenuOpen }" @click="modelMenuOpen = !modelMenuOpen; modeMenuOpen = false; referenceMenuOpen = false"><Globe2 :size="16" /><span>{{ modelButtonLabel }}</span><ChevronDown :size="13" :class="{ expanded: modelMenuOpen }" /></button>
-              <div v-if="modelMenuOpen" class="home-model-menu">
+              <button ref="modelSelectButton" class="home-select-button" type="button" :class="{ active: modelMenuOpen }" @click="toggleModelMenu"><Globe2 :size="16" /><span>{{ modelButtonLabel }}</span><ChevronDown :size="13" :class="{ expanded: modelMenuOpen }" /></button>
+              <div v-if="modelMenuOpen" class="home-model-menu" :class="{ 'is-above': modelMenuPlacement === 'above' }" :style="{ '--home-model-menu-max-height': `${modelMenuMaxHeight}px` }">
                 <div class="home-thinking-row"><span><Sparkles :size="15" />思考模式</span><div class="home-thinking-tabs"><button type="button" :class="{ active: thinkingMode === 'fast' }" @click="thinkingMode = 'fast'"><span>快速</span></button><button type="button" :class="{ active: thinkingMode === 'deep' }" @click="thinkingMode = 'deep'"><span>深度</span></button></div></div>
                 <div class="home-model-divider"></div>
                 <button v-for="model in models" :key="model.id" type="button" class="home-model-option" :class="{ active: model.id === selectedModel?.id }" @click="selectModel(model)"><img :src="providerIcon(model)" :alt="modelProviderLabel(model.provider)" class="home-model-provider-icon" /><span><b>{{ model.name }}</b><small>{{ modelProviderLabel(model.provider) }} · {{ model.model }}</small></span><span v-if="model.id === selectedModel?.id" class="home-model-check">✓</span></button>
