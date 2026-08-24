@@ -9,6 +9,7 @@ import {
 } from 'lucide-vue-next'
 import { useLibraryStore } from '../stores/library'
 import { useNotesStore } from '../stores/notes'
+import { requestPrompt } from '../services/promptDialog'
 
 const store = useLibraryStore()
 const notesStore = useNotesStore()
@@ -44,7 +45,7 @@ async function create() {
   }
 }
 async function folder() {
-  const value = window.prompt(t('createFolder'))
+  const value = await requestPrompt(t('createFolder'))
   if (value?.trim()) await store.createFolder(value.trim())
 }
 async function importFiles(event) {
@@ -65,7 +66,7 @@ async function importList(files) {
 }
 async function importUrl() {
   if (!store.activeId) return
-  const url = window.prompt('输入网页或文件 URL')
+  const url = await requestPrompt('输入网页或文件 URL', '', { inputType: 'url', placeholder: 'https://example.com' })
   if (!url?.trim()) return
   try {
     await store.importUrl(url.trim())
@@ -81,11 +82,11 @@ async function remove(entry) {
   if (window.confirm(t('confirmDelete'))) await store.remove(entry.relativePath)
 }
 async function rename(entry) {
-  const next = window.prompt(t('rename'), entry.name)
+  const next = await requestPrompt(t('rename'), entry.name)
   if (next?.trim() && next.trim() !== entry.name) await store.rename(entry.relativePath, next.trim())
 }
 async function renameBase(base) {
-  const next = window.prompt(t('rename'), base.name)
+  const next = await requestPrompt(t('rename'), base.name)
   if (next?.trim() && next.trim() !== base.name) await store.updateBase(base, next.trim())
 }
 async function deleteBase(base) {

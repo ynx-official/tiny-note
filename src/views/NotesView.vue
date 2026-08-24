@@ -6,6 +6,7 @@ import { BookOpen, ChevronRight, CirclePlus, Copy, Download, FolderInput, Pencil
 import { useNotesStore } from '../stores/notes'
 import { useLibraryStore } from '../stores/library'
 import NoteEditor from '../components/NoteEditor.vue'
+import { requestPrompt } from '../services/promptDialog'
 
 const store = useNotesStore()
 const library = useLibraryStore()
@@ -111,7 +112,7 @@ function openFolderItemMenu(event, folder) {
 async function renameNotebook() {
   const folder = folderItemMenu.value
   if (!folder) return
-  const name = window.prompt(t('rename'), folder.name)
+  const name = await requestPrompt(t('rename'), folder.name)
   if (name?.trim() && name.trim() !== folder.name) await store.updateNotebook(folder.id, name.trim())
   folderItemMenu.value = null
 }
@@ -202,7 +203,7 @@ async function addContextNoteToKnowledge(knowledgeBaseId) {
   }
 }
 async function createKnowledgeBaseForContext() {
-  const name = window.prompt(t('newKnowledge'))
+  const name = await requestPrompt(t('newKnowledge'))
   if (!name?.trim()) return
   try {
     await library.create(name.trim(), 'personal')
@@ -228,7 +229,7 @@ function positionMoveSubmenu() {
   contextMoveStyle.value = { left: left + 'px', top: top + 'px' }
 }
 async function createNotebookForContext() {
-  const name = window.prompt(t('newNotebook'))
+  const name = await requestPrompt(t('newNotebook'))
   if (name?.trim()) {
     await store.createNotebook(name.trim())
     contextMoveOpen.value = false

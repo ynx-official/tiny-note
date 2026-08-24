@@ -31,6 +31,7 @@ import { useI18n } from 'vue-i18n'
 import { createNoteExtensions } from '../editor/noteExtensions'
 import { DEFAULT_NOTE_MODE, NOTE_MODES, applyMarkdownSourceToEditor, clampSplitRatio, isRichClipboardHtml, markdownToEditorHtml, sanitizeEditorHtml, scrollOffset, scrollProgress } from '../utils/noteMarkdown'
 import { prepareTaskFlight } from '../utils/taskFlight'
+import { requestPrompt } from '../services/promptDialog'
 
 const lowlight = createLowlight()
 lowlight.register('javascript', javascript); lowlight.register('typescript', typescript); lowlight.register('python', python); lowlight.register('json', json); lowlight.register('html', xml); lowlight.register('xml', xml); lowlight.register('css', css); lowlight.register('bash', bash); lowlight.register('sql', sql); lowlight.register('markdown', markdown); lowlight.register('yaml', yaml); lowlight.register('rust', rust)
@@ -902,7 +903,7 @@ async function openAiPanel() {
   await nextTick(); aiInputRef.value?.focus(); positionCommandMenu(); commandMenuOpen.value = true
 }
 function toggleCommandMenu(event) { event.stopPropagation(); if (!commandMenuOpen.value) positionCommandMenu(); commandMenuOpen.value = !commandMenuOpen.value }
-function selectAiCommand(action, event) { const taskFlight = prepareTaskFlight(event?.currentTarget); saveCurrentSelection(); const text = aiPanelSelectionText.value || selectedText.value || props.note?.contentText || ''; let instruction = null; if (action === 'translate') { const previous = localStorage.getItem('tiny-note-translation-language') || '英文'; const language = window.prompt('请输入目标语言', previous); if (!language?.trim()) return; localStorage.setItem('tiny-note-translation-language', language.trim()); instruction = `翻译为${language.trim()}` }; closeAiPanel(); runAi(action, text, instruction, taskFlight) }
+async function selectAiCommand(action, event) { const taskFlight = prepareTaskFlight(event?.currentTarget); saveCurrentSelection(); const text = aiPanelSelectionText.value || selectedText.value || props.note?.contentText || ''; let instruction = null; if (action === 'translate') { const previous = localStorage.getItem('tiny-note-translation-language') || '英文'; const language = await requestPrompt('请输入目标语言', previous); if (!language?.trim()) return; localStorage.setItem('tiny-note-translation-language', language.trim()); instruction = `翻译为${language.trim()}` }; closeAiPanel(); runAi(action, text, instruction, taskFlight) }
 function sendCustomAi(event) { const instruction = aiPrompt.value.trim(); if (!instruction || aiBusy.value) return; const source = event?.currentTarget?.closest?.('.tiny-note-ai-panel')?.querySelector('.tiny-note-send-btn') || event?.currentTarget; const taskFlight = prepareTaskFlight(source); saveCurrentSelection(); const text = aiPanelSelectionText.value || selectedText.value || props.note?.contentText || ''; closeAiPanel(); runAi('custom', text, instruction, taskFlight) }
 function runSelectedAi(action, event) { const text = selectedText.value; if (!text || aiBusy.value) return; const taskFlight = prepareTaskFlight(event?.currentTarget); saveCurrentSelection(); runAi(action, text, null, taskFlight) }
 function openInConversation() {
@@ -980,11 +981,11 @@ function normalizeLinkHref(value) {
     return ['http:', 'https:', 'mailto:', 'tel:'].includes(protocol) ? href : ''
   } catch { return '' }
 }
-function editLink() {
+async function editLink() {
   const instance = editor.value
   if (!instance || !canEditLink.value) return
   const currentHref = instance.getAttributes('link').href || ''
-  const nextHref = window.prompt(linkActive.value ? '编辑链接地址' : '输入链接地址', currentHref || 'https://')
+  const nextHref = await requestPrompt(linkActive.value ? '编辑链接地址' : '输入链接地址', currentHref || 'https://', { inputType: 'url' })
   if (nextHref === null) return
   if (!nextHref.trim()) { if (linkActive.value) instance.chain().focus().extendMarkRange('link').unsetLink().run(); return }
   const href = normalizeLinkHref(nextHref)
@@ -1026,7 +1027,7 @@ async function togglePinned() {
   if (updated) Object.assign(props.note, updated)
 }
 async function createKnowledgeFromEditor() {
-  const name = window.prompt(t('newKnowledge'))
+  const name = await requestPrompt(t('newKnowledge'))
   if (!name?.trim()) return
   try { await library.create(name.trim(), 'personal'); if (library.activeId) await addToKnowledge(library.activeId) } catch (error) { window.alert(error?.message || '创建知识库失败，请重试') }
 }
