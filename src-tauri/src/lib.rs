@@ -4,8 +4,9 @@ use futures_util::StreamExt;
 use rusqlite::{params, Connection, OptionalExtension};
 use serde::{ser::SerializeStruct, Deserialize, Serialize, Serializer};
 use std::{
-    collections::HashMap,
+    collections::{HashMap, HashSet},
     fs,
+    io::Write,
     path::{Component, Path, PathBuf},
     sync::{
         atomic::{AtomicBool, Ordering},
@@ -92,11 +93,18 @@ pub struct AppState {
 }
 
 #[derive(Default)]
-pub struct PendingMarkdownFiles(Mutex<Vec<PathBuf>>);
+struct PendingMarkdownState {
+    queue: Vec<PathBuf>,
+    authorized: HashSet<PathBuf>,
+}
+
+#[derive(Default)]
+pub struct PendingMarkdownFiles(Mutex<PendingMarkdownState>);
 
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct PendingMarkdownFileDto {
+    path: String,
     file_name: String,
     content: Option<String>,
     error: Option<String>,
@@ -119,27 +127,32 @@ where
     let Ok(mut queue) = pending.0.lock() else {
         return 0;
     };
-    let before = queue.len();
+    let before = queue.queue.len();
     for argument in paths {
         let path = if argument.is_absolute() {
             argument
         } else {
             cwd.join(argument)
         };
-        if is_markdown_path(&path) && !queue.contains(&path) {
-            queue.push(path);
+        if is_markdown_path(&path) && !queue.queue.contains(&path) {
+            queue.queue.push(path);
         }
     }
-    queue.len() - before
+    queue.queue.len() - before
 }
 
 fn pending_markdown_file(path: PathBuf) -> PendingMarkdownFileDto {
+    let path = fs::canonicalize(&path).unwrap_or(path);
+    let display_path = path.to_string_lossy().into_owned();
     let file_name = path
         .file_name()
         .map(|name| name.to_string_lossy().into_owned())
         .unwrap_or_else(|| "Markdown 文件".into());
     let result = (|| -> Result<String, String> {
         let metadata = fs::metadata(&path).map_err(|error| error.to_string())?;
+        if !is_markdown_path(&path) {
+            return Err("只支持 Markdown 文件".into());
+        }
         if !metadata.is_file() {
             return Err("路径不是文件".into());
         }
@@ -153,16 +166,112 @@ fn pending_markdown_file(path: PathBuf) -> PendingMarkdownFileDto {
 
     match result {
         Ok(content) => PendingMarkdownFileDto {
+            path: display_path,
             file_name,
             content: Some(content),
             error: None,
         },
         Err(error) => PendingMarkdownFileDto {
+            path: display_path,
             file_name,
             content: None,
             error: Some(error),
         },
     }
+}
+
+fn read_external_markdown(path: &Path) -> Result<(PathBuf, String), AppError> {
+    let path = fs::canonicalize(path).map_err(|_| AppError::Filesystem {
+        code: "external_file_missing".into(),
+        message: "Markdown 源文件不存在或无法访问".into(),
+    })?;
+    if !is_markdown_path(&path) {
+        return Err(AppError::invalid(
+            "external_file_type_invalid",
+            "只支持 .md 或 .markdown 文件",
+        ));
+    }
+    let metadata = fs::metadata(&path).map_err(AppError::fs)?;
+    if !metadata.is_file() {
+        return Err(AppError::invalid(
+            "external_file_not_regular",
+            "Markdown 源路径不是普通文件",
+        ));
+    }
+    if metadata.len() > MAX_EXTERNAL_MARKDOWN_BYTES {
+        return Err(AppError::invalid(
+            "external_file_too_large",
+            "Markdown 源文件超过 10 MB 限制",
+        ));
+    }
+    let bytes = fs::read(&path).map_err(AppError::fs)?;
+    let text = String::from_utf8(bytes).map_err(|_| {
+        AppError::invalid(
+            "external_file_encoding_invalid",
+            "Markdown 源文件不是 UTF-8 编码",
+        )
+    })?;
+    Ok((
+        path,
+        text.strip_prefix('\u{feff}').unwrap_or(&text).to_string(),
+    ))
+}
+
+fn write_external_markdown(path: &Path, content: &str) -> Result<(), AppError> {
+    if content.len() as u64 > MAX_EXTERNAL_MARKDOWN_BYTES {
+        return Err(AppError::invalid(
+            "external_file_too_large",
+            "Markdown 内容超过 10 MB 限制",
+        ));
+    }
+    let parent = path.parent().ok_or_else(|| {
+        AppError::invalid("external_file_path_invalid", "Markdown 源文件路径无效")
+    })?;
+    let permissions = fs::metadata(path).map_err(AppError::fs)?.permissions();
+    let mut temporary = tempfile::NamedTempFile::new_in(parent).map_err(AppError::fs)?;
+    temporary
+        .as_file_mut()
+        .set_permissions(permissions)
+        .map_err(AppError::fs)?;
+    temporary
+        .write_all(content.as_bytes())
+        .map_err(AppError::fs)?;
+    temporary.as_file_mut().sync_all().map_err(AppError::fs)?;
+    temporary
+        .persist(path)
+        .map_err(|error| AppError::fs(error.error))?;
+    Ok(())
+}
+
+fn sync_external_markdown(conn: &Connection, note_id: &str, content: &str) -> Result<(), AppError> {
+    let source = conn
+        .query_row(
+            "SELECT path,content_hash FROM external_markdown_sources WHERE note_id=?1",
+            params![note_id],
+            |row| Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?)),
+        )
+        .optional()
+        .map_err(AppError::db)?;
+    let Some((path, expected_hash)) = source else {
+        return Ok(());
+    };
+    let (path, disk_content) = read_external_markdown(Path::new(&path))?;
+    let disk_hash = search::content_hash(&disk_content);
+    if disk_hash != expected_hash && disk_content != content {
+        return Err(AppError::Operation {
+            code: "external_file_changed".into(),
+            message: "Markdown 源文件已被其他程序修改，本次保存未覆盖源文件".into(),
+        });
+    }
+    if disk_content != content {
+        write_external_markdown(&path, content)?;
+    }
+    conn.execute(
+        "UPDATE external_markdown_sources SET content_hash=?2 WHERE note_id=?1",
+        params![note_id, search::content_hash(content)],
+    )
+    .map_err(AppError::db)?;
+    Ok(())
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -475,6 +584,16 @@ pub struct UpdateNote {
 
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
+pub struct OpenExternalMarkdown {
+    pub path: String,
+    pub title: String,
+    pub content_html: String,
+    pub content_text: String,
+    pub content_markdown: String,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct CreateKnowledgeBase {
     pub category: String,
     pub name: String,
@@ -728,7 +847,12 @@ fn init_database(conn: &Connection) -> Result<(), AppError> {
            created_at TEXT NOT NULL,
            PRIMARY KEY(source_note_id, target_note_id)
          );
-         CREATE INDEX IF NOT EXISTS idx_note_links_target ON note_links(target_note_id);",
+         CREATE INDEX IF NOT EXISTS idx_note_links_target ON note_links(target_note_id);
+         CREATE TABLE IF NOT EXISTS external_markdown_sources (
+           note_id TEXT PRIMARY KEY REFERENCES notes(id) ON DELETE CASCADE,
+           path TEXT NOT NULL UNIQUE,
+           content_hash TEXT NOT NULL
+         );",
     )
     .map_err(AppError::db)?;
     let template_count: i64 = conn
@@ -1068,9 +1192,22 @@ pub mod commands {
                 code: "pending_file_lock_failed".into(),
                 message: "无法读取待打开文件队列".into(),
             })?;
-            std::mem::take(&mut *queue)
+            std::mem::take(&mut queue.queue)
         };
-        Ok(paths.into_iter().map(pending_markdown_file).collect())
+        let files = paths
+            .into_iter()
+            .map(pending_markdown_file)
+            .collect::<Vec<_>>();
+        let mut state = pending.0.lock().map_err(|_| AppError::Operation {
+            code: "pending_file_lock_failed".into(),
+            message: "无法更新待打开文件授权".into(),
+        })?;
+        for file in &files {
+            if file.content.is_some() {
+                state.authorized.insert(PathBuf::from(&file.path));
+            }
+        }
+        Ok(files)
     }
 
     fn chat_conversation_from_row(
@@ -1840,6 +1977,85 @@ pub mod commands {
     }
 
     #[tauri::command]
+    pub fn note_open_external_markdown(
+        state: State<'_, AppState>,
+        pending: State<'_, PendingMarkdownFiles>,
+        input: OpenExternalMarkdown,
+    ) -> Result<NoteDto, AppError> {
+        let (path, disk_content) = read_external_markdown(Path::new(&input.path))?;
+        let authorized = pending
+            .0
+            .lock()
+            .map_err(|_| AppError::Operation {
+                code: "pending_file_lock_failed".into(),
+                message: "无法验证系统打开文件".into(),
+            })?
+            .authorized
+            .remove(&path);
+        if !authorized {
+            return Err(AppError::invalid(
+                "external_file_not_authorized",
+                "该文件不是本次系统打开请求",
+            ));
+        }
+        if disk_content != input.content_markdown {
+            return Err(AppError::Operation {
+                code: "external_file_changed".into(),
+                message: "Markdown 源文件在打开期间发生变化，请重新打开".into(),
+            });
+        }
+
+        let conn = state
+            .db
+            .lock()
+            .map_err(|_| AppError::db("database lock poisoned"))?;
+        let path_text = path.to_string_lossy().into_owned();
+        let timestamp = now();
+        let existing_id = conn
+            .query_row(
+                "SELECT note_id FROM external_markdown_sources WHERE path=?1",
+                params![path_text],
+                |row| row.get::<_, String>(0),
+            )
+            .optional()
+            .map_err(AppError::db)?;
+        let note_id = if let Some(note_id) = existing_id {
+            conn.execute(
+                "UPDATE notes SET content_html=?2,content_text=?3,content_markdown=?4,deleted_at=NULL,updated_at=?5 WHERE id=?1",
+                params![note_id, input.content_html, input.content_text, input.content_markdown, timestamp],
+            )
+            .map_err(AppError::db)?;
+            note_id
+        } else {
+            let note_id = Uuid::new_v4().to_string();
+            let notebook_id = conn
+                .query_row(
+                    "SELECT id FROM notebooks WHERE name='未分类' ORDER BY created_at LIMIT 1",
+                    [],
+                    |row| row.get::<_, String>(0),
+                )
+                .optional()
+                .map_err(AppError::db)?;
+            conn.execute(
+                "INSERT INTO notes(id,notebook_id,knowledge_base_id,title,content_html,content_text,content_markdown,tags_json,is_pinned,created_at,updated_at) VALUES(?1,?2,NULL,?3,?4,?5,?6,'[]',0,?7,?7)",
+                params![note_id, notebook_id, input.title, input.content_html, input.content_text, input.content_markdown, timestamp],
+            )
+            .map_err(AppError::db)?;
+            note_id
+        };
+        conn.execute(
+            "INSERT INTO external_markdown_sources(note_id,path,content_hash) VALUES(?1,?2,?3)
+             ON CONFLICT(note_id) DO UPDATE SET path=excluded.path,content_hash=excluded.content_hash",
+            params![note_id, path_text, search::content_hash(&disk_content)],
+        )
+        .map_err(AppError::db)?;
+        rebuild_note_links(&conn)?;
+        search::index_note(&conn, &note_id)?;
+        drop(conn);
+        note_get(state, note_id)
+    }
+
+    #[tauri::command]
     pub fn note_create(state: State<'_, AppState>, input: CreateNote) -> Result<NoteDto, AppError> {
         let id = Uuid::new_v4().to_string();
         let t = now();
@@ -1870,6 +2086,7 @@ pub mod commands {
             .db
             .lock()
             .map_err(|_| AppError::db("database lock poisoned"))?;
+        sync_external_markdown(&conn, &id, &input.content_markdown)?;
         let t = now();
         let tags_json =
             serde_json::to_string(&normalize_tags(&input.tags)).map_err(AppError::db)?;
@@ -2849,6 +3066,7 @@ pub mod commands {
                 message: "The note changed after this proposal was generated".into(),
             });
         }
+        sync_external_markdown(&conn, &proposal.note_id, &content_markdown)?;
         let timestamp = now();
         let transaction = conn.transaction().map_err(AppError::db)?;
         transaction.execute("INSERT INTO note_revisions(id,note_id,title,content_html,content_text,content_markdown,reason,created_at) VALUES(?1,?2,?3,?4,?5,?6,'ai_edit',?7)",
@@ -2925,6 +3143,7 @@ pub mod commands {
             .optional()
             .map_err(AppError::db)?
             .ok_or_else(|| AppError::not_found("note_not_found", "Note not found"))?;
+        sync_external_markdown(&conn, &revision.note_id, &revision.content_markdown)?;
         let timestamp = now();
         let transaction = conn.transaction().map_err(AppError::db)?;
         transaction.execute("INSERT INTO note_revisions(id,note_id,title,content_html,content_text,content_markdown,reason,created_at) VALUES(?1,?2,?3,?4,?5,?6,'revision_restore',?7)", params![Uuid::new_v4().to_string(),revision.note_id,current.0,current.1,current.2,current.3,timestamp]).map_err(AppError::db)?;
@@ -4408,6 +4627,7 @@ pub fn run() {
             commands::note_template_delete,
             commands::workspace_export,
             commands::workspace_import,
+            commands::note_open_external_markdown,
             commands::note_create,
             commands::note_update,
             commands::note_delete,
@@ -4526,7 +4746,10 @@ mod tests {
         );
         let queued = pending.0.lock().unwrap();
         assert_eq!(added, 1);
-        assert_eq!(queued.as_slice(), [PathBuf::from("C:\\notes\\draft.MD")]);
+        assert_eq!(
+            queued.queue.as_slice(),
+            [PathBuf::from("C:\\notes\\draft.MD")]
+        );
     }
 
     #[test]
@@ -4537,6 +4760,50 @@ mod tests {
         assert_eq!(file.content.as_deref(), Some("# Heading"));
         assert!(file.error.is_none());
         fs::remove_file(path).unwrap();
+    }
+
+    #[test]
+    fn external_markdown_save_writes_the_source_file() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("source.md");
+        fs::write(&path, "original").unwrap();
+        let conn = Connection::open_in_memory().unwrap();
+        init_database(&conn).unwrap();
+        let timestamp = now();
+        conn.execute("INSERT INTO notes(id,notebook_id,title,content_html,content_text,content_markdown,created_at,updated_at) VALUES('external-note',NULL,'source','<p>original</p>','original','original',?1,?1)", params![timestamp]).unwrap();
+        conn.execute(
+            "INSERT INTO external_markdown_sources(note_id,path,content_hash) VALUES('external-note',?1,?2)",
+            params![path.to_string_lossy(), search::content_hash("original")],
+        )
+        .unwrap();
+
+        sync_external_markdown(&conn, "external-note", "updated").unwrap();
+
+        assert_eq!(fs::read_to_string(path).unwrap(), "updated");
+    }
+
+    #[test]
+    fn external_markdown_save_rejects_an_out_of_process_change() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("source.md");
+        fs::write(&path, "original").unwrap();
+        let conn = Connection::open_in_memory().unwrap();
+        init_database(&conn).unwrap();
+        let timestamp = now();
+        conn.execute("INSERT INTO notes(id,notebook_id,title,content_html,content_text,content_markdown,created_at,updated_at) VALUES('external-note',NULL,'source','<p>original</p>','original','original',?1,?1)", params![timestamp]).unwrap();
+        conn.execute(
+            "INSERT INTO external_markdown_sources(note_id,path,content_hash) VALUES('external-note',?1,?2)",
+            params![path.to_string_lossy(), search::content_hash("original")],
+        )
+        .unwrap();
+        fs::write(&path, "changed elsewhere").unwrap();
+
+        let error = sync_external_markdown(&conn, "external-note", "local draft").unwrap_err();
+
+        assert!(
+            matches!(error, AppError::Operation { ref code, .. } if code == "external_file_changed")
+        );
+        assert_eq!(fs::read_to_string(path).unwrap(), "changed elsewhere");
     }
 
     #[test]

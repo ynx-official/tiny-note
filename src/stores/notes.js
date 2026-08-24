@@ -2,6 +2,7 @@ import { defineStore } from 'pinia'
 import { invoke } from '../services/tauri'
 import { marked } from 'marked'
 import { sanitizeEditorHtml, textFromEditorHtml } from '../utils/noteMarkdown'
+import { showToast } from '../services/appFeedback'
 
 export const useNotesStore = defineStore('notes', {
   state: () => ({
@@ -75,6 +76,14 @@ export const useNotesStore = defineStore('notes', {
       const contentText = extension === 'md' || extension === 'markdown' || isHtmlNote ? textFromEditorHtml(html) : text
       return this.createFromContent({ title, contentHtml: html, contentText, contentMarkdown, notebookId: this.selectedNotebook === 'all' ? null : this.selectedNotebook })
     },
+    async openExternalMarkdown(input) {
+      const note = await invoke('note_open_external_markdown', { input })
+      const index = this.notes.findIndex(item => item.id === note.id)
+      if (index >= 0) this.notes[index] = note
+      else this.notes.unshift(note)
+      this.activeId = note.id
+      return note
+    },
     async save(note) {
       this.saving = true
       try {
@@ -87,8 +96,13 @@ export const useNotesStore = defineStore('notes', {
     scheduleSave(note, onSaved) {
       clearTimeout(this.saveTimer)
       this.saveTimer = setTimeout(async () => {
-        await this.save(note)
-        onSaved?.()
+        try {
+          await this.save(note)
+          onSaved?.()
+        } catch (error) {
+          const conflict = error?.code === 'external_file_changed'
+          showToast(conflict ? '源文件已被其他程序修改，本次内容未覆盖。请重新打开文件确认。' : (error?.message || '笔记保存失败'), { tone: 'error' })
+        }
       }, 800)
     },
     async setPinned(id, pinned) {

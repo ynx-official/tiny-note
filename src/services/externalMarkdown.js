@@ -11,8 +11,8 @@ function noteTitle(fileName) {
   return String(fileName || '').replace(/\.(?:md|markdown)$/i, '') || '导入笔记'
 }
 
-export async function importPendingMarkdownFiles(files, { store, router, notify = showToast }) {
-  let imported = 0
+export async function openPendingMarkdownFiles(files, { store, router, notify = showToast }) {
+  let opened = 0
   let lastNote = null
 
   for (const file of files || []) {
@@ -22,20 +22,21 @@ export async function importPendingMarkdownFiles(files, { store, router, notify 
     }
 
     const contentHtml = sanitizeEditorHtml(marked.parse(file.content))
-    lastNote = await store.createFromContent({
+    lastNote = await store.openExternalMarkdown({
+      path: file.path,
       title: noteTitle(file.fileName),
       contentHtml,
       contentText: textFromEditorHtml(contentHtml),
       contentMarkdown: file.content
     })
-    imported += 1
+    opened += 1
   }
 
   if (lastNote) {
     await router.push({ path: '/notes', query: { note: lastNote.id } })
-    notify(`已从系统打开 ${imported} 个 Markdown 文件`, { tone: 'success' })
+    notify(`已打开 ${opened} 个 Markdown 源文件`, { tone: 'success' })
   }
-  return imported
+  return opened
 }
 
 export async function startExternalMarkdownOpen({ pinia, router }) {
@@ -46,7 +47,7 @@ export async function startExternalMarkdownOpen({ pinia, router }) {
   const drain = () => {
     drainChain = drainChain.then(async () => {
       const files = await invoke('app_take_pending_markdown_files')
-      await importPendingMarkdownFiles(files, { store, router })
+      await openPendingMarkdownFiles(files, { store, router })
     }).catch(error => showToast(error?.message || '打开 Markdown 文件失败', { tone: 'error' }))
     return drainChain
   }

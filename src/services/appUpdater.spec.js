@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest'
-import { createAppUpdater } from './appUpdater'
+import { createAppUpdater, UPDATE_CHECKED_AT_KEY, UPDATE_CHECK_INTERVAL_MS } from './appUpdater'
 
 describe('app updater', () => {
   it('reports browser previews as unsupported without loading native plugins', async () => {
@@ -59,5 +59,27 @@ describe('app updater', () => {
     await client.check()
     await expect(client.downloadAndInstall()).rejects.toThrow('network')
     expect(client.hasPendingUpdate()).toBe(false)
+  })
+
+  it('throttles automatic checks but keeps manual checks available', async () => {
+    const storage = { getItem: vi.fn(() => String(Date.now())), setItem: vi.fn() }
+    const invoke = vi.fn()
+    const client = createAppUpdater({ isDesktop: () => true, invoke, storage })
+
+    await expect(client.check({ force: false })).resolves.toMatchObject({ skipped: true })
+    expect(invoke).not.toHaveBeenCalled()
+
+    invoke.mockResolvedValueOnce({ available: false, supported: true, version: '0.1.8', notes: '' })
+    await expect(client.check({ force: true })).resolves.toMatchObject({ available: false })
+    expect(storage.setItem).toHaveBeenCalledWith(UPDATE_CHECKED_AT_KEY, expect.any(String))
+  })
+
+  it('does not throttle a check after the interval expires', async () => {
+    const storage = { getItem: vi.fn(() => String(Date.now() - UPDATE_CHECK_INTERVAL_MS - 1)), setItem: vi.fn() }
+    const invoke = vi.fn(async () => ({ available: false, supported: true, version: '0.1.8', notes: '' }))
+    const client = createAppUpdater({ isDesktop: () => true, invoke, storage })
+
+    await client.check({ force: false })
+    expect(invoke).toHaveBeenCalledOnce()
   })
 })

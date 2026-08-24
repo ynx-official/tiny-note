@@ -6,6 +6,8 @@ SQLite 核心表：`notebooks`、`notes`、`knowledge_bases`、`model_providers`
 
 `note_revisions` 同样保存 `content_markdown`、`content_html` 和 `content_text`，因此 AI 应用前快照与版本恢复不会丢失源码。复制、导入、Agent 创建笔记及 AI 应用必须在一次逻辑操作中同步三种表示。旧记录保持可读，Markdown 在首次实际源码编辑或保存时延迟回填。
 
+`external_markdown_sources` 以 `note_id` 一对一关联从系统打开的 Markdown，保存规范化绝对路径和上次同步内容的 SHA-256；路径唯一，避免同一源文件产生多个笔记记录。源路径属于设备本地状态，不进入工作区备份。保存时先比较当前磁盘哈希，匹配后以同目录临时文件原子替换并更新哈希；冲突、文件丢失、非 UTF-8 或超过 10 MB 时不得更新笔记持久状态或覆盖磁盘。
+
 知识库文件保存在 app data 下的 `knowledge/<category>/<id>/`，隐藏 `.tiny-note.json` 记录稳定 ID 和类别。
 
 AI 与检索表：`search_documents`、`search_chunks`、`search_chunks_fts`、`ai_edit_proposals`、`note_revisions`。FTS5 使用 trigram tokenizer；检索块用于匹配，`parent_content` 用于回填完整上下文。提案记录生成时的笔记时间戳和正文 SHA-256，应用时必须同时匹配；应用前在同一事务写入 `note_revisions`。

@@ -464,7 +464,7 @@ async function checkForUpdates() {
   updateInfo.value = null
   updateError.value = ''
   try {
-    const result = await appUpdater.check()
+    const result = await appUpdater.check({ force: true })
     if (!result.supported) updateStatus.value = 'unsupported'
     else if (!result.available) updateStatus.value = 'latest'
     else { updateInfo.value = result; updateStatus.value = 'available' }

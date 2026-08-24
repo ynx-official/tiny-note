@@ -33,7 +33,7 @@ cargo clippy --all-targets --all-features -- -D warnings
 
 ## 当前实现
 
-- SQLite 笔记/笔记本、三表示（原始 Markdown、安全 HTML、纯文本）原子保存、800ms 自动保存、搜索、复制/移动、最近删除恢复和 Markdown/TXT 导入；Windows/macOS 安装包注册 `.md/.markdown` 打开方式，双击后导入为 Tiny Note 本地笔记。
+- SQLite 笔记/笔记本、三表示（原始 Markdown、安全 HTML、纯文本）原子保存、800ms 自动保存、搜索、复制/移动、最近删除恢复和 Markdown/TXT 导入；Windows/macOS 安装包注册 `.md/.markdown` 打开方式，双击后直接编辑并保存回源文件。
 - TipTap 提供 Notion 式即时编辑，Markdown 快捷输入和粘贴立即呈现格式；处理后的源码可切到 CodeMirror 6 继续编辑，并通过固定版本的 `@tiptap/markdown` 与即时编辑双向同步。
 - 文章主模式为即时编辑、Markdown、阅读；Markdown 内可开关实时预览，分栏支持 30%–70% 拖拽、窄宽度上下布局和双向滚动联动。阅读模式锁定独立标题与正文，但保留选择、复制、目录、知识库和全文助理。
 - 个人/本地知识库、文件夹、相对路径安全校验、文本导入、递归名称搜索、预览和系统回收站。

@@ -1,12 +1,25 @@
+export const UPDATE_CHECK_INTERVAL_MS = 6 * 60 * 60 * 1000
+export const UPDATE_CHECKED_AT_KEY = 'tiny-note-update-checked-at'
+
 const defaultDependencies = {
   isDesktop: () => typeof window !== 'undefined' && Boolean(window.__TAURI_INTERNALS__),
   invoke: (command, args) => import('./tauri').then(({ invoke }) => invoke(command, args)),
-  loadApp: () => import('@tauri-apps/api/app')
+  loadApp: () => import('@tauri-apps/api/app'),
+  storage: typeof window !== 'undefined' ? window.localStorage : null
 }
 
 export function createAppUpdater(dependencies = {}) {
   const deps = { ...defaultDependencies, ...dependencies }
   let pendingUpdate = null
+  let checking = null
+
+  function readLastCheckedAt() {
+    try { return Number(deps.storage?.getItem(UPDATE_CHECKED_AT_KEY) || 0) || 0 } catch { return 0 }
+  }
+
+  function writeLastCheckedAt() {
+    try { deps.storage?.setItem(UPDATE_CHECKED_AT_KEY, String(Date.now())) } catch { /* private mode or test storage */ }
+  }
 
   return {
     async currentVersion(fallback = '0.1.8') {
@@ -15,13 +28,25 @@ export function createAppUpdater(dependencies = {}) {
       return getVersion()
     },
 
-    async check() {
-      pendingUpdate = null
-      if (!deps.isDesktop()) return { supported: false, available: false }
-      const update = await deps.invoke('app_update_check')
-      if (!update?.available) return { supported: true, available: false, version: update?.version || null, body: update?.notes || '' }
-      pendingUpdate = update
-      return { ...update, body: update.notes || '', date: null }
+    async check({ force = true } = {}) {
+      if (!force && Date.now() - readLastCheckedAt() < UPDATE_CHECK_INTERVAL_MS) {
+        return { supported: true, available: false, skipped: true }
+      }
+      if (checking) return checking
+      checking = (async () => {
+        pendingUpdate = null
+        try {
+          if (!deps.isDesktop()) return { supported: false, available: false }
+          const update = await deps.invoke('app_update_check')
+          if (!update?.available) return { supported: true, available: false, version: update?.version || null, body: update?.notes || '' }
+          pendingUpdate = update
+          return { ...update, body: update.notes || '', date: null }
+        } finally {
+          writeLastCheckedAt()
+          checking = null
+        }
+      })()
+      return checking
     },
 
     async downloadAndInstall(onProgress = () => {}) {

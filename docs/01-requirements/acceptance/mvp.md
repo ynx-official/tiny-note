@@ -6,7 +6,8 @@
 - Given 笔记已删除，When 在最近删除选择恢复，Then 笔记回到原笔记本；超过 30 天的记录不再显示。
 - Given 知识库根目录，When 请求 `../` 或符号链接越界路径，Then Rust 返回稳定错误码。
 - Given 同名导入，When 未指定替换，Then 原文件保留且新文件使用冲突后缀。
-- Given 已安装 Windows 或 macOS 版本，When 用户从 `.md/.markdown` 的打开方式选择 Tiny Note 或将其设为默认后双击文件，Then 应用被唤起、文件导入为本地笔记并进入编辑页；应用已运行时复用现有实例，原文件保持不变。
+- Given 已安装 Windows 或 macOS 版本，When 用户从 `.md/.markdown` 的打开方式选择 Tiny Note 或将其设为默认后双击文件，Then 应用被唤起并直接打开绑定源文件；应用已运行时复用现有实例，编辑后自动保存回原文件而不创建无关联副本。
+- Given 已绑定的 Markdown 被其他程序修改，When Tiny Note 尝试保存不同内容，Then 保存被拒绝、磁盘内容保持不变，并明确提示用户重新打开确认。
 - Given HTML/Markdown 预览，When 内容含脚本，Then 预览 DOM 不执行脚本。
 - Given FIM 未开启，When 光标停顿 2 秒，Then 不发起网络请求。
 - Given 模型请求取消，When 点击停止，Then 前端收到 `cancelled` 且不插入半截结果。
