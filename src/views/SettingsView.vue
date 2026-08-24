@@ -88,6 +88,7 @@ const selectedProvider = computed(() => providerOptions.find(option => option.ke
 const isEditingModel = computed(() => Boolean(draft.value?.id))
 const selectedEndpoint = computed(() => endpointOptions.find(option => option.key === draft.value?.endpointType) || endpointOptions[1])
 const selectedCatalogModels = computed(() => modelCatalog.value.filter(option => selectedModelIds.value.includes(option.id)))
+const canSaveModel = computed(() => Boolean(draft.value && (selectedModelIds.value.length || draft.value.model.trim())))
 const primaryModel = computed(() => models.value.find(model => model.isDefault) || models.value[0] || null)
 const modelConnections = computed(() => {
   const groups = new Map()
@@ -107,7 +108,7 @@ const modelConnections = computed(() => {
 const balanceModels = computed(() => {
   const byProvider = new Map()
   for (const model of models.value) {
-    const provider = String(model.provider || '').trim().toLowerCase() || 'unknown'
+    const provider = model.providerId || [model.provider, model.baseUrl, model.endpointType || 'openaiChat'].join('|')
     const current = byProvider.get(provider)
     if (!current || (model.isDefault && !current.isDefault)) byProvider.set(provider, model)
   }
@@ -234,6 +235,7 @@ function editModel(model) {
 
 function editConnection(connection) {
   editModel(connection.representative)
+  draft.value.connectionModels = connection.models
 }
 
 function cancelModel() {
@@ -271,11 +273,6 @@ function toggleAllModels() {
 }
 
 function toggleCatalogModel(id) {
-  if (isEditingModel.value) {
-    selectedModelIds.value = [id]
-    draft.value.model = id
-    return
-  }
   selectedModelIds.value = selectedModelIds.value.includes(id)
     ? selectedModelIds.value.filter(item => item !== id)
     : [...selectedModelIds.value, id]
@@ -293,7 +290,9 @@ async function fetchModels() {
       endpointType: draft.value.endpointType,
       apiKey: draft.value.apiKey
     } })
-    selectedModelIds.value = []
+    selectedModelIds.value = isEditingModel.value
+      ? modelCatalog.value.filter(option => draft.value.connectionModels?.some(model => model.model === option.id)).map(option => option.id)
+      : []
     if (!modelCatalog.value.length) modelFetchError.value = '没有获取到可用模型，请检查地址和 API Key。'
   } catch (error) {
     modelCatalog.value = []
@@ -312,24 +311,31 @@ async function saveModel() {
   }
   modelSaving.value = true
   try {
-    const options = isEditingModel.value ? selected.slice(0, 1) : selected
+    const options = selected
+    const existingByModel = new Map((draft.value.connectionModels || []).map(model => [model.model, model]))
     for (const [index, option] of options.entries()) {
       const editing = isEditingModel.value
+      const existing = existingByModel.get(option.id)
       await invoke('model_upsert', {
         profile: {
-          id: editing ? draft.value.id : crypto.randomUUID(),
-          name: (options.length === 1 && draft.value.name.trim()) || draft.value.provider + ' ' + option.id,
+          id: existing?.id || (editing && options.length === 1 ? draft.value.id : crypto.randomUUID()),
+          name: existing?.name || (options.length === 1 && draft.value.name.trim()) || draft.value.provider + ' ' + option.id,
           providerId: draft.value.providerId,
           connectionName: draft.value.connectionName.trim() || draft.value.provider,
           provider: draft.value.provider,
           baseUrl: draft.value.baseUrl.trim(),
           model: option.id,
           endpointType: draft.value.endpointType,
-          isDefault: editing ? Boolean(draft.value.isDefault) : models.value.length === 0 && index === 0,
+          isDefault: existing ? Boolean(existing.isDefault) : (editing ? false : models.value.length === 0 && index === 0),
           apiKeyConfigured: editing ? Boolean(draft.value.apiKeyConfigured) : false
         },
         apiKey: draft.value.apiKey
       })
+    }
+    if (isEditingModel.value && modelCatalog.value.length) {
+      for (const existing of draft.value.connectionModels || []) {
+        if (!options.some(option => option.id === existing.model)) await invoke('model_delete', { id: existing.id })
+      }
     }
     await appStore.refreshModels()
     cancelModel()
@@ -589,7 +595,7 @@ watch(filteredSections, sections => {
             <div v-else class="settings-empty settings-empty-large">{{ t('noModels') }}</div>
             <div class="settings-subheading settings-balance-heading"><span>账户余额</span><button type="button" class="settings-balance-refresh-all" :disabled="balanceRefreshingAll || !balanceModels.some(isDeepSeek)" @click="queryAllBalances"><RefreshCw :size="14" :class="{ spinning: balanceRefreshingAll }" />刷新全部</button></div>
             <div v-if="balanceModels.length" class="settings-balance-list">
-              <article v-for="model in balanceModels" :key="'balance-' + model.provider" class="settings-balance-card">
+              <article v-for="model in balanceModels" :key="'balance-' + (model.providerId || model.id)" class="settings-balance-card">
                 <header class="settings-balance-card-head">
                   <img :src="providerIcon(model)" :alt="model.provider" class="provider-icon-image" />
                   <div class="settings-balance-card-copy"><strong>{{ model.name }}</strong><small>{{ providerLabel(model) }}</small></div>
@@ -672,13 +678,13 @@ watch(filteredSections, sections => {
           <div class="settings-fetch-row"><span>从 {{ draft.baseUrl || '接口地址' }}/models 获取可用模型</span><button type="button" class="settings-fetch-button" :disabled="modelFetchBusy || !draft.baseUrl.trim()" @click="fetchModels"><RefreshCw :size="14" :class="{ spinning: modelFetchBusy }" />{{ modelFetchBusy ? '获取中…' : '获取模型列表' }}</button></div>
           <p v-if="modelFetchError" class="settings-model-error">{{ modelFetchError }}</p>
           <div v-if="modelCatalog.length" class="settings-model-picker">
-            <div class="settings-model-picker-header"><span>选择模型 <small>已选 {{ selectedModelIds.length }} 个</small></span><button v-if="!isEditingModel" type="button" @click="toggleAllModels">{{ selectedModelIds.length === modelCatalog.length ? '取消全选' : '全选' }}</button></div>
-            <label v-for="option in modelCatalog" :key="option.id" class="settings-model-check-row"><input :checked="selectedModelIds.includes(option.id)" :type="isEditingModel ? 'radio' : 'checkbox'" :value="option.id" @change="toggleCatalogModel(option.id)" /><span class="settings-model-check"></span><span><b>{{ option.name || option.id }}</b><small>{{ option.id }}<template v-if="option.ownedBy"> · {{ option.ownedBy }}</template></small></span></label>
+            <div class="settings-model-picker-header"><span>选择模型 <small>已选 {{ selectedModelIds.length }} 个</small></span><button type="button" @click="toggleAllModels">{{ selectedModelIds.length === modelCatalog.length ? '取消全选' : '全选' }}</button></div>
+            <label v-for="option in modelCatalog" :key="option.id" class="settings-model-check-row"><input :checked="selectedModelIds.includes(option.id)" type="checkbox" :value="option.id" @change="toggleCatalogModel(option.id)" /><span class="settings-model-check"></span><span><b>{{ option.name || option.id }}</b><small>{{ option.id }}<template v-if="option.ownedBy"> · {{ option.ownedBy }}</template></small></span></label>
           </div>
           <label v-if="!modelCatalog.length" class="settings-custom-model-field"><span>模型 ID</span><input v-model="draft.model" name="model-id" type="text" placeholder="例如 gpt-4.1-mini" /></label>
           <p class="settings-modal-hint">自定义配置，请遵守法规并关注模型使用 Token 消耗。</p>
         </div>
-        <footer class="settings-model-modal-footer"><button type="button" class="settings-text-button" @click="cancelModel">{{ t('cancel') }}</button><button type="button" class="settings-action-button primary" :disabled="modelSaving || (!selectedModelIds.length && !draft.model.trim())" @click="saveModel">{{ modelSaving ? t('saving') : (isEditingModel ? '保存修改' : (locale === 'zh-CN' ? '保存' : 'Save')) }}</button></footer>
+        <footer class="settings-model-modal-footer"><button type="button" class="settings-text-button" @click="cancelModel">{{ t('cancel') }}</button><button type="button" class="settings-action-button primary settings-model-save-button" :disabled="modelSaving || !canSaveModel" :aria-disabled="modelSaving || !canSaveModel" @click="saveModel">{{ modelSaving ? t('saving') : (isEditingModel ? '保存修改' : (locale === 'zh-CN' ? '保存' : 'Save')) }}</button></footer>
       </section>
     </div>
   </div>

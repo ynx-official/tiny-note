@@ -2,7 +2,7 @@
 
 最后更新：2026-08-24
 
-SQLite 核心表：`notebooks`、`notes`、`knowledge_bases`、`model_profiles`、`settings`、`chat_conversations`、`chat_messages`。`notes.title` 是独立元数据，不自动写入正文 H1。正文原子保存三种表示：`content_markdown` 是 Markdown 模式中的用户源码（即时编辑产生正文变更后可规范化为语义等价写法），`content_html` 是经过白名单清洗的 TipTap 渲染内容，`content_text` 是搜索与 AI 使用的纯文本。`notes.tags_json` 保存规范化的小写标签，`notes.is_pinned` 保存置顶状态；标签和置顶参与列表筛选及排序。旧库通过 `PRAGMA table_info` 检测后执行兼容 `ALTER TABLE`，Markdown 初始默认空字符串。
+SQLite 核心表：`notebooks`、`notes`、`knowledge_bases`、`model_providers`、`model_profiles`、`settings`、`chat_conversations`、`chat_messages`。`notes.title` 是独立元数据，不自动写入正文 H1。正文原子保存三种表示：`content_markdown` 是 Markdown 模式中的用户源码（即时编辑产生正文变更后可规范化为语义等价写法），`content_html` 是经过白名单清洗的 TipTap 渲染内容，`content_text` 是搜索与 AI 使用的纯文本。`notes.tags_json` 保存规范化的小写标签，`notes.is_pinned` 保存置顶状态；标签和置顶参与列表筛选及排序。旧库通过 `PRAGMA table_info` 检测后执行兼容迁移，Markdown 初始默认空字符串。
 
 `note_revisions` 同样保存 `content_markdown`、`content_html` 和 `content_text`，因此 AI 应用前快照与版本恢复不会丢失源码。复制、导入、Agent 创建笔记及 AI 应用必须在一次逻辑操作中同步三种表示。旧记录保持可读，Markdown 在首次实际源码编辑或保存时延迟回填。
 
@@ -24,4 +24,4 @@ MCP 服务配置保存在应用数据目录的 `agent/mcp.json`，包含直接�
 
 工作区备份是版本化 JSON：笔记、笔记本、知识库元数据、知识库文件以 Base64 保存、模板、链接和界面设置均可恢复；模型 API Key、Agent 凭据和运行时缓存明确排除在备份之外。恢复是用户确认后的全量替换，并在完成后重建搜索索引。
 
-模型配置在 `model_profiles.endpoint_type` 保存独立端点协议，白名单值为 `openaiChat`、`openaiResponses`、`anthropicMessages`；旧配置迁移时默认 `openaiChat`，避免改变既有请求行为。模型密钥存储在 `model_profiles.api_key` 字段中。模型列表 DTO 返回 `endpointType` 与 `apiKeyConfigured`，不会把明文 Key 返回前端；Rust 请求层直接从 SQLite 读取。
+模型服务采用一对多结构：`model_providers` 保存连接名称、厂商、Base URL、API Key 与端点协议，`model_profiles.provider_id` 关联其下的多个模型。端点协议白名单为 `openaiChat`、`openaiResponses`、`anthropicMessages`。旧的扁平模型记录会按“厂商 + Base URL + Key + 端点协议”无损归并，同一连接只保留一份凭据；旧配置默认 `openaiChat`，避免改变请求行为。模型列表 DTO 为兼容调用方返回展开后的连接元数据以及 `providerId`、`connectionName`、`apiKeyConfigured`，但不会返回明文 Key；Rust 请求层通过关联表直接读取。

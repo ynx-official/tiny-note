@@ -1625,6 +1625,10 @@ body, button, input, select, textarea { font-family: -apple-system, BlinkMacSyst
 .settings-custom-model-field { margin-top:14px; }
 .settings-modal-hint { margin:13px 0 0; color:var(--text-tertiary); font-size:11px; line-height:1.45; }
 .settings-model-modal-footer { min-height:72px; display:flex; align-items:center; justify-content:flex-end; gap:10px; padding:0 22px; border-top:1px solid var(--line); }
+.settings-model-save-button { min-width:94px; min-height:40px; padding:9px 16px; border-radius:8px; font-size:13px; font-weight:600; letter-spacing:.01em; transition:background .16s ease, border-color .16s ease, box-shadow .16s ease, transform .16s ease; }
+.settings-model-save-button:hover:not(:disabled) { background:var(--accent-strong, var(--accent-color)); border-color:var(--accent-strong, var(--accent-color)); box-shadow:0 3px 8px rgba(37,99,235,.22); transform:translateY(-1px); }
+.settings-model-save-button:active:not(:disabled) { transform:translateY(0); box-shadow:none; }
+.settings-model-save-button:disabled { cursor:not-allowed; border-color:var(--line); color:var(--text-tertiary); background:var(--surface-2); opacity:1; box-shadow:none; }
 @media (max-width:760px) {
   .settings-model-primary-row { align-items:stretch; flex-direction:column; gap:10px; }
   .settings-connection-head { align-items:flex-start; flex-wrap:wrap; }

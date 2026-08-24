@@ -4591,7 +4591,9 @@ mod tests {
             .unwrap();
         assert_eq!((provider_count, profile_count), (1, 2));
         let endpoint_type: String = c
-            .query_row("SELECT endpoint_type FROM model_providers", [], |row| row.get(0))
+            .query_row("SELECT endpoint_type FROM model_providers", [], |row| {
+                row.get(0)
+            })
             .unwrap();
         assert_eq!(endpoint_type, "openaiChat");
     }

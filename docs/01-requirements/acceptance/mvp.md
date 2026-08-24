@@ -24,6 +24,7 @@
 - Given 应用在任务运行期间退出，When 再次启动，Then 任务显示为“已中断”且不会自动重复模型调用或写操作，用户可以手动重试。
 - Given Agent 等待审批或结构化输入，When 用户仍在或重新打开原对话，Then 可以在对话时间线内处理请求并继续运行，任务中心中不出现该 Agent 对话。
 - Given 任一后台任务已开始执行，When 用户查看任务中心，Then 运行中任务的执行时间逐秒更新，结束后保留该次尝试的最终耗时。
-- Given 已存在模型配置，When 用户编辑名称、厂商、端点类型、Base URL 或模型 ID 并保存，Then 原配置被更新且空白 API Key 不覆盖已有凭据；原“其他”类型明确显示为“OpenAI 兼容服务”。
+- Given 已存在模型服务，When 用户编辑连接名称、厂商、端点类型或 Base URL，Then 该连接下的模型共同使用更新后的连接信息，且空白 API Key 不覆盖已有凭据；原“其他”类型明确显示为“OpenAI 兼容服务”。
+- Given 一个模型服务包含多个模型，When 用户查看模型设置，Then 界面只展示一个厂商连接卡片并在其下列出模型，不重复显示 Base URL 与凭据状态。
 - Given 已存在带 Key 的模型配置，When 打开编辑页且不填写新 Key，Then 输入框保持空白并明确提示；获取模型列表和保存均由 Rust 使用原 Key，前端不会收到原 Key 明文。
 - Given 模型选择 OpenAI Responses、OpenAI Chat 或 Anthropic，When 发起普通生成、Agent 或子 Agent 请求，Then Rust 使用对应的路径、认证头、请求体和流事件格式；旧配置继续使用 OpenAI Chat。

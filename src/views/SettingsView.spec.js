@@ -112,6 +112,23 @@ describe('SettingsView model services', () => {
     }))
   })
 
+  it('keeps save enabled when an existing connection has selected catalog models', async () => {
+    const wrapper = mount(SettingsView, {
+      global: {
+        plugins: [createPinia(), createI18n({ legacy: false, locale: 'zh-CN', messages })],
+        stubs: { AgentToolsCatalog: true }
+      }
+    })
+    await vi.waitFor(() => expect(wrapper.text()).toContain('模型服务'))
+    await wrapper.findAll('.settings-nav-item').find(button => button.text().includes('模型服务')).trigger('click')
+    await vi.waitFor(() => expect(wrapper.text()).toContain('公司模型'))
+    await wrapper.get('.model-edit-btn').trigger('click')
+
+    await wrapper.get('.settings-fetch-button').trigger('click')
+    await vi.waitFor(() => expect(wrapper.get('.settings-model-picker-header').text()).toContain('已选 1 个'))
+    expect(wrapper.get('.settings-model-save-button').attributes('disabled')).toBeUndefined()
+  })
+
   it('does not close the model editor when the backdrop is clicked', async () => {
     const wrapper = mount(SettingsView, {
       global: {
