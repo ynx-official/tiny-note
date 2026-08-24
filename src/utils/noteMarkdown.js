@@ -133,6 +133,7 @@ function isSafeUrl(value, image = false) {
   const normalized = value.trim().replace(/[\u0000-\u001f\u007f\s]+/g, '')
   if (!normalized) return false
   if (isRelativeUrl(normalized)) return !normalized.toLowerCase().startsWith('data:')
+  if (image && /^data:image\/(?:png|jpe?g|gif|webp);base64,[a-z\d+/]+=*$/i.test(normalized)) return true
   const protocol = normalized.match(/^([a-z][a-z\d+.-]*:)/i)?.[1]?.toLowerCase()
   return (image ? safeImageProtocols : safeLinkProtocols).has(protocol)
 }

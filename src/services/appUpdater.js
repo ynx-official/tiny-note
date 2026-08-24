@@ -1,7 +1,6 @@
 const defaultDependencies = {
   isDesktop: () => typeof window !== 'undefined' && Boolean(window.__TAURI_INTERNALS__),
-  loadUpdater: () => import('@tauri-apps/plugin-updater'),
-  loadProcess: () => import('@tauri-apps/plugin-process'),
+  invoke: (command, args) => import('./tauri').then(({ invoke }) => invoke(command, args)),
   loadApp: () => import('@tauri-apps/api/app')
 }
 
@@ -10,7 +9,7 @@ export function createAppUpdater(dependencies = {}) {
   let pendingUpdate = null
 
   return {
-    async currentVersion(fallback = '0.1.0') {
+    async currentVersion(fallback = '0.1.8') {
       if (!deps.isDesktop()) return fallback
       const { getVersion } = await deps.loadApp()
       return getVersion()
@@ -19,39 +18,34 @@ export function createAppUpdater(dependencies = {}) {
     async check() {
       pendingUpdate = null
       if (!deps.isDesktop()) return { supported: false, available: false }
-      const { check } = await deps.loadUpdater()
-      pendingUpdate = await check({ timeout: 30_000 })
-      if (!pendingUpdate) return { supported: true, available: false }
-      return {
-        supported: true,
-        available: true,
-        version: pendingUpdate.version,
-        body: pendingUpdate.body || '',
-        date: pendingUpdate.date || null
-      }
+      const update = await deps.invoke('app_update_check')
+      if (!update?.available) return { supported: true, available: false, version: update?.version || null, body: update?.notes || '' }
+      pendingUpdate = update
+      return { ...update, body: update.notes || '', date: null }
     },
 
     async downloadAndInstall(onProgress = () => {}) {
-      if (!pendingUpdate) throw new Error('No pending update')
-      let downloaded = 0
-      let contentLength = 0
-      await pendingUpdate.downloadAndInstall(event => {
-        if (event.event === 'Started') {
-          contentLength = Number(event.data?.contentLength) || 0
-          onProgress(0)
-        } else if (event.event === 'Progress') {
-          downloaded += Number(event.data?.chunkLength) || 0
-          onProgress(contentLength ? Math.min(99, Math.round(downloaded / contentLength * 100)) : null)
-        } else if (event.event === 'Finished') {
-          onProgress(100)
-        }
-      })
+      const update = pendingUpdate
+      if (!update?.assetName) throw new Error('No pending update')
+      try {
+        onProgress(0)
+        await deps.invoke('app_update_download', { assetName: update.assetName, version: update.version })
+        onProgress(100)
+      } finally {
+        // The installer is opened only after the Rust side verifies its digest.
+        pendingUpdate = null
+      }
     },
 
-    async relaunch() {
-      const { relaunch } = await deps.loadProcess()
-      await relaunch()
-    }
+    hasPendingUpdate() {
+      return Boolean(pendingUpdate)
+    },
+
+    clearPendingUpdate() {
+      pendingUpdate = null
+    },
+
+    async relaunch() {}
   }
 }
 

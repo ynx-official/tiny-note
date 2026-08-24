@@ -97,4 +97,30 @@ describe('notes store', () => {
     const restored = await invoke('note_revision_restore', { id: revisions[0].id })
     expect(restored).toMatchObject({ contentHtml: '<p>旧版</p>', contentText: '旧版', contentMarkdown: '旧版源码' })
   })
+
+  it('supports templates, tags, pinning, backlinks and workspace backup', async () => {
+    const store = useNotesStore()
+    await store.load()
+    await store.loadTemplates()
+    expect(store.templates.some(template => template.id === 'daily')).toBe(true)
+
+    const target = await store.createFromContent({ title: '目标笔记', contentMarkdown: '# 目标', contentHtml: '<h1>目标</h1>', contentText: '目标' })
+    const source = await store.createFromContent({ title: '来源笔记', contentMarkdown: '参见 [[目标笔记]]', contentHtml: '<p>参见目标笔记</p>', contentText: '参见目标笔记', tags: ['#项目', '项目'], pinned: true })
+    expect(source.tags).toEqual(['项目'])
+    expect(source.pinned).toBe(true)
+
+    const links = await store.listLinks(source.id)
+    expect(links).toEqual([expect.objectContaining({ targetNoteId: target.id, targetTitle: '目标笔记' })])
+    store.selectedTag = '项目'
+    store.pinnedOnly = true
+    await store.load()
+    expect(store.notes.map(note => note.id)).toContain(source.id)
+    expect(store.notes.map(note => note.id)).not.toContain(target.id)
+
+    const backup = await store.exportWorkspace()
+    expect(backup.format).toBe('tiny-note-workspace')
+    expect(backup.notes.some(note => note.id === source.id && note.pinned)).toBe(true)
+    await store.importWorkspace(backup)
+    expect(store.notes.some(note => note.title === '来源笔记')).toBe(true)
+  })
 })

@@ -229,7 +229,7 @@ fn replace_document(conn: &Connection, document: IndexedDocument<'_>) -> Result<
 pub fn index_note(conn: &Connection, note_id: &str) -> Result<(), AppError> {
     let note = conn
         .query_row(
-            "SELECT title,content_text,deleted_at,updated_at FROM notes WHERE id=?1",
+            "SELECT title,content_text,deleted_at,updated_at,knowledge_base_id FROM notes WHERE id=?1",
             params![note_id],
             |row| {
                 Ok((
@@ -237,6 +237,7 @@ pub fn index_note(conn: &Connection, note_id: &str) -> Result<(), AppError> {
                     row.get::<_, String>(1)?,
                     row.get::<_, Option<String>>(2)?,
                     row.get::<_, String>(3)?,
+                    row.get::<_, Option<String>>(4)?,
                 ))
             },
         )
@@ -244,13 +245,13 @@ pub fn index_note(conn: &Connection, note_id: &str) -> Result<(), AppError> {
         .map_err(AppError::db)?;
     let document_id = format!("note:{note_id}");
     match note {
-        Some((title, content, None, updated_at)) => replace_document(
+        Some((title, content, None, updated_at, knowledge_base_id)) => replace_document(
             conn,
             IndexedDocument {
                 document_id: &document_id,
                 source_type: "note",
                 source_id: note_id,
-                knowledge_base_id: None,
+                knowledge_base_id: knowledge_base_id.as_deref(),
                 relative_path: None,
                 title: &title,
                 content: &content,
@@ -322,7 +323,7 @@ fn read_indexable_content(
     Ok((content, None))
 }
 
-fn index_library_file(
+fn index_library_file_conn(
     conn: &Connection,
     kb_id: &str,
     root: &Path,
@@ -335,6 +336,22 @@ fn index_library_file(
         .replace('\\', "/");
     if relative == ".tiny-note.json" || path.is_dir() {
         return Ok(());
+    }
+    if path.extension().and_then(|value| value.to_str()) == Some("note") {
+        if let Ok(raw) = fs::read_to_string(path) {
+            if serde_json::from_str::<serde_json::Value>(&raw)
+                .ok()
+                .and_then(|value| {
+                    value
+                        .get("format")
+                        .and_then(|format| format.as_str())
+                        .map(|format| format == "tiny-note-reference")
+                })
+                == Some(true)
+            {
+                return Ok(());
+            }
+        }
     }
     let document_id = format!("file:{kb_id}:{relative}");
     let title = path
@@ -383,6 +400,53 @@ fn index_library_file(
     }
 }
 
+pub fn index_library_file(
+    state: &AppState,
+    kb_id: &str,
+    root: &Path,
+    path: &Path,
+) -> Result<(), AppError> {
+    let conn = state
+        .db
+        .lock()
+        .map_err(|_| AppError::db("database lock poisoned"))?;
+    index_library_file_conn(&conn, kb_id, root, path)
+}
+
+pub fn reindex_library_path(
+    state: &AppState,
+    kb_id: &str,
+    root: &Path,
+    relative_path: &str,
+) -> Result<(), AppError> {
+    let relative_path = relative_path.replace('\\', "/");
+    let conn = state
+        .db
+        .lock()
+        .map_err(|_| AppError::db("database lock poisoned"))?;
+    let prefix = format!("file:{kb_id}:{relative_path}");
+    conn.execute(
+        "DELETE FROM search_documents WHERE id=?1 OR id LIKE ?2",
+        params![prefix, format!("{prefix}/%")],
+    )
+    .map_err(AppError::db)?;
+    let path = root.join(relative_path);
+    if path.is_dir() {
+        for entry in WalkDir::new(&path)
+            .follow_links(false)
+            .into_iter()
+            .filter_map(Result::ok)
+        {
+            if entry.file_type().is_file() {
+                index_library_file_conn(&conn, kb_id, root, entry.path())?;
+            }
+        }
+    } else if path.is_file() {
+        index_library_file_conn(&conn, kb_id, root, &path)?;
+    }
+    Ok(())
+}
+
 pub fn rebuild_all(state: &AppState) -> Result<IndexStatusDto, AppError> {
     let conn = state
         .db
@@ -417,7 +481,7 @@ pub fn rebuild_all(state: &AppState) -> Result<IndexStatusDto, AppError> {
             .filter_map(Result::ok)
         {
             if entry.file_type().is_file() {
-                index_library_file(&conn, &kb_id, &root, entry.path())?;
+                index_library_file_conn(&conn, &kb_id, &root, entry.path())?;
             }
         }
     }

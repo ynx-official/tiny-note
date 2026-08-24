@@ -17,11 +17,6 @@ function compareEntries(a, b, sortBy, direction) {
   return String(a.relativePath || '').localeCompare(String(b.relativePath || ''), undefined, { numeric: true, sensitivity: 'base' })
 }
 
-function noteReferenceFileName(note) {
-  const title = String(note?.title || '未命名笔记').replace(/[<>:"/\\|?*\u0000-\u001F]/g, '').trim()
-  return `${title || '未命名笔记'}.note`
-}
-
 export const useLibraryStore = defineStore('library', {
   state: () => ({
     bases: [],
@@ -167,24 +162,28 @@ export const useLibraryStore = defineStore('library', {
       await this.loadEntries()
       return result
     },
+    async importFile(file) {
+      const extension = file.name.split('.').pop()?.toLowerCase()
+      const binary = ['png', 'jpg', 'jpeg', 'gif', 'webp', 'svg', 'pdf', 'epub', 'zip', 'docx'].includes(extension) || (file.type && !file.type.startsWith('text/') && !['application/json', 'application/xml'].includes(file.type))
+      if (!binary) return this.importText(file)
+      const bytes = new Uint8Array(await file.arrayBuffer())
+      const relativePath = `${this.path ? `${this.path}/` : ''}${file.name}`
+      const result = await invoke('library_write_file_bytes', { knowledgeBaseId: this.activeId, relativePath, content: Array.from(bytes) })
+      await this.loadEntries()
+      return result
+    },
     async importFiles(files) {
-      for (const file of files) await this.importText(file)
+      for (const file of files) await this.importFile(file)
+    },
+    async importUrl(url, relativePath = '') {
+      const result = await invoke('library_import_url', { knowledgeBaseId: this.activeId, relativePath: relativePath || null, url })
+      await this.loadEntries()
+      return result
     },
     async addNoteReference(knowledgeBaseId, note) {
       if (!knowledgeBaseId || !note?.id) throw new Error('缺少知识库或笔记信息')
-      const content = JSON.stringify({
-        format: 'tiny-note-reference',
-        version: 1,
-        noteId: note.id,
-        title: note.title || '未命名笔记',
-        updatedAt: note.updatedAt || null
-      }, null, 2)
-      const result = await invoke('library_write_file', {
-        knowledgeBaseId,
-        relativePath: noteReferenceFileName(note),
-        content
-      })
-      if (this.activeId === knowledgeBaseId && this.path === '') await this.loadEntries()
+      const result = await invoke('note_move_to_knowledge_base', { id: note.id, knowledgeBaseId })
+      if (result) Object.assign(note, result)
       return result
     }
   }

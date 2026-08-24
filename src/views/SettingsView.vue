@@ -34,11 +34,13 @@ const balanceStates = ref({})
 const balanceRefreshingAll = ref(false)
 const indexStatus = ref(null)
 const indexBusy = ref(false)
-const appVersion = ref('0.1.0')
+const appVersion = ref('0.1.8')
 const updateStatus = ref('idle')
 const updateInfo = ref(null)
 const updateProgress = ref(null)
 const updateError = ref('')
+const backupInput = ref(null)
+const backupStatus = ref('')
 
 const providerOptions = [
   { key: 'doubao', label: '豆包', mark: '豆', icon: doubaoIcon, baseUrl: 'https://ark.cn-beijing.volces.com/api/v3' },
@@ -63,7 +65,7 @@ const currentLanguageLabel = computed(() => languageOptions.value.find(option =>
 const settingsSections = computed(() => [
   { id: 'appearance', label: t('appearance'), description: t('appearanceHint'), icon: Palette },
   { id: 'ai', label: t('aiWriting'), description: t('aiWritingHint'), icon: Sparkles },
-  { id: 'agent-tools', label: locale.value === 'zh-CN' ? 'Agent 工具' : 'Agent tools', description: locale.value === 'zh-CN' ? '查看可用能力和强制审批策略' : 'Inspect available capabilities and approval policies', icon: Wrench },
+  { id: 'agent-tools', label: locale.value === 'zh-CN' ? 'Agent 工具（实验）' : 'Agent tools (Experimental)', description: locale.value === 'zh-CN' ? '查看实验能力和强制审批策略' : 'Inspect experimental capabilities and approval policies', icon: Wrench },
   { id: 'models', label: t('models'), description: t('modelsHint'), icon: Cpu },
   { id: 'about', label: t('about'), description: t('aboutHint'), icon: Info }
 ])
@@ -90,14 +92,14 @@ const updateButtonLabel = computed(() => {
   if (updateStatus.value === 'checking') return chinese ? '检查中…' : 'Checking…'
   if (updateStatus.value === 'available') return chinese ? '下载并安装' : 'Download and install'
   if (updateStatus.value === 'downloading') return updateProgress.value == null ? (chinese ? '下载中…' : 'Downloading…') : `${updateProgress.value}%`
-  if (updateStatus.value === 'ready') return chinese ? '重启完成更新' : 'Restart to update'
+  if (updateStatus.value === 'manual') return chinese ? '重新检查' : 'Check again'
   return chinese ? '检查更新' : 'Check for updates'
 })
 const updateMessage = computed(() => {
   const chinese = locale.value === 'zh-CN'
   if (updateStatus.value === 'latest') return chinese ? '当前已是最新版本。' : 'You are up to date.'
   if (updateStatus.value === 'unsupported') return chinese ? '浏览器预览不支持在线升级，请在桌面应用中检查。' : 'Updates are only available in the desktop app.'
-  if (updateStatus.value === 'ready') return chinese ? '更新已安装，重启后生效。' : 'The update is installed and ready.'
+  if (updateStatus.value === 'manual') return chinese ? '安装包已打开，请完成安装后重新启动 Tiny Note。' : 'The installer is open. Finish installation, then restart Tiny Note.'
   if (updateStatus.value === 'error') return updateError.value
   return ''
 })
@@ -137,6 +139,39 @@ function closeDropdowns() {
 function selectSection(id) {
   activeSectionId.value = id
   closeDropdowns()
+}
+
+async function exportWorkspace() {
+  backupStatus.value = ''
+  try {
+    const backup = await invoke('workspace_export')
+    const blob = new Blob([JSON.stringify(backup, null, 2)], { type: 'application/json;charset=utf-8' })
+    const url = URL.createObjectURL(blob)
+    const link = document.createElement('a')
+    link.href = url
+    link.download = 'tiny-note-backup-' + new Date().toISOString().slice(0, 10) + '.tnbackup.json'
+    link.click()
+    URL.revokeObjectURL(url)
+    backupStatus.value = locale.value === 'zh-CN' ? '备份已导出；模型 API Key 不会包含在备份中。' : 'Backup exported; model API keys are not included.'
+  } catch (error) {
+    backupStatus.value = error?.message || (locale.value === 'zh-CN' ? '备份导出失败' : 'Backup export failed')
+  }
+}
+
+async function restoreWorkspace(event) {
+  const file = event.target.files?.[0]
+  event.target.value = ''
+  if (!file) return
+  try {
+    const backup = JSON.parse(await file.text())
+    const confirmed = window.confirm(locale.value === 'zh-CN' ? '恢复会替换当前笔记、知识库和设置，确定继续吗？建议先导出当前备份。' : 'Restore will replace current notes, libraries, and settings. Continue? Export a backup first.')
+    if (!confirmed) return
+    await invoke('workspace_import', { request: { backup, replaceExisting: true } })
+    backupStatus.value = locale.value === 'zh-CN' ? '恢复完成，正在重新加载…' : 'Restore complete. Reloading…'
+    window.setTimeout(() => window.location.reload(), 250)
+  } catch (error) {
+    backupStatus.value = error?.message || (locale.value === 'zh-CN' ? '备份恢复失败' : 'Backup restore failed')
+  }
 }
 
 function addModel() {
@@ -323,7 +358,7 @@ async function installUpdate() {
   updateError.value = ''
   try {
     await appUpdater.downloadAndInstall(progress => { updateProgress.value = progress })
-    updateStatus.value = 'ready'
+    updateStatus.value = 'manual'
   } catch (error) {
     updateError.value = error?.message || (locale.value === 'zh-CN' ? '更新安装失败，请稍后重试。' : 'Unable to install the update.')
     updateStatus.value = 'error'
@@ -332,7 +367,7 @@ async function installUpdate() {
 
 async function handleUpdateAction() {
   if (updateStatus.value === 'available') return installUpdate()
-  if (updateStatus.value === 'ready') return appUpdater.relaunch()
+  if (updateStatus.value === 'manual') return checkForUpdates()
   return checkForUpdates()
 }
 
@@ -447,7 +482,8 @@ watch(filteredSections, sections => {
           </section>
 
           <section v-else-if="activeSectionId === 'agent-tools'" class="settings-detail-section settings-agent-tools-section">
-            <div class="settings-section-kicker">工具与权限</div>
+            <div class="settings-section-kicker">工具与权限 · 实验功能</div>
+            <p class="settings-inline-note">Tiny Agent、MCP 和隔离脚本仍处于实验阶段；涉及写入、删除或外部调用的操作会按策略请求审批。</p>
             <AgentToolsCatalog />
           </section>
 
@@ -458,15 +494,20 @@ watch(filteredSections, sections => {
               <div class="settings-setting-copy">
                 <strong>{{ locale === 'zh-CN' ? '软件更新' : 'Software update' }}</strong>
                 <span v-if="updateInfo">{{ locale === 'zh-CN' ? `发现 Tiny Note v${updateInfo.version}` : `Tiny Note v${updateInfo.version} is available` }}</span>
-                <span v-else>{{ locale === 'zh-CN' ? '通过签名的 GitHub Release 获取三平台更新。' : 'Signed updates are delivered through GitHub Releases.' }}</span>
+                <span v-else>{{ locale === 'zh-CN' ? '通过 GitHub Release 获取并校验 SHA-256 的更新包。' : 'Updates are downloaded from GitHub Releases and verified with SHA-256.' }}</span>
                 <small v-if="updateMessage" :class="{ error: updateStatus === 'error' }" role="status">{{ updateMessage }}</small>
                 <small v-if="updateInfo?.body" class="settings-update-notes">{{ updateInfo.body }}</small>
               </div>
-              <button type="button" class="settings-action-button" :class="{ primary: updateStatus === 'available' || updateStatus === 'ready' }" :disabled="updateStatus === 'checking' || updateStatus === 'downloading' || updateStatus === 'unsupported'" @click="handleUpdateAction">
+              <button type="button" class="settings-action-button" :class="{ primary: updateStatus === 'available' || updateStatus === 'manual' }" :disabled="updateStatus === 'checking' || updateStatus === 'downloading' || updateStatus === 'unsupported'" @click="handleUpdateAction">
                 <RefreshCw :size="14" :class="{ spinning: updateStatus === 'checking' || updateStatus === 'downloading' }" />{{ updateButtonLabel }}
               </button>
             </div>
             <div class="settings-setting-row"><div class="settings-setting-copy"><strong>{{ t('localFirst') }}</strong><span>{{ t('noteScope') }}</span></div><Globe2 :size="17" class="settings-value-icon" /></div>
+            <div class="settings-subheading">数据备份与恢复</div>
+            <div class="settings-setting-row">
+              <div class="settings-setting-copy"><strong>工作区备份</strong><span>导出笔记、知识库文件、标签、链接和设置；模型 API Key 不会写入备份。</span><small v-if="backupStatus" role="status">{{ backupStatus }}</small></div>
+              <div class="settings-inline-actions"><button type="button" class="settings-action-button" @click="exportWorkspace">导出备份</button><button type="button" class="settings-action-button" @click="backupInput?.click()">恢复备份</button><input ref="backupInput" type="file" hidden accept=".json,.tnbackup" @change="restoreWorkspace" /></div>
+            </div>
           </section>
         </div>
       </main>

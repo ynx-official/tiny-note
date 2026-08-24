@@ -1,14 +1,18 @@
 <script setup>
 import { computed, onMounted, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
+import { useRouter } from 'vue-router'
 import {
-  Folder, File, Plus, Search, Grid2X2, List, Upload, Trash2, Eye, ChevronLeft,
+  Folder, File, FileText, Plus, Search, Grid2X2, List, Upload, Trash2, Eye, ChevronLeft,
   ChevronRight, SlidersHorizontal, PanelLeftClose, PanelLeftOpen, Pencil,
-  FolderOpen, X, ArrowDownAZ, HardDrive, Clock3
+  FolderOpen, X, ArrowDownAZ, HardDrive, Clock3, Link2
 } from 'lucide-vue-next'
 import { useLibraryStore } from '../stores/library'
+import { useNotesStore } from '../stores/notes'
 
 const store = useLibraryStore()
+const notesStore = useNotesStore()
+const router = useRouter()
 const { t } = useI18n()
 const creating = ref(false)
 const name = ref('')
@@ -22,6 +26,7 @@ const importing = ref(false)
 const dropActive = ref(false)
 const importInput = ref(null)
 const entries = computed(() => store.entries)
+const knowledgeNotes = computed(() => notesStore.notes.filter(note => note.knowledgeBaseId === store.activeId))
 const personalBases = computed(() => store.bases.filter(base => base.category === 'personal'))
 const localBases = computed(() => store.bases.filter(base => base.category === 'local'))
 
@@ -29,7 +34,7 @@ watch(query, async value => {
   store.search = value
   await store.loadEntries()
 })
-onMounted(() => store.load())
+onMounted(() => Promise.all([store.load(), notesStore.load()]))
 
 async function create() {
   if (name.value.trim()) {
@@ -58,6 +63,16 @@ async function importList(files) {
     dropActive.value = false
   }
 }
+async function importUrl() {
+  if (!store.activeId) return
+  const url = window.prompt('输入网页或文件 URL')
+  if (!url?.trim()) return
+  try {
+    await store.importUrl(url.trim())
+  } catch (error) {
+    window.alert(error?.message || '网页导入失败，请重试')
+  }
+}
 async function handleDrop(event) {
   dropActive.value = false
   await importList(Array.from(event.dataTransfer?.files || []))
@@ -81,6 +96,7 @@ function openEntry(entry) {
   else store.openPreview(entry.relativePath)
 }
 function selectBase(id) { store.selectBase(id) }
+function openNote(note) { router.push({ path: '/notes', query: { note: note.id } }) }
 </script>
 
 <template>
@@ -136,6 +152,7 @@ function selectBase(id) { store.selectBase(id) }
           </div>
           <button class="icon-button" title="新建文件夹" @click="folder"><Plus :size="18" /></button>
           <button class="icon-button" :class="{ pressed: importing }" :disabled="importing" :title="t('importFiles')" @click="importInput?.click()"><Upload :size="18" /></button>
+          <button class="icon-button" title="导入网页或 URL" @click="importUrl"><Link2 :size="17" /></button>
           <input ref="importInput" type="file" multiple hidden accept=".pdf,.epub,.md,.markdown,.html,.htm,.txt,.json,.xml,.note" @change="importFiles" />
         </div>
       </div>
@@ -143,8 +160,13 @@ function selectBase(id) { store.selectBase(id) }
       <div v-if="dropActive" class="drop-hint"><Upload :size="20" /><strong>松开以导入文件</strong><span>文件将保存到当前文件夹</span></div>
       <div v-if="!store.active" class="empty-state"><div class="empty-icon">⌂</div><h2>{{ t('chooseKb') }}</h2></div>
       <div v-else-if="store.loading && !entries.length" class="empty-state"><div class="empty-icon loading-dot">···</div><h2>正在读取文件</h2></div>
-      <div v-else-if="!entries.length" class="empty-state"><div class="empty-icon">⌁</div><h2>{{ t('noFiles') }}</h2><p>点击右上角导入，或将文件拖到此处</p></div>
+      <div v-else-if="!entries.length && !knowledgeNotes.length" class="empty-state"><div class="empty-icon">⌁</div><h2>{{ t('noFiles') }}</h2><p>点击右上角导入，或将文件拖到此处</p></div>
       <div v-else :class="['file-grid', view]">
+        <article v-for="note in knowledgeNotes" :key="`note:${note.id}`" class="file-card note-file-card" tabindex="0" @dblclick="openNote(note)" @keydown.enter="openNote(note)">
+          <div class="file-icon file"><FileText :size="23" /></div>
+          <div class="file-info"><strong>{{ note.title || t('untitled') }}</strong><small>笔记 · {{ new Date(note.updatedAt).toLocaleDateString() }}</small></div>
+          <div class="file-card-actions"><button class="file-action" title="打开笔记" @click.stop="openNote(note)"><Eye :size="14" /></button></div>
+        </article>
         <article v-for="entry in entries" :key="entry.relativePath" class="file-card" tabindex="0" @dblclick="openEntry(entry)" @keydown.enter="openEntry(entry)">
           <div class="file-icon" :class="entry.kind"><FolderOpen v-if="entry.kind === 'folder'" :size="23" /><File v-else :size="23" /></div>
           <div class="file-info"><strong>{{ entry.name }}</strong><small>{{ entry.kind === 'folder' ? '文件夹' : `${Math.max(1, Math.round(entry.size / 1024))} KB` }}<span v-if="entry.kind === 'file'" class="file-index-status" :class="`is-${entry.indexStatus || 'pending'}`"> · {{ ({ indexed: '已索引', failed: '索引失败', unsupported: '不支持', pending: '待索引' })[entry.indexStatus || 'pending'] }}</span></small><em v-if="query && entry.relativePath !== entry.name">{{ entry.relativePath }}</em></div>
@@ -155,7 +177,9 @@ function selectBase(id) { store.selectBase(id) }
 
     <div v-if="store.preview" class="preview-drawer">
       <div class="preview-head"><div><strong>{{ store.preview.title }}</strong><small>{{ store.preview.kind }}</small></div><button class="icon-button" title="关闭" @click="store.preview = null"><X :size="17" /></button></div>
-      <pre v-if="store.preview.kind !== 'html'">{{ store.preview.content }}</pre>
+      <img v-if="store.preview.kind === 'image'" :src="store.preview.content" :alt="store.preview.title" class="library-image-preview" />
+      <div v-else-if="store.preview.kind === 'unsupported'" class="library-preview-unsupported">{{ store.preview.content }}</div>
+      <pre v-else-if="store.preview.kind !== 'html'">{{ store.preview.content }}</pre>
       <iframe v-else sandbox="" :title="store.preview.title" :srcdoc="store.preview.content"></iframe>
     </div>
   </div>

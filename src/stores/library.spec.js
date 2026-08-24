@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, it } from 'vitest'
 import { createPinia, setActivePinia } from 'pinia'
 import { useLibraryStore } from './library'
+import { invoke } from '../services/tauri'
 
 describe('library store', () => {
   beforeEach(() => {
@@ -30,17 +31,23 @@ describe('library store', () => {
     expect(store.entries.some(entry => entry.name === 'drafts')).toBe(false)
   })
 
-  it('adds a note reference as a collision-safe .note file', async () => {
+  it('moves a note into the selected knowledge base', async () => {
     const store = useLibraryStore()
     await store.load()
-    const result = await store.addNoteReference(store.activeId, {
-      id: 'note-1',
-      title: '设计/计划',
-      contentHtml: '<p>hello</p>',
-      updatedAt: '2026-08-20T00:00:00.000Z'
-    })
+    const note = await invoke('note_create', { input: { title: '设计计划', contentHtml: '<p>hello</p>' } })
+    const result = await store.addNoteReference(store.activeId, note)
 
-    expect(result.name).toBe('设计计划.note')
-    expect(store.entries.some(entry => entry.name === '设计计划.note')).toBe(true)
+    expect(result.knowledgeBaseId).toBe(store.activeId)
+    expect(note.knowledgeBaseId).toBe(store.activeId)
+  })
+
+  it('keeps binary imports intact and previews image data safely', async () => {
+    const store = useLibraryStore()
+    await store.load()
+    const bytes = Uint8Array.from([137, 80, 78, 71, 13, 10])
+    await store.importFile({ name: 'cover.png', type: 'image/png', arrayBuffer: async () => bytes })
+    await store.openPreview('cover.png')
+    expect(store.preview.kind).toBe('image')
+    expect(store.preview.content).toMatch(/^data:image\/png;base64,/)
   })
 })

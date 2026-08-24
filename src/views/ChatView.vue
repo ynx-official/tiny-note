@@ -174,6 +174,16 @@ async function createNoteFromText(content, fallbackTitle = '对话笔记') {
   savedNote.value = note
   return note
 }
+async function refreshDataAfterAgent() {
+  // Agent tools write through Rust directly, so the Pinia lists need an
+  // explicit reload before the user navigates back to Notes or Library.
+  const activeBaseId = library.activeId
+  const activePath = library.path
+  await Promise.allSettled([notesStore.load(), library.load()])
+  if (activeBaseId && library.activeId === activeBaseId && activePath) {
+    await library.navigate(activePath, false)
+  }
+}
 async function saveAssistantAsNote(message) {
   try { error.value = ''; await createNoteFromText(message.content, conversationTitle.value === '新对话' ? '对话笔记' : conversationTitle.value) }
   catch (cause) { error.value = cause?.message || '保存笔记失败' }
@@ -264,6 +274,7 @@ function createResponseChannel() {
     if (event.type === 'completed') {
       if ((!streamingText.value || streamingText.value === '正在思考…') && event.content) { streamingText.value = event.content; if (currentMode.value === 'agent') appendAgentText(event.content) }
       finishStreamingAgentText()
+      if (currentMode.value === 'agent') await refreshDataAfterAgent()
       await completeResponse()
     }
   }
@@ -566,7 +577,7 @@ function formatToolDetail(value) {
       <div class="chat-page-header-side is-right"><button type="button" class="chat-page-summary" :disabled="busy || messages.length < 2" title="将当前对话总结并保存为笔记" @click="summarizeConversation"><NotebookPen :size="15" /><span>总结为笔记</span></button><button type="button" class="chat-page-icon" title="新对话" @click="newChat"><Plus :size="18" /></button></div>
     </header>
     <main ref="messagesRef" class="chat-page-messages" aria-live="polite">
-      <div v-if="!messages.length && !busy" class="chat-page-empty"><span class="chat-page-empty-avatar tiny-agent-avatar"><img class="tiny-agent-avatar-image" :src="tinyAgentAvatar" alt="" /></span><strong>你好，我是 Tiny Agent</strong><p>我可以总结对话，也能创建、查询和修改你的笔记。</p><div class="chat-page-suggestions"><button type="button" @click="draft = '创建笔记《项目想法》，内容：'">创建一篇笔记</button><button type="button" @click="draft = '查找关于 ' ">查询已有笔记</button></div></div>
+      <div v-if="!messages.length && !busy" class="chat-page-empty"><span class="chat-page-empty-avatar tiny-agent-avatar"><img class="tiny-agent-avatar-image" :src="tinyAgentAvatar" alt="" /></span><strong>你好，我是 Tiny Agent</strong><p>我可以总结对话，也能创建、查询和修改你的笔记。</p><small class="chat-experimental-note">实验功能：写入、删除和外部工具调用会先请求审批。</small><div class="chat-page-suggestions"><button type="button" @click="draft = '创建笔记《项目想法》，内容：'">创建一篇笔记</button><button type="button" @click="draft = '查找关于 ' ">查询已有笔记</button></div></div>
       <article v-for="(message, index) in messages" :key="`${index}-${message.role}`" class="chat-page-message" :class="`is-${message.role}`">
         <div v-if="message.role === 'assistant'" class="chat-page-assistant-head"><span class="chat-page-avatar tiny-agent-avatar"><img class="tiny-agent-avatar-image" :src="tinyAgentAvatar" alt="" /></span><strong>Tiny Agent</strong></div>
         <div v-if="message.agentSegments?.length" class="agent-timeline agent-event-timeline">
@@ -603,7 +614,7 @@ function formatToolDetail(value) {
     <form class="chat-page-composer" @submit.prevent="submit">
       <div v-if="references.length" class="chat-reference-tags"><span v-for="reference in references" :key="reference.key"><FileText v-if="reference.type === 'note'" :size="13" /><File v-else :size="13" />{{ reference.name }}<button type="button" @click="removeReference(reference.key)"><X :size="12" /></button></span></div>
       <textarea v-model="draft" rows="2" placeholder="输入消息..." @keydown.enter.exact.prevent="submit"></textarea>
-      <div class="chat-page-composer-footer"><div class="chat-composer-left"><div class="chat-mode-switch" :class="{ 'is-locked': busy || modeSaving }"><button type="button" :class="{ active: currentMode === 'chat' }" :disabled="busy || modeSaving" title="普通对话" @click="selectMode('chat')"><MessageCircle :size="14" />对话</button><button type="button" :class="{ active: currentMode === 'agent' }" :disabled="busy || modeSaving" title="自主调用工具完成任务" @click="selectMode('agent')"><Wrench :size="14" />Tiny Agent</button></div><div class="chat-reference-anchor"><button type="button" class="chat-attach-button" title="引用笔记或文件" @click="toggleReferenceMenu"><Paperclip :size="15" /></button><div v-if="referenceMenuOpen" class="chat-reference-menu"><strong>引用内容</strong><small>笔记</small><button v-for="note in notesStore.notes" :key="note.id" type="button" @click="addNoteReference(note)"><FileText :size="13" />{{ note.title || '未命名笔记' }}</button><small v-if="library.entries.some(item => item.kind === 'file')">{{ library.active?.name || '知识库文件' }}</small><button v-for="entry in library.entries.filter(item => item.kind === 'file')" :key="entry.relativePath" type="button" @click="addFileReference(entry)"><BookOpen :size="13" />{{ entry.name }}</button></div></div><small v-if="currentMode === 'agent'" data-testid="agent-tool-summary" class="chat-agent-tool-summary">{{ agentTools.length }} 个工具可用 · {{ agentApprovalCount }} 个操作需审批</small><small v-else>{{ modeSaving ? '正在切换模式…' : '内容保存在你的设备上' }}</small></div><button v-if="busy" type="button" class="chat-page-send is-stop" title="停止生成" @click="stop"><Square :size="15" /></button><button v-else type="submit" class="chat-page-send" :class="{ active: draft.trim() }" title="发送"><Send :size="16" /></button></div>
+      <div class="chat-page-composer-footer"><div class="chat-composer-left"><div class="chat-mode-switch" :class="{ 'is-locked': busy || modeSaving }"><button type="button" :class="{ active: currentMode === 'chat' }" :disabled="busy || modeSaving" title="普通对话" @click="selectMode('chat')"><MessageCircle :size="14" />对话</button><button type="button" :class="{ active: currentMode === 'agent' }" :disabled="busy || modeSaving" title="实验功能：自主调用工具完成任务" @click="selectMode('agent')"><Wrench :size="14" />Tiny Agent · 实验</button></div><div class="chat-reference-anchor"><button type="button" class="chat-attach-button" title="引用笔记或文件" @click="toggleReferenceMenu"><Paperclip :size="15" /></button><div v-if="referenceMenuOpen" class="chat-reference-menu"><strong>引用内容</strong><small>笔记</small><button v-for="note in notesStore.notes" :key="note.id" type="button" @click="addNoteReference(note)"><FileText :size="13" />{{ note.title || '未命名笔记' }}</button><small v-if="library.entries.some(item => item.kind === 'file')">{{ library.active?.name || '知识库文件' }}</small><button v-for="entry in library.entries.filter(item => item.kind === 'file')" :key="entry.relativePath" type="button" @click="addFileReference(entry)"><BookOpen :size="13" />{{ entry.name }}</button></div></div><small v-if="currentMode === 'agent'" data-testid="agent-tool-summary" class="chat-agent-tool-summary">{{ agentTools.length }} 个工具可用 · {{ agentApprovalCount }} 个操作需审批</small><small v-else>{{ modeSaving ? '正在切换模式…' : '内容保存在你的设备上' }}</small></div><button v-if="busy" type="button" class="chat-page-send is-stop" aria-label="停止生成" title="停止生成" @click="stop"><Square :size="15" /></button><button v-else type="submit" class="chat-page-send" :class="{ active: draft.trim() }" :disabled="!draft.trim()" aria-label="发送消息" title="发送消息"><Send :size="16" /></button></div>
     </form>
   </div>
 </template>

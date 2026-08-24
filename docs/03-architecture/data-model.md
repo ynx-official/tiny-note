@@ -1,8 +1,8 @@
 # 数据模型（Approved）
 
-最后更新：2026-08-21
+最后更新：2026-08-23
 
-SQLite 核心表：`notebooks`、`notes`、`knowledge_bases`、`model_profiles`、`settings`、`chat_conversations`、`chat_messages`。`notes.title` 是独立元数据，不自动写入正文 H1。正文原子保存三种表示：`content_markdown` 是 Markdown 模式中的用户源码（即时编辑产生正文变更后可规范化为语义等价写法），`content_html` 是经过白名单清洗的 TipTap 渲染内容，`content_text` 是搜索与 AI 使用的纯文本。三个字段均为非空文本；旧库通过 `PRAGMA table_info` 检测后执行兼容 `ALTER TABLE`，Markdown 初始默认空字符串。
+SQLite 核心表：`notebooks`、`notes`、`knowledge_bases`、`model_profiles`、`settings`、`chat_conversations`、`chat_messages`。`notes.title` 是独立元数据，不自动写入正文 H1。正文原子保存三种表示：`content_markdown` 是 Markdown 模式中的用户源码（即时编辑产生正文变更后可规范化为语义等价写法），`content_html` 是经过白名单清洗的 TipTap 渲染内容，`content_text` 是搜索与 AI 使用的纯文本。`notes.tags_json` 保存规范化的小写标签，`notes.is_pinned` 保存置顶状态；标签和置顶参与列表筛选及排序。旧库通过 `PRAGMA table_info` 检测后执行兼容 `ALTER TABLE`，Markdown 初始默认空字符串。
 
 `note_revisions` 同样保存 `content_markdown`、`content_html` 和 `content_text`，因此 AI 应用前快照与版本恢复不会丢失源码。复制、导入、Agent 创建笔记及 AI 应用必须在一次逻辑操作中同步三种表示。旧记录保持可读，Markdown 在首次实际源码编辑或保存时延迟回填。
 
@@ -17,5 +17,9 @@ Agent 使用 `agent_runs` 保存每轮请求、模型、状态、循环次数、
 Skills 不写入 SQLite，保存在应用数据目录的 `agent/SKILL/<skill-name>/SKILL.md`。启动时仅补齐缺失的内置技能，不覆盖用户已编辑内容。
 
 MCP 服务配置保存在应用数据目录的 `agent/mcp.json`，包含直接启动命令、参数、启用状态和最近一次发现的工具清单；命令与参数分开存储，不经过 Shell 拼接。
+
+模板保存在 `note_templates`，内置模板使用 `builtin=1` 并禁止删除，自定义模板可导入/导出。笔记间的 `[[笔记标题]]` 引用解析为 `note_links`，保存出链和入链，笔记正文或标题变化后同步重算。
+
+工作区备份是版本化 JSON：笔记、笔记本、知识库元数据、知识库文件以 Base64 保存、模板、链接和界面设置均可恢复；模型 API Key、Agent 凭据和运行时缓存明确排除在备份之外。恢复是用户确认后的全量替换，并在完成后重建搜索索引。
 
 模型密钥存储在 SQLite 的 `model_profiles.api_key` 字段中。模型列表 DTO 只返回 `apiKeyConfigured`，不会把明文 Key 返回前端；Rust 请求层直接从 SQLite 读取。

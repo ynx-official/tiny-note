@@ -61,8 +61,9 @@ async function createFromQuery() {
   creatingFromQuery = true
   try { await create(); await router.replace({ path: '/notes' }) } finally { creatingFromQuery = false }
 }
-onMounted(createFromQuery)
+onMounted(() => { createFromQuery(); store.loadTemplates() })
 watch(() => route.query.new, createFromQuery)
+watch(() => [store.selectedTag, store.pinnedOnly], () => store.load())
 function openRoutedNote() {
   const id = String(route.query.note || '')
   if (id && store.notes.some(note => note.id === id)) { showDeleted.value = false; store.activeId = id }
@@ -76,6 +77,12 @@ function clearReviewedProposal() {
 }
 
 async function create() { showDeleted.value = false; await store.create() }
+async function createFromTemplate(templateId) { showDeleted.value = false; newNoteMenu.value = false; await store.createFromTemplate(templateId) }
+async function togglePinned(note) {
+  if (!note) return
+  await store.setPinned(note.id, !note.pinned)
+  await store.load()
+}
 async function remove(id) { if (confirm(t('confirmDelete'))) await store.remove(id) }
 async function importFiles(event) {
   for (const file of event.target.files || []) await store.importText(file)
@@ -317,6 +324,7 @@ onBeforeUnmount(() => {
               <button class="new-note-dropdown-btn" :title="t('noteSidebarMoreOptions')" @click.stop="toggleNewNoteMenu"><svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="6 9 12 15 18 9"/></svg></button>
               <div v-if="newNoteMenu" class="new-note-dropdown-menu">
                 <button class="dropdown-item" @click="create(); newNoteMenu = false"><Plus :size="14" />{{ t('newNote') }}</button>
+                <button v-for="template in store.templates" :key="template.id" class="dropdown-item" @click="createFromTemplate(template.id)"><Plus :size="14" />{{ template.name }}</button>
                 <button class="dropdown-item" @click="importInput?.click(); newNoteMenu = false"><Download :size="14" />{{ t('importFiles') }}</button>
               </div>
               <input ref="importInput" type="file" multiple hidden accept=".md,.markdown,.txt" @change="importFiles" />
@@ -340,6 +348,13 @@ onBeforeUnmount(() => {
             </button>
             <button class="folder-item" :class="{ active: showDeleted }" @click="showDeleted = true; notebookMenu = false">{{ t('recentlyDeleted') }}<small>{{ store.deleted.length }}</small></button>
           </div>
+          <div class="note-filter-row">
+            <select v-model="store.selectedTag" aria-label="按标签筛选">
+              <option value="">全部标签</option>
+              <option v-for="tag in store.allTags" :key="tag" :value="tag">#{{ tag }}</option>
+            </select>
+            <button type="button" class="note-filter-pin" :class="{ active: store.pinnedOnly }" title="只看置顶" @click="store.pinnedOnly = !store.pinnedOnly">★</button>
+          </div>
           <div v-if="folderItemMenu" class="folder-item-menu" :style="folderItemMenuStyle" @click.stop>
             <button class="folder-item-menu-option" @click="renameNotebook"><Pencil :size="12" />{{ t('rename') }}</button>
             <button class="folder-item-menu-option danger" @click="deleteNotebook"><Trash2 :size="12" />{{ t('delete') }}</button>
@@ -348,8 +363,9 @@ onBeforeUnmount(() => {
 
         <div class="note-items">
           <button v-for="note in list" :key="note.id" class="note-item" :class="{ active: note.id === store.activeId }" @click="selectNote(note.id)" @contextmenu.prevent.stop="openContextMenu($event, note)">
-            <span class="note-title">{{ note.title || t('untitled') }}</span>
-            <span class="note-meta"><span>{{ new Date(note.updatedAt).toLocaleDateString() }}</span><span>{{ store.notebooks.find(book => book.id === note.notebookId)?.name || t('uncategorized') }}</span></span>
+            <span class="note-title"><span v-if="note.pinned" class="note-pin-mark">★</span>{{ note.title || t('untitled') }}</span>
+            <span class="note-meta"><span>{{ new Date(note.updatedAt).toLocaleDateString() }}</span><span>{{ store.notebooks.find(book => book.id === note.notebookId)?.name || t('uncategorized') }}</span><span v-if="note.knowledgeBaseId">{{ library.bases.find(base => base.id === note.knowledgeBaseId)?.name || '知识库' }}</span></span>
+            <span v-if="note.tags?.length" class="note-tags-preview">{{ note.tags.map(tag => '#' + tag).join(' ') }}</span>
           </button>
           <div v-if="!list.length" class="note-list-empty">{{ t('emptyNotes') }}</div>
         </div>
@@ -366,6 +382,7 @@ onBeforeUnmount(() => {
           <button class="has-submenu"><FolderInput :size="15" /><span>移动到笔记本</span><ChevronRight class="context-arrow" :size="14" /></button>
         </div>
         <button @click="duplicateContextNote"><Copy :size="15" /><span>复制</span></button>
+        <button @click="togglePinned(contextNote); closeContextMenu()"><span class="context-star">★</span><span>{{ contextNote?.pinned ? '取消置顶' : '置顶笔记' }}</span></button>
         <div class="note-context-divider"></div>
         <button class="danger" @click="deleteContextNote"><Trash2 :size="15" /><span>删除</span></button>
       </template>
