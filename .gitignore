@@ -1,6 +1,8 @@
 node_modules/
 dist/
 .vite/
+tmp/
+output/
 src-tauri/target/
 src-tauri/gen/
 .env
