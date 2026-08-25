@@ -3,11 +3,12 @@
 import fs from 'node:fs'
 import path from 'node:path'
 import process from 'node:process'
+import { fileURLToPath } from 'node:url'
 
 const TAG_PATTERN = /^tiny-note-v(?<version>\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?)$/
 const DATE_PATTERN = /^> 发布日期：(?<date>\d{4}-\d{2}-\d{2})$/m
 const EXCLUDED_HEADINGS = new Set(['验证结果', '变更依据'])
-const root = path.resolve(new URL('..', import.meta.url).pathname)
+const root = path.resolve(fileURLToPath(new URL('..', import.meta.url)))
 
 class ReleaseNotesError extends Error {}
 
