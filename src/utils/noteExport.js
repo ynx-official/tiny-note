@@ -128,6 +128,11 @@ body {
 .tiny-note-export-body ul[data-type="taskList"] li > div { min-width: 0; flex: 1; }
 .tiny-note-export-body input[type="checkbox"] { width: 14px; height: 14px; accent-color: #5645d4; }
 .tiny-note-export-empty { margin: 0; color: #787671; font-style: italic; }
+.tiny-note-pdf-heading-group {
+  display: flow-root;
+  break-inside: avoid-page;
+  page-break-inside: avoid;
+}
 @media (max-width: 640px) {
   .tiny-note-export-document { width: min(100% - 32px, 820px); padding: 36px 0 48px; }
   .tiny-note-export-title { margin-bottom: 26px; font-size: 32px; }
@@ -258,6 +263,14 @@ export async function exportNotePdf(note, {
 
   try {
     const article = stage.querySelector('.tiny-note-export-document')
+    article.querySelectorAll('.tiny-note-export-body > h1, .tiny-note-export-body > h2, .tiny-note-export-body > h3, .tiny-note-export-body > h4, .tiny-note-export-body > h5, .tiny-note-export-body > h6').forEach(heading => {
+      const firstContentBlock = heading.nextElementSibling
+      if (!firstContentBlock || /^H[1-6]$/.test(firstContentBlock.tagName)) return
+      const group = documentRef.createElement('div')
+      group.className = 'tiny-note-pdf-heading-group'
+      heading.before(group)
+      group.append(heading, firstContentBlock)
+    })
     await waitForExportAssets(article, documentRef)
     const html2pdf = await pdfFactory()
     const options = {
@@ -266,7 +279,7 @@ export async function exportNotePdf(note, {
       enableLinks: true,
       pagebreak: {
         mode: ['css', 'legacy'],
-        avoid: ['tr', 'pre', 'img', 'blockquote', 'li', 'p', 'h1', 'h2', 'h3', 'h4', 'h5', 'h6']
+        avoid: ['tr', 'pre', 'img', 'blockquote', 'li', 'p', 'h1', 'h2', 'h3', 'h4', 'h5', 'h6', '.tiny-note-pdf-heading-group']
       },
       image: { type: 'jpeg', quality: 0.98 },
       html2canvas: {

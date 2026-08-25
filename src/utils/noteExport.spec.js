@@ -71,6 +71,10 @@ describe('note export documents', () => {
       pagebreak: expect.objectContaining({ avoid: expect.arrayContaining(['p', 'h2', 'pre', 'tr']) })
     }))
     expect(from).toHaveBeenCalledWith(expect.any(HTMLElement))
+    const article = from.mock.calls[0][0]
+    const headingGroup = article.querySelector('.tiny-note-pdf-heading-group')
+    expect(headingGroup?.firstElementChild?.tagName).toBe('H2')
+    expect(headingGroup?.lastElementChild?.tagName).toBe('P')
     expect(outputPdf).toHaveBeenCalledWith('blob')
     expect(download).toHaveBeenCalledWith(pdfBlob, '方案 & 复盘.pdf')
     expect(document.querySelector('.tiny-note-pdf-stage')).toBeNull()
