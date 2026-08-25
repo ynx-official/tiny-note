@@ -1,10 +1,11 @@
 # 威胁模型
 
 状态：Review
-最后更新：2026-08-21
+最后更新：2026-08-25
 
 - 所有文件命令只接受知识库 ID 与相对路径，拒绝越界路径和符号链接穿透。
 - 原始 Markdown 与可执行预览分离保存。进入预览和 `content_html` 的内容仅允许编辑器所需标签、属性、`color/background-color/text-align` 样式及 HTTP(S)、邮件、电话和相对链接协议；脚本、事件属性、危险图片/Data URL、未知标签和其他样式被移除。
+- Mermaid 源码按不可信输入处理。进入 Mermaid 解析/渲染前先拒绝图片节点、Markdown 图片、外部 URL、CSS `url()`/`@import` 和资源标签，防止生成 SVG 之前发生网络请求；渲染器使用 `securityLevel: strict`、关闭用户 HTML 标签与自动启动、锁定安全/主题/布局配置，并限制文本和边数量。返回 SVG 继续移除脚本、事件属性、链接、图片、外部 URL 和危险 CSS；只保留 Mermaid 生成的内部主题 `<style>` 及指向同一 SVG 定义的 `url(#fragment)`，避免节点和分组回落为浏览器默认黑色。仅为 Mermaid 原生泳道标题保留经二次清洗的 `foreignObject` 及 `div/span/p/br` 最小 XHTML 白名单。该白名单只存在于图表专用渲染器，不加入通用编辑器 HTML 白名单；SVG 只存在于瞬时 NodeView，禁止写入数据库。
 - 模型 Key 只进入本地 SQLite 和 Rust HTTP 请求；错误、日志和前端 DTO 均脱敏。端点类型使用固定白名单，Rust 按协议选择 Bearer 或 `x-api-key`，不把凭据拼入 URL。SQLite 数据库文件需要按本机敏感数据保护。
 - WebView 不开放任意 Shell、任意目录读写或远程页面导航。
 - 自动检索和明确引用都只接受笔记 ID 或知识库 ID + 相对路径。发送给模型的文件片段被标记为不可信数据，文件中的提示词不得覆盖系统指令。

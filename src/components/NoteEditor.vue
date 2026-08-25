@@ -22,7 +22,7 @@ import CodeBlockComponent from './CodeBlockComponent.vue'
 import MarkdownSourceEditor from './MarkdownSourceEditor.vue'
 import MarkdownMessage from './MarkdownMessage.vue'
 import NoteAssistantSidebar from './NoteAssistantSidebar.vue'
-import { BookOpen, Bold, CalendarDays, Check, ChevronDown, CircleHelp, Columns2, Copy, Eye, FileCode2, FileText, Italic, Languages, Maximize2, MessageSquare, Pin, RotateCcw, Send, ShieldCheck, Table2, ThumbsDown, ThumbsUp, Underline as UnderlineIcon, Strikethrough, List, ListOrdered, ListChecks, Quote, Code2, Undo2, Redo2, Eraser, Link2, Highlighter, PenLine, AlignLeft, AlignCenter, AlignRight, Plus, PlusCircle, MoreHorizontal, Layers, Sparkles, Trash2, Download, Printer, X, Zap } from 'lucide-vue-next'
+import { BookOpen, Bold, CalendarDays, Check, ChevronDown, CircleHelp, Columns2, Copy, Eye, FileCode2, FileText, Italic, Languages, Maximize2, MessageSquare, Pin, RotateCcw, Send, ShieldCheck, Table2, ThumbsDown, ThumbsUp, Underline as UnderlineIcon, Strikethrough, List, ListOrdered, ListChecks, Quote, Code2, Undo2, Redo2, Eraser, Link2, Highlighter, PenLine, AlignLeft, AlignCenter, AlignRight, Plus, PlusCircle, MoreHorizontal, Layers, Sparkles, Trash2, Download, Printer, Workflow, X, Zap } from 'lucide-vue-next'
 import { useNotesStore } from '../stores/notes'
 import { useLibraryStore } from '../stores/library'
 import { useAppStore } from '../stores/app'
@@ -31,6 +31,7 @@ import { useI18n } from 'vue-i18n'
 import { createNoteExtensions } from '../editor/noteExtensions'
 import { DEFAULT_NOTE_MODE, NOTE_MODES, applyMarkdownSourceToEditor, clampSplitRatio, isRichClipboardHtml, markdownToEditorHtml, sanitizeEditorHtml, scrollOffset, scrollProgress } from '../utils/noteMarkdown'
 import { prepareTaskFlight } from '../utils/taskFlight'
+import { markMermaidDiagramForEditing } from '../utils/mermaidEditorState'
 import { requestPrompt } from '../services/promptDialog'
 import { requestConfirmation, showToast } from '../services/appFeedback'
 
@@ -285,7 +286,7 @@ function resetEditorSession(note) {
   applyingEditorContent = true
   if (note && editor.value) editor.value.commands.setContent(prepareEditorContent(note), { emitUpdate: false })
   applyingEditorContent = false
-  editor.value?.setEditable(editorMode.value === 'rich', false)
+  setEditorEditable(editorMode.value === 'rich')
   markdownDraft.value = deriveMarkdown(note)
   if (sourceDirty.value) markdownParseError.value = '预览正在等待刷新，源码草稿仍保留'
   if (note) persistedSignatures.set(note.id, noteContentSignature(note))
@@ -299,7 +300,7 @@ async function changeEditorMode(mode) {
   if (!valid && mode === 'rich') return
   if (mode === 'markdown' && !sourceDirty.value) markdownDraft.value = deriveMarkdown()
   editorMode.value = mode
-  editor.value?.setEditable(mode === 'rich', false)
+  setEditorEditable(mode === 'rich')
   closeToolbarMenus()
   fimSuggestion.value = ''
   await nextTick()
@@ -479,6 +480,13 @@ async function handleBackgroundNoteTask(event) {
     }
     if (task.status === 'failed') pushAssistantResponse(`请求失败：${aiEventErrorMessage({ message: task.errorMessage })}`)
   }
+}
+
+function setEditorEditable(editable) {
+  const instance = editor.value
+  if (!instance) return
+  instance.setEditable(editable, false)
+  instance.emit('tinyNoteEditableChange', { editable })
 }
 
 onBeforeUnmount(() => {
@@ -915,8 +923,50 @@ function openInConversation() {
 }
 async function runFim() { if (editorMode.value !== 'rich' || !fimEnabled.value || !editor.value || !props.note?.contentText) return; const id = crypto.randomUUID(); const channel = new Channel(); let result = ''; channel.onmessage = event => { if (event.type === 'delta') result += event.text; if (event.type === 'completed') fimSuggestion.value = result }; try { await (await import('../services/tauri')).invoke('note_fim_stream', { request: { requestId: id, action: 'continue_write', text: props.note.contentText.slice(-800), instruction: `Continue naturally. Context after cursor: ${props.note.contentText.slice(-400)}`, modelProfileId: null }, onEvent: channel }) } catch { fimSuggestion.value = '' } }
 function acceptFim() { if (fimSuggestion.value && editor.value) { editor.value.commands.insertContent(fimSuggestion.value); fimSuggestion.value = '' } }
+function handleEditorTab(event) {
+  if (!fimSuggestion.value || !editor.value || editorMode.value !== 'rich') return
+  if (event.target?.closest?.('button, select, input, textarea, [contenteditable="false"]')) return
+  event.preventDefault()
+  acceptFim()
+}
 function dismissFim() { fimSuggestion.value = '' }
 function insertCodeBlock() { editor.value?.chain().focus().toggleCodeBlock().run(); insertOpen.value = false }
+const mermaidTemplates = {
+  flowchart: [
+    'flowchart LR',
+    '  accTitle: 示例流程图',
+    '  accDescr: 从开始经过判断，到达完成或调整。',
+    '  start[开始] --> decision{条件满足?}',
+    '  decision -->|是| done[完成]',
+    '  decision -->|否| revise[调整]',
+    '  revise --> decision'
+  ].join('\n'),
+  swimlane: [
+    'swimlane-beta LR',
+    '  accTitle: 示例审批泳道',
+    '  accDescr: 申请人提交申请，审批人审核并返回结果。',
+    '  subgraph applicant [申请人]',
+    '    submit[提交申请]',
+    '    receive[接收结果]',
+    '  end',
+    '  subgraph reviewer [审批人]',
+    '    review{是否批准}',
+    '  end',
+    '  submit --> review --> receive'
+  ].join('\n')
+}
+function insertMermaidDiagram(kind) {
+  const source = mermaidTemplates[kind] || mermaidTemplates.flowchart
+  const currentEditor = editor.value
+  if (!currentEditor) return
+  markMermaidDiagramForEditing(currentEditor, source)
+  currentEditor.chain().focus().insertContent({
+    type: 'codeBlock',
+    attrs: { language: 'mermaid' },
+    content: [{ type: 'text', text: source }]
+  }).run()
+  insertOpen.value = false
+}
 function closeToolbarMenus() { insertOpen.value = false; tablePickerOpen.value = false; textColorOpen.value = false; highlightOpen.value = false; headingOpen.value = false; knowledgeMenuOpen.value = false; moreOpen.value = false }
 function toggleInsertMenu() { closeToolbarMenus(); insertOpen.value = !insertOpen.value }
 function selectTableCell(row, col) { tableRows.value = row; tableCols.value = col }
@@ -1054,6 +1104,8 @@ const title = computed({
           <div class="insert-submenu-anchor"><button class="insert-menu-item" @click.stop="tablePickerOpen = !tablePickerOpen"><span class="insert-menu-icon">▦</span><span>表格</span><span class="insert-menu-arrow">›</span></button><div v-if="tablePickerOpen" class="table-picker-menu" @click.stop><div class="table-picker-label">{{ tableRows }} × {{ tableCols }}</div><div v-for="row in 10" :key="`table-row-${row}`" class="table-picker-row"><button v-for="col in 10" :key="`table-cell-${row}-${col}`" class="table-picker-cell" :class="{ active: row <= tableRows && col <= tableCols }" @mouseenter="selectTableCell(row, col)" @click="insertTable(row, col)"></button></div></div></div>
           <button class="insert-menu-item" @click="openImageDialog"><span class="insert-menu-icon">▧</span><span>图片</span></button>
           <button class="insert-menu-item" @click="insertCodeBlock"><Code2 :size="15" /><span>代码块</span></button>
+          <button class="insert-menu-item insert-mermaid-flowchart" @click="insertMermaidDiagram('flowchart')"><Workflow :size="15" /><span>流程图</span></button>
+          <button class="insert-menu-item insert-mermaid-swimlane" @click="insertMermaidDiagram('swimlane')"><Columns2 :size="15" /><span>泳道图</span></button>
           <button class="insert-menu-item" @click="editor?.chain().focus().setHorizontalRule().run(); insertOpen = false"><span class="insert-rule-icon">—</span><span>分隔线</span></button>
           <button class="insert-menu-item" @click="editor?.chain().focus().toggleBlockquote().run(); insertOpen = false"><Quote :size="15" /><span>引用</span></button>
         </div></span><i></i>
@@ -1125,7 +1177,7 @@ const title = computed({
       </div>
       <div v-if="splitMode" class="split-divider" role="separator" :aria-orientation="splitVertical ? 'horizontal' : 'vertical'" aria-label="调整源码与预览比例" aria-valuemin="30" aria-valuemax="70" :aria-valuenow="Math.round(splitRatio)" @pointerdown="startSplitResize"><span></span></div>
       <div v-show="!codeMode || markdownPreview" key="editor-render" ref="previewScroller" class="editor-render-pane" :class="{ 'split-preview-pane': splitMode }" @scroll.passive="handlePreviewScroll">
-        <EditorContent :editor="editor" class="editor-content" :class="{ 'split-preview-content': splitMode, 'read-content': editorMode === 'read', 'has-pending-ai-change': aiChangePending }" @mousedown="confirmPendingAiChange" @click="handleEditorLink" @keydown.tab.prevent="acceptFim" @keydown.esc="dismissFim" />
+        <EditorContent :editor="editor" class="editor-content" :class="{ 'split-preview-content': splitMode, 'read-content': editorMode === 'read', 'has-pending-ai-change': aiChangePending }" @mousedown="confirmPendingAiChange" @click="handleEditorLink" @keydown.tab="handleEditorTab" @keydown.esc="dismissFim" />
       </div>
       <div v-if="markdownParseError" class="markdown-parse-error" role="alert">{{ markdownParseError }}</div>
       <div v-if="markdownPasteNotice" class="markdown-paste-notice" role="status">

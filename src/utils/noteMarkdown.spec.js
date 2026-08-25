@@ -56,6 +56,14 @@ describe('note Markdown safety and mode helpers', () => {
     expect(html).toContain('<td>&nbsp;</td>')
   })
 
+  it('keeps Mermaid as fenced source while rejecting persisted SVG markup', () => {
+    const html = markdownToEditorHtml('```mermaid\nflowchart LR\nA --> B\n```')
+
+    expect(html).toContain('class="language-mermaid"')
+    expect(html).toContain('flowchart LR')
+    expect(sanitizeEditorHtml(`${html}<svg onload="alert(1)"><script>alert(1)</script></svg>`)).not.toContain('<svg')
+  })
+
   it('lets actual rich clipboard HTML use the browser paste parser', () => {
     expect(isRichClipboardHtml('<p><strong>富文本</strong></p>')).toBe(true)
     expect(isRichClipboardHtml('<p>## Markdown 标题</p>')).toBe(false)

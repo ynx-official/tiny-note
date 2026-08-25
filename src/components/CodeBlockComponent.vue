@@ -1,8 +1,11 @@
 <template>
-  <node-view-wrapper class="code-block-component">
-    <div class="code-block-header">
-      <select v-model="selectedLanguage" class="language-select" aria-label="代码语言">
+  <node-view-wrapper class="code-block-component" :class="{ 'is-mermaid': isMermaid, 'is-source-visible': showSource }">
+    <div v-if="!isMermaid || showSource" class="code-block-header">
+      <select v-model="selectedLanguage" class="language-select" aria-label="代码语言" :disabled="!editable">
         <option value="">auto</option>
+        <option value="mermaid">Mermaid 图表</option>
+        <option value="mmd">Mermaid (mmd)</option>
+        <option v-if="hasMermaidMetadata" :value="selectedLanguage">Mermaid 图表（含参数）</option>
         <option value="javascript">JavaScript</option>
         <option value="typescript">TypeScript</option>
         <option value="python">Python</option>
@@ -27,42 +30,89 @@
         <option value="plaintext">Plain Text</option>
       </select>
       <div class="header-actions">
-        <button class="code-action-btn" :title="copied ? copyDoneLabel : copyLabel" @click="handleCopy">
+        <button v-if="isMermaid" class="code-action-btn diagram-source-toggle" :aria-label="showSource ? previewLabel : sourceLabel" :aria-pressed="showSource" :title="showSource ? previewLabel : sourceLabel" @click="showSource = !showSource">
+          <Eye v-if="showSource" :size="14" />
+          <Code2 v-else :size="14" />
+          <span>{{ showSource ? previewLabel : sourceLabel }}</span>
+        </button>
+        <button class="code-action-btn" :aria-label="copied ? copyDoneLabel : copyLabel" :title="copied ? copyDoneLabel : copyLabel" @click="handleCopy">
           <Check v-if="copied" :size="14" />
           <Copy v-else :size="14" />
         </button>
-        <button class="code-action-btn danger" :title="deleteLabel" @click="deleteNode"><Trash2 :size="14" /></button>
+        <button v-if="editable" class="code-action-btn danger" :aria-label="deleteLabel" :title="deleteLabel" @click="deleteNode"><Trash2 :size="14" /></button>
       </div>
     </div>
-    <div class="code-block-content">
+    <MermaidDiagram v-if="isMermaid && !showSource" :source="source" @show-source="showSource = true">
+      <template #actions>
+        <span class="mermaid-block-divider" aria-hidden="true"></span>
+        <button class="code-action-btn diagram-source-toggle" :aria-label="sourceLabel" :aria-pressed="showSource" :title="sourceLabel" @click="showSource = true">
+          <Code2 :size="14" />
+          <span>{{ sourceLabel }}</span>
+        </button>
+        <button class="code-action-btn" :aria-label="copied ? copyDoneLabel : copyLabel" :title="copied ? copyDoneLabel : copyLabel" @click="handleCopy">
+          <Check v-if="copied" :size="14" />
+          <Copy v-else :size="14" />
+        </button>
+        <button v-if="editable" class="code-action-btn danger" :aria-label="deleteLabel" :title="deleteLabel" @click="deleteNode"><Trash2 :size="14" /></button>
+      </template>
+    </MermaidDiagram>
+    <div v-show="!isMermaid || showSource" class="code-block-content">
       <div class="line-numbers" contenteditable="false" aria-hidden="true">
         <div v-for="n in lineCount" :key="n" class="line-number">{{ n }}</div>
       </div>
       <pre><node-view-content as="code" /></pre>
     </div>
+    <span class="code-copy-status" role="status" aria-live="polite">{{ copied ? copyDoneLabel : '' }}</span>
   </node-view-wrapper>
 </template>
 
 <script setup>
-import { computed, ref } from 'vue'
+import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { NodeViewContent, NodeViewWrapper } from '@tiptap/vue-3'
-import { Check, Copy, Trash2 } from 'lucide-vue-next'
+import { Check, Code2, Copy, Eye, Trash2 } from 'lucide-vue-next'
 import { useI18n } from 'vue-i18n'
+import MermaidDiagram from './MermaidDiagram.vue'
+import { consumeMermaidDiagramForEditing } from '../utils/mermaidEditorState'
 
-const props = defineProps({ node: Object, updateAttributes: Function, deleteNode: Function })
+const props = defineProps({ node: Object, editor: Object, updateAttributes: Function, deleteNode: Function })
 const { locale } = useI18n()
 const copied = ref(false)
+const source = computed(() => props.node.textContent || '')
+const normalizedLanguage = computed(() => String(props.node.attrs.language || '').trim().toLowerCase().split(/\s+/, 1)[0])
+const isMermaid = computed(() => ['mermaid', 'mmd'].includes(normalizedLanguage.value))
+const hasMermaidMetadata = computed(() => isMermaid.value && !['mermaid', 'mmd'].includes(String(props.node.attrs.language || '').trim().toLowerCase()))
+const editable = ref(props.editor?.isEditable !== false)
+const showSource = ref(isMermaid.value && (!source.value.trim() || consumeMermaidDiagramForEditing(props.editor, source.value)))
 const selectedLanguage = computed({
   get: () => props.node.attrs.language || '',
   set: value => props.updateAttributes({ language: value || null })
 })
-const lineCount = computed(() => Math.max(1, (props.node.textContent || '').split('\n').length))
-const copyLabel = computed(() => locale.value === 'en' ? 'Copy code' : '复制代码')
+const lineCount = computed(() => Math.max(1, source.value.split('\n').length))
+const copyLabel = computed(() => locale.value === 'en' ? (isMermaid.value ? 'Copy diagram source' : 'Copy code') : (isMermaid.value ? '复制图表源码' : '复制代码'))
 const copyDoneLabel = computed(() => locale.value === 'en' ? 'Copied' : '已复制')
 const deleteLabel = computed(() => locale.value === 'en' ? 'Delete code block' : '删除代码块')
+const sourceLabel = computed(() => locale.value === 'en' ? 'Source' : '源码')
+const previewLabel = computed(() => locale.value === 'en' ? 'Preview' : '预览')
+
+watch(isMermaid, active => {
+  showSource.value = active && !source.value.trim()
+})
+
+function syncEditable() {
+  editable.value = props.editor?.isEditable !== false
+}
+
+onMounted(() => {
+  props.editor?.on?.('update', syncEditable)
+  props.editor?.on?.('tinyNoteEditableChange', syncEditable)
+})
+onBeforeUnmount(() => {
+  props.editor?.off?.('update', syncEditable)
+  props.editor?.off?.('tinyNoteEditableChange', syncEditable)
+})
 
 async function handleCopy() {
-  const text = props.node.textContent || ''
+  const text = source.value
   try {
     await navigator.clipboard.writeText(text)
   } catch {
@@ -83,6 +133,7 @@ async function handleCopy() {
 <style>
 .code-block-component {
   position: relative;
+  container-type: inline-size;
   margin: .7em 0;
   overflow: hidden;
   border: 1px solid #d9d9d9;
@@ -100,6 +151,7 @@ async function handleCopy() {
 }
 
 .header-actions { display: flex; align-items: center; gap: 2px; }
+.mermaid-block-divider { align-self:center; width:1px; height:18px; margin:0 3px; background:var(--line,#dedbd6); }
 .code-action-btn {
   display: flex;
   align-items: center;
@@ -115,6 +167,8 @@ async function handleCopy() {
 }
 .code-action-btn:hover { background: #e0e0e0; color: #333; }
 .code-action-btn.danger:hover { background: #fee2e2; color: #ef4444; }
+.diagram-source-toggle { width:auto; padding:0 7px; gap:5px; color:var(--text-secondary,#6b6863); font-size:11px; }
+.code-copy-status { position:absolute!important; width:1px!important; height:1px!important; padding:0!important; margin:-1px!important; overflow:hidden!important; clip:rect(0,0,0,0)!important; white-space:nowrap!important; border:0!important; }
 
 .language-select {
   width: auto;
@@ -133,6 +187,7 @@ async function handleCopy() {
   cursor: pointer;
 }
 .language-select:focus { box-shadow: none; }
+.language-select:disabled { cursor:default; opacity:.65; }
 
 .code-block-content { display: flex; overflow: hidden; }
 .line-numbers {
@@ -178,6 +233,11 @@ async function handleCopy() {
 .code-block-component pre::-webkit-scrollbar-thumb { border-radius: 999px; background: rgba(0, 0, 0, .12); }
 .code-block-component pre::-webkit-scrollbar-thumb:hover { background: rgba(0, 0, 0, .24); }
 
+.code-block-component.is-mermaid { border-color:var(--line,#e5e3df); background:var(--bg-primary,#fff); }
+.code-block-component.is-mermaid .code-block-header { min-height:38px; border-bottom:1px solid var(--line,#e5e3df); background:var(--bg-secondary,#f6f5f4); }
+.code-block-component.is-mermaid .language-select { background-color:var(--bg-secondary,#f6f5f4); color:var(--text-secondary,#5d5b54); font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif; font-weight:600; }
+.code-block-component.is-mermaid.is-source-visible .code-block-content { background:var(--bg-secondary,#f6f5f4); }
+
 [data-theme='dark'] .code-block-component { border-color: #3f3f46; background: #242428; }
 [data-theme='dark'] .language-select { background-color: #242428; color: #c7c7cc; }
 [data-theme='dark'] .line-numbers { border-color: #3f3f46; }
@@ -188,4 +248,11 @@ async function handleCopy() {
 [data-theme='dark'] .code-block-component pre::-webkit-scrollbar-thumb:hover { background: rgba(255, 255, 255, .28); }
 [data-theme='dark'] .code-action-btn { color: #a8a29e; }
 [data-theme='dark'] .code-action-btn:hover { background: #333338; color: #fff; }
+[data-theme='dark'] .code-block-component.is-mermaid { border-color:var(--line,#3f3f46); background:var(--bg-primary,#1a1a1c); }
+[data-theme='dark'] .code-block-component.is-mermaid .code-block-header,[data-theme='dark'] .code-block-component.is-mermaid .language-select { background-color:var(--bg-secondary,#242428); }
+
+@container (max-width:420px) {
+  .diagram-source-toggle span { display:none; }
+  .diagram-source-toggle { width:28px; padding:0; }
+}
 </style>

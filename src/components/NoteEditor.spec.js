@@ -49,6 +49,10 @@ async function mountEditor(activeNote = note(), extraProps = {}) {
       ],
       stubs: {
         BubbleMenu: { template: '<div><slot /></div>' },
+        MermaidDiagram: {
+          props: ['source'],
+          template: '<div class="mermaid-diagram-test" :data-source="source"></div>'
+        },
         NoteAssistantSidebar: true,
         Transition: false
       }
@@ -631,6 +635,59 @@ describe('NoteEditor article modes', () => {
     const language = wrapper.get('.code-block-component .language-select')
     expect(language.element.value).toBe('')
     expect(language.find('option:checked').text()).toBe('auto')
+    wrapper.unmount()
+  })
+
+  it('renders pasted Mermaid flowcharts as diagrams without persisting generated SVG', async () => {
+    const active = note('note-mermaid')
+    const wrapper = await mountEditor(active)
+    const source = [
+      '```mermaid',
+      'swimlane-beta LR',
+      '  subgraph author [申请人]',
+      '    submit[提交申请]',
+      '  end',
+      '  subgraph reviewer [审批人]',
+      '    approve{是否批准}',
+      '  end',
+      '  submit --> approve',
+      '```'
+    ].join('\n')
+
+    await wrapper.get('.note-prose').trigger('paste', {
+      clipboardData: { getData: type => type === 'text/plain' ? source : '' }
+    })
+    await flushPromises()
+
+    expect(wrapper.get('.mermaid-diagram-test').attributes('data-source')).toContain('swimlane-beta LR')
+    expect(active.contentMarkdown).toContain('```mermaid')
+    expect(active.contentMarkdown).toContain('subgraph reviewer')
+    expect(active.contentHtml).toContain('language-mermaid')
+    expect(active.contentHtml).not.toContain('<svg')
+    wrapper.unmount()
+  })
+
+  it('offers accessible flowchart and swimlane starters from the insert menu', async () => {
+    const active = note('note-insert-diagram')
+    const wrapper = await mountEditor(active)
+
+    await wrapper.get('.toolbar-menu-anchor > button[title="插入"]').trigger('click')
+    expect(wrapper.get('.insert-mermaid-flowchart').text()).toContain('流程图')
+    expect(wrapper.get('.insert-mermaid-swimlane').text()).toContain('泳道图')
+
+    await wrapper.get('.insert-mermaid-swimlane').trigger('click')
+    await flushPromises()
+
+    expect(wrapper.get('.code-block-component').classes()).toContain('is-source-visible')
+    expect(wrapper.get('.code-block-content').text()).toContain('swimlane-beta LR')
+    const tabEvent = new window.KeyboardEvent('keydown', { key: 'Tab', bubbles: true, cancelable: true })
+    wrapper.get('.language-select').element.dispatchEvent(tabEvent)
+    expect(tabEvent.defaultPrevented).toBe(false)
+    expect(active.contentMarkdown).toContain('accTitle: 示例审批泳道')
+    expect(active.contentMarkdown).toContain('```mermaid')
+
+    await wrapper.get('.diagram-source-toggle').trigger('click')
+    expect(wrapper.get('.mermaid-diagram-test').attributes('data-source')).toContain('swimlane-beta LR')
     wrapper.unmount()
   })
 

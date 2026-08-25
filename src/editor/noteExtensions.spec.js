@@ -71,6 +71,28 @@ describe('Tiny Note Markdown conversion', () => {
     expect(roundTrip).toMatch(/\| Tiny Note\s+\| 可用\s+\|/)
   })
 
+  it('keeps Mermaid flowchart and native swimlane source intact through the editor', () => {
+    const source = [
+      '```mermaid',
+      'swimlane-beta LR',
+      '  accTitle: 报销审批泳道',
+      '  subgraph employee [员工]',
+      '    submit[提交报销]',
+      '  end',
+      '  subgraph manager [主管]',
+      '    review{是否批准}',
+      '  end',
+      '  submit --> review',
+      '```'
+    ].join('\n')
+    const editor = createEditor()
+
+    expect(editor.commands.setContent(source, { contentType: 'markdown', emitUpdate: false })).toBe(true)
+    expect(editor.getHTML()).toContain('language-mermaid')
+    expect(editor.getHTML()).toContain('swimlane-beta LR')
+    expect(editor.getMarkdown().trimEnd()).toBe(source)
+  })
+
   it('preserves rich-only formatting as sanitized inline HTML', () => {
     const editor = createEditor('<p style="text-align: center"><span style="color: #dc2626">红色</span><mark data-color="#bae6fd" style="background-color: #bae6fd">高亮</mark>H<sub>2</sub>O x<sup>2</sup></p>')
 
