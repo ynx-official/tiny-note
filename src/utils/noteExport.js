@@ -51,7 +51,10 @@ body {
 .tiny-note-export-body h4,
 .tiny-note-export-body h5,
 .tiny-note-export-body h6 { margin: 1.1em 0 0.4em; font-size: 17px; }
-.tiny-note-export-body p { margin: 0.62em 0; }
+.tiny-note-export-body p {
+  margin: 0.62em 0;
+  break-inside: avoid-page;
+}
 .tiny-note-export-body ul,
 .tiny-note-export-body ol { margin: 0.65em 0; padding-left: 1.7em; }
 .tiny-note-export-body li { margin: 0.22em 0; }
@@ -261,7 +264,10 @@ export async function exportNotePdf(note, {
       margin: [18, 18, 18, 18],
       filename,
       enableLinks: true,
-      pagebreak: { mode: ['css', 'legacy'], avoid: ['tr', 'pre', 'img', 'blockquote', 'li'] },
+      pagebreak: {
+        mode: ['css', 'legacy'],
+        avoid: ['tr', 'pre', 'img', 'blockquote', 'li', 'p', 'h1', 'h2', 'h3', 'h4', 'h5', 'h6']
+      },
       image: { type: 'jpeg', quality: 0.98 },
       html2canvas: {
         scale: 2,

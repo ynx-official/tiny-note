@@ -67,7 +67,8 @@ describe('note export documents', () => {
 
     expect(set).toHaveBeenCalledWith(expect.objectContaining({
       filename: '方案 & 复盘.pdf',
-      jsPDF: expect.objectContaining({ format: 'a4', orientation: 'portrait' })
+      jsPDF: expect.objectContaining({ format: 'a4', orientation: 'portrait' }),
+      pagebreak: expect.objectContaining({ avoid: expect.arrayContaining(['p', 'h2', 'pre', 'tr']) })
     }))
     expect(from).toHaveBeenCalledWith(expect.any(HTMLElement))
     expect(outputPdf).toHaveBeenCalledWith('blob')

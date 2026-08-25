@@ -1,0 +1,61 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <title>Tiny Note PDF export verification</title>
+</head>
+<body>
+  <p id="status">正在生成验证 PDF…</p>
+  <script type="module">
+    import { exportNotePdf } from '../../src/utils/noteExport.js'
+
+    const repeatedSections = Array.from({ length: 18 }, (_, index) => `
+      <h2>第 ${index + 1} 节：多页中文排版</h2>
+      <p>这是用于检查 A4 分页、中文字体和正文行距的段落。Tiny Note 应当保持清晰的信息层级，并避免文字被页面边缘裁切。Emoji 测试：🚀 💡 ✅。</p>
+      <p><strong>重点内容：</strong>导出前会同步最新草稿；HTML、PDF 和打印共用经过清洗的语义正文。</p>
+    `).join('')
+
+    const note = {
+      title: 'Tiny Note 导出验证：中文、Emoji 🚀 与多页',
+      contentHtml: `
+        <p>这份文件由 Tiny Note 的真实 <code>exportNotePdf()</code> 链路生成。</p>
+        <blockquote><p>打印、PDF 与 HTML 是三个独立入口；PDF 会直接生成文件。</p></blockquote>
+        <h2>任务列表</h2>
+        <ul data-type="taskList">
+          <li data-checked="true"><label><input type="checkbox" checked disabled></label><div><p>同步最新 Markdown 草稿</p></div></li>
+          <li data-checked="false"><label><input type="checkbox" disabled></label><div><p>检查分页和溢出</p></div></li>
+        </ul>
+        <h2>表格</h2>
+        <table><thead><tr><th><p>格式</p></th><th><p>用途</p></th><th><p>结果</p></th></tr></thead><tbody><tr><td><p>打印</p></td><td><p>系统打印机</p></td><td><p>只包含文章</p></td></tr><tr><td><p>PDF</p></td><td><p>直接归档</p></td><td><p>A4 多页</p></td></tr><tr><td><p>HTML</p></td><td><p>开放格式</p></td><td><p>UTF-8 + 内嵌样式</p></td></tr></tbody></table>
+        <h2>代码与 Mermaid 源码</h2>
+        <pre><code class="language-javascript">const formats = ['print', 'pdf', 'html']\nconsole.log(formats.join(', '))</code></pre>
+        <pre><code class="language-mermaid">flowchart LR\n  Draft[最新草稿] --&gt; Safe[安全快照]\n  Safe --&gt; PDF[PDF 文件]</code></pre>
+        <h2>图片与链接</h2>
+        <p><a href="https://example.com">安全 HTTPS 链接</a></p>
+        <img src="/src-tauri/icons/icon.png" alt="Tiny Note 图标">
+        ${repeatedSections}
+        <script>alert('不应进入导出')<\/script>
+      `
+    }
+
+    try {
+      await exportNotePdf(note, {
+        download: (blob, filename) => {
+          const reader = new FileReader()
+          reader.addEventListener('loadend', () => {
+            const output = document.createElement('textarea')
+            output.id = 'pdf-output'
+            output.textContent = String(reader.result).split(',')[1] || ''
+            document.body.replaceChildren(output)
+            document.title = `READY:${filename}:${blob.size}`
+          }, { once: true })
+          reader.readAsDataURL(blob)
+        }
+      })
+    } catch (error) {
+      document.body.textContent = `ERROR:${error?.stack || error}`
+      document.title = 'ERROR'
+    }
+  </script>
+</body>
+</html>
