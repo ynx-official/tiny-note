@@ -233,6 +233,16 @@ function previewOptimizedPrompt(value) {
   }[mode.value]
   return `${value.trim()}。${modeAdvice}。避免文字、水印、畸变和多余元素。`
 }
+function imageOptimizationInstruction(value) {
+  return `你是专业的图片生成提示词编辑器。当前模式是“${currentMode.value.label}”。
+
+下面是用户的原始描述，必须完整保留其中的主体、动作、数量、位置、颜色、文字、风格、构图要求、限制条件和否定要求；只能补充有助于生成图片的细节，不得删除、替换或改变任何用户要求。若原描述含糊，保守地补足，不要自行改主题。
+--- 原始描述开始 ---
+${value}
+--- 原始描述结束 ---
+
+请把它优化成清晰、具体、可直接用于图片模型的中文提示词。补足主体、环境、构图、光线、镜头、材质和风格；编辑模式需明确保留项与修改项；局部重绘需强调只改变选中区域。不要解释，不要使用 Markdown，只返回优化后的提示词。`
+}
 async function optimizePrompt() {
   const value = prompt.value.trim()
   if (!value || optimizing.value) return
@@ -258,7 +268,7 @@ async function optimizePrompt() {
         if (event.type === 'error') rejectOnce(new Error(event.message || '提示词优化失败'))
         if (event.type === 'cancelled') rejectOnce(new Error('提示词优化已取消'))
       }
-      invoke('note_ai_stream', { request: { requestId, action: 'custom', mode: 'chat', text: value, instruction: `你是专业的图片生成提示词编辑器。当前模式是“${currentMode.value.label}”。请在不改变用户核心意图的前提下，把原描述优化成清晰、具体、可直接用于图片模型的中文提示词。补足主体、环境、构图、光线、镜头、材质和风格；编辑模式需明确保留项与修改项；局部重绘需强调只改变选中区域。不要解释，不要使用 Markdown，只返回优化后的提示词。`, references: [], autoRetrieve: false, modelProfileId: null, thinkingMode: 'fast', source: 'image_prompt' }, onEvent: channel }).catch(rejectOnce)
+      invoke('note_ai_stream', { request: { requestId, action: 'custom', mode: 'chat', text: value, instruction: imageOptimizationInstruction(value), references: [], autoRetrieve: false, modelProfileId: null, thinkingMode: 'fast', source: 'image_prompt' }, onEvent: channel }).catch(rejectOnce)
     })
     const next = compactOptimizedPrompt(optimized)
     if (!next) throw new Error('模型没有返回可用的优化结果')

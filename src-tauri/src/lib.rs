@@ -4642,7 +4642,12 @@ pub mod commands {
         cancel: Arc<AtomicBool>,
     ) -> Result<(), String> {
         let id = request.request_id.clone();
-        let text = if request.action == "custom" {
+        let text = if request.source.as_deref() == Some("image_prompt") {
+            // Image prompt optimization keeps the original text as the source of truth.
+            // The demo provider must not return only the meta-instruction, otherwise the
+            // user's actual prompt appears to have been discarded.
+            request.text.clone()
+        } else if request.action == "custom" {
             request.instruction.clone().unwrap_or_default()
         } else {
             format!("（{}）\n{}", request.action, request.text)
