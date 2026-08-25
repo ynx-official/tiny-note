@@ -22,7 +22,7 @@ import CodeBlockComponent from './CodeBlockComponent.vue'
 import MarkdownSourceEditor from './MarkdownSourceEditor.vue'
 import MarkdownMessage from './MarkdownMessage.vue'
 import NoteAssistantSidebar from './NoteAssistantSidebar.vue'
-import { BookOpen, Bold, CalendarDays, Check, ChevronDown, CircleHelp, Columns2, Copy, Eye, FileCode2, FileText, Italic, Languages, Maximize2, MessageSquare, Pin, RotateCcw, Send, ShieldCheck, Table2, ThumbsDown, ThumbsUp, Underline as UnderlineIcon, Strikethrough, List, ListOrdered, ListChecks, Quote, Code2, Undo2, Redo2, Eraser, Link2, Highlighter, PenLine, AlignLeft, AlignCenter, AlignRight, Plus, PlusCircle, MoreHorizontal, Layers, Sparkles, Trash2, Download, Printer, Workflow, X, Zap } from 'lucide-vue-next'
+import { BookOpen, Bold, CalendarDays, Check, ChevronDown, CircleHelp, Columns2, Copy, Eye, FileCode2, FileText, Italic, Languages, LoaderCircle, Maximize2, MessageSquare, Pin, RotateCcw, Send, ShieldCheck, Table2, ThumbsDown, ThumbsUp, Underline as UnderlineIcon, Strikethrough, List, ListOrdered, ListChecks, Quote, Code2, Undo2, Redo2, Eraser, Link2, Highlighter, PenLine, AlignLeft, AlignCenter, AlignRight, Plus, PlusCircle, MoreHorizontal, Layers, Sparkles, Trash2, Download, Printer, Workflow, X, Zap } from 'lucide-vue-next'
 import { useNotesStore } from '../stores/notes'
 import { useLibraryStore } from '../stores/library'
 import { useAppStore } from '../stores/app'
@@ -38,7 +38,7 @@ import { requestConfirmation, showToast } from '../services/appFeedback'
 
 const lowlight = createLowlight()
 lowlight.register('javascript', javascript); lowlight.register('typescript', typescript); lowlight.register('python', python); lowlight.register('json', json); lowlight.register('html', xml); lowlight.register('xml', xml); lowlight.register('css', css); lowlight.register('bash', bash); lowlight.register('sql', sql); lowlight.register('markdown', markdown); lowlight.register('yaml', yaml); lowlight.register('rust', rust)
-const props = defineProps({ note: Object, tocVisible: { type: Boolean, default: false }, proposalId: { type: String, default: '' } }); const emit = defineEmits(['deleted', 'toggle-toc', 'proposal-reviewed']); const store = useNotesStore(); const library = useLibraryStore(); const appStore = useAppStore(); const tasksStore = useTasksStore(); const { t } = useI18n(); const aiBusy = ref(false); const aiText = ref(''); const aiRequestId = ref(''); const aiAction = ref('summarize'); const aiResultAction = ref(''); const aiProposal = ref(null); const aiSources = ref([]); const aiConsentOpen = ref(false); const assistantOpen = ref(false); const assistantTriggerVisible = ref(true); const assistantBusy = ref(false); const assistantRequestId = ref(''); const assistantStreamingText = ref(''); const assistantMessages = ref([]); const assistantSelection = ref(null); const assistantResponseSources = ref([]); const assistantResponseProposal = ref(null); const aiPanelOpen = ref(false); const aiPanelSelectionText = ref(''); const commandMenuOpen = ref(false); const aiPrompt = ref(''); const aiInputRef = ref(null); const commandMenuDirection = ref('down'); const moreOpen = ref(false); const revisionsOpen = ref(false); const revisions = ref([]); const revisionsBusy = ref(false); const insertOpen = ref(false); const tablePickerOpen = ref(false); const textColorOpen = ref(false); const highlightOpen = ref(false); const headingOpen = ref(false); const knowledgeMenuOpen = ref(false); const imageDialogOpen = ref(false); const imageUrl = ref(''); const imageAlt = ref(''); const imageInput = ref(null); const imageFileInput = ref(null); const tableRows = ref(0); const tableCols = ref(0); const fimEnabled = computed(() => appStore.settings.fimEnabled === true); const fimSuggestion = ref(''); const editorStateTick = ref(0); let fimTimer; let assistantTriggerTimer; let savedSelection = null; let pendingAiRequest = null; let pendingAiChange = null
+const props = defineProps({ note: Object, tocVisible: { type: Boolean, default: false }, proposalId: { type: String, default: '' } }); const emit = defineEmits(['deleted', 'toggle-toc', 'proposal-reviewed']); const store = useNotesStore(); const library = useLibraryStore(); const appStore = useAppStore(); const tasksStore = useTasksStore(); const { t, locale } = useI18n(); const aiBusy = ref(false); const aiText = ref(''); const aiRequestId = ref(''); const aiAction = ref('summarize'); const aiResultAction = ref(''); const aiProposal = ref(null); const aiSources = ref([]); const aiConsentOpen = ref(false); const assistantOpen = ref(false); const assistantTriggerVisible = ref(true); const assistantBusy = ref(false); const assistantRequestId = ref(''); const assistantStreamingText = ref(''); const assistantMessages = ref([]); const assistantSelection = ref(null); const assistantResponseSources = ref([]); const assistantResponseProposal = ref(null); const aiPanelOpen = ref(false); const aiPanelSelectionText = ref(''); const commandMenuOpen = ref(false); const aiPrompt = ref(''); const aiInputRef = ref(null); const commandMenuDirection = ref('down'); const moreOpen = ref(false); const moreTriggerRef = ref(null); const moreMenuRef = ref(null); const revisionsOpen = ref(false); const revisions = ref([]); const revisionsBusy = ref(false); const insertOpen = ref(false); const tablePickerOpen = ref(false); const textColorOpen = ref(false); const highlightOpen = ref(false); const headingOpen = ref(false); const knowledgeMenuOpen = ref(false); const imageDialogOpen = ref(false); const imageUrl = ref(''); const imageAlt = ref(''); const imageInput = ref(null); const imageFileInput = ref(null); const tableRows = ref(0); const tableCols = ref(0); const fimEnabled = computed(() => appStore.settings.fimEnabled === true); const fimSuggestion = ref(''); const editorStateTick = ref(0); let fimTimer; let assistantTriggerTimer; let savedSelection = null; let pendingAiRequest = null; let pendingAiChange = null
 const modeIcons = { rich: PenLine, markdown: FileCode2, read: Eye }
 const noteLinks = ref([])
 const tagDraft = ref('')
@@ -60,6 +60,7 @@ const previewScroller = ref(null)
 const pendingSourceDrafts = new Map()
 const persistedSignatures = new Map()
 const exportingFormat = ref('')
+const exportStatusLabel = computed(() => ({ html: t('exportingHtml'), pdf: t('exportingPdf'), print: t('preparingPrint') })[exportingFormat.value] || '')
 let applyingEditorContent = false
 let markdownParseTimer
 let markdownPasteTimer
@@ -333,8 +334,37 @@ function handleModeMenuKeydown(event) {
   else if (event.key === 'Escape') { event.preventDefault(); modeMenuOpen.value = false }
 }
 
+function focusMoreItem(position = 0) {
+  const items = [...(moreMenuRef.value?.querySelectorAll('[role="menuitem"]:not(:disabled)') || [])]
+  items[Math.max(0, Math.min(position, items.length - 1))]?.focus()
+}
+
+function toggleMoreMenu() {
+  const shouldOpen = !moreOpen.value
+  closeToolbarMenus()
+  modeMenuOpen.value = false
+  moreOpen.value = shouldOpen
+  if (shouldOpen) nextTick(() => focusMoreItem())
+}
+
+function handleMoreMenuKeydown(event) {
+  const items = [...(moreMenuRef.value?.querySelectorAll('[role="menuitem"]:not(:disabled)') || [])]
+  if (!items.length) return
+  const currentIndex = items.indexOf(document.activeElement)
+  if (event.key === 'ArrowDown') { event.preventDefault(); focusMoreItem((currentIndex + 1) % items.length) }
+  else if (event.key === 'ArrowUp') { event.preventDefault(); focusMoreItem((currentIndex - 1 + items.length) % items.length) }
+  else if (event.key === 'Home') { event.preventDefault(); focusMoreItem(0) }
+  else if (event.key === 'End') { event.preventDefault(); focusMoreItem(items.length - 1) }
+  else if (event.key === 'Escape') {
+    event.preventDefault()
+    moreOpen.value = false
+    nextTick(() => moreTriggerRef.value?.focus())
+  }
+}
+
 function handleDocumentPointerDown(event) {
   if (!event.target.closest('.mode-menu-anchor')) modeMenuOpen.value = false
+  if (!event.target.closest('.more-menu-anchor')) moreOpen.value = false
 }
 
 function updateSplitOrientation() {
@@ -664,29 +694,31 @@ async function stopAi() { if (!aiRequestId.value) return; await tasksStore.cance
 async function prepareExportSnapshot() {
   if (!props.note || !editor.value || !await flushLatestContent()) return null
   return {
-    title: String(props.note.title || '').trim() || '未命名笔记',
+    title: String(props.note.title || '').trim() || t('untitled'),
     contentHtml: sanitizeEditorHtml(prepareEditorContent(props.note))
   }
 }
 async function runArticleExport(format) {
   if (exportingFormat.value) return
   moreOpen.value = false
-  const snapshot = await prepareExportSnapshot()
-  if (!snapshot) return
   exportingFormat.value = format
   try {
+    const snapshot = await prepareExportSnapshot()
+    if (!snapshot) return
     if (format === 'html') {
-      downloadNoteHtml(snapshot)
-      showToast('HTML 已导出')
+      downloadNoteHtml(snapshot, { lang: locale.value })
+      showToast(t('htmlExported'))
     } else if (format === 'pdf') {
       await exportNotePdf(snapshot)
-      showToast('PDF 已导出')
+      showToast(t('pdfExported'))
     } else if (format === 'print') {
       await printNoteDocument(snapshot)
     }
   } catch (error) {
-    const label = format === 'pdf' ? 'PDF' : format === 'html' ? 'HTML' : '文章'
-    showToast(error?.message || `${label}${format === 'print' ? '打印' : '导出'}失败，请重试`, { tone: 'error' })
+    const key = error?.code === 'PDF_CANVAS_LIMIT'
+      ? 'pdfTooLong'
+      : format === 'pdf' ? 'pdfExportFailed' : format === 'html' ? 'htmlExportFailed' : 'printFailed'
+    showToast(t(key), { tone: 'error' })
   } finally {
     exportingFormat.value = ''
   }
@@ -1198,7 +1230,20 @@ const title = computed({
             </button>
           </div>
         </span>
-        <span class="toolbar-menu-anchor"><button title="更多" @click="knowledgeMenuOpen = false; moreOpen = !moreOpen"><MoreHorizontal :size="20" /></button><div v-if="moreOpen" class="toolbar-more-menu"><button @click="openRevisions"><RotateCcw :size="15" /> AI 版本历史</button><div class="toolbar-more-divider"></div><button :disabled="Boolean(exportingFormat)" @click="exportMarkdown"><FileText :size="15" /> 导出 Markdown</button><button :disabled="Boolean(exportingFormat)" @click="exportHtml"><FileCode2 :size="15" /> 导出 HTML</button><button :disabled="Boolean(exportingFormat)" :aria-busy="exportingFormat === 'pdf'" @click="exportPdf"><Download :size="15" /> {{ exportingFormat === 'pdf' ? '正在导出 PDF…' : '导出 PDF' }}</button><button :disabled="Boolean(exportingFormat)" @click="printNote"><Printer :size="15" /> 打印</button><div class="toolbar-more-divider"></div><button class="danger" @click="emit('deleted', note.id); moreOpen = false"><Trash2 :size="15" /> 删除笔记</button></div></span>
+        <span v-if="exportStatusLabel" class="toolbar-export-status" role="status" aria-live="polite"><LoaderCircle :size="14" class="is-spinning" /> {{ exportStatusLabel }}</span>
+        <span class="toolbar-menu-anchor more-menu-anchor">
+          <button ref="moreTriggerRef" type="button" :title="t('more')" aria-haspopup="menu" :aria-expanded="String(moreOpen)" aria-controls="note-more-menu" @click="toggleMoreMenu"><MoreHorizontal :size="20" /></button>
+          <div v-if="moreOpen" id="note-more-menu" ref="moreMenuRef" class="toolbar-more-menu" role="menu" :aria-label="t('moreActions')" @keydown="handleMoreMenuKeydown" @click.stop>
+            <button type="button" role="menuitem" @click="openRevisions"><RotateCcw :size="15" /> {{ t('aiVersionHistory') }}</button>
+            <div class="toolbar-more-divider" role="separator"></div>
+            <button type="button" role="menuitem" :disabled="Boolean(exportingFormat)" @click="exportMarkdown"><FileText :size="15" /> {{ t('exportMarkdown') }}</button>
+            <button type="button" role="menuitem" :disabled="Boolean(exportingFormat)" @click="exportHtml"><FileCode2 :size="15" /> {{ t('exportHtml') }}</button>
+            <button type="button" role="menuitem" :disabled="Boolean(exportingFormat)" @click="exportPdf"><Download :size="15" /> {{ t('exportPdf') }}</button>
+            <button type="button" role="menuitem" :disabled="Boolean(exportingFormat)" @click="printNote"><Printer :size="15" /> {{ t('printArticle') }}</button>
+            <div class="toolbar-more-divider" role="separator"></div>
+            <button type="button" role="menuitem" class="danger" @click="emit('deleted', note.id); moreOpen = false"><Trash2 :size="15" /> {{ t('deleteNote') }}</button>
+          </div>
+        </span>
         <button v-if="assistantTriggerVisible" class="ai-button" @click="toggleAssistant"><Layers :size="17" /> Tiny Note 助理</button>
       </div>
     </div>

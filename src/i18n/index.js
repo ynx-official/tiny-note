@@ -17,7 +17,13 @@ Object.assign(messages['zh-CN'], {
   clearUsageConfirm: '确定清空所有用量记录吗？', totalTokens: '总 Token',
   promptTokens: '输入 Token', completionTokens: '输出 Token', reasoningTokens: '思考 Token',
   requests: '请求次数', dailyTrend: '每日趋势', byModel: '按模型', bySource: '按来源',
-  usageEmpty: '还没有可统计的模型用量', usageHint: '统计数据来自 Tiny Note 发起的模型请求。'
+  usageEmpty: '还没有可统计的模型用量', usageHint: '统计数据来自 Tiny Note 发起的模型请求。',
+  more: '更多', moreActions: '更多操作', aiVersionHistory: 'AI 版本历史',
+  exportMarkdown: '导出 Markdown', exportHtml: '导出 HTML', exportPdf: '导出 PDF', printArticle: '打印', deleteNote: '删除笔记',
+  exportingHtml: '正在导出 HTML…', exportingPdf: '正在导出 PDF…', preparingPrint: '正在准备打印…',
+  htmlExported: 'HTML 已导出', pdfExported: 'PDF 已导出',
+  htmlExportFailed: 'HTML 导出失败，请重试', pdfExportFailed: 'PDF 导出失败，请重试', printFailed: '打印失败，请重试',
+  pdfTooLong: '文章过长，无法安全生成 PDF。请使用“打印”保存为 PDF，或拆分文章后重试。'
 })
 
 Object.assign(messages.en, {
@@ -30,5 +36,11 @@ Object.assign(messages.en, {
   clearUsageConfirm: 'Clear all usage records?', totalTokens: 'Total tokens',
   promptTokens: 'Prompt tokens', completionTokens: 'Completion tokens', reasoningTokens: 'Reasoning tokens',
   requests: 'Requests', dailyTrend: 'Daily trend', byModel: 'By model', bySource: 'By source',
-  usageEmpty: 'No model usage recorded yet', usageHint: 'Statistics are collected from model requests made by Tiny Note.'
+  usageEmpty: 'No model usage recorded yet', usageHint: 'Statistics are collected from model requests made by Tiny Note.',
+  more: 'More', moreActions: 'More actions', aiVersionHistory: 'AI version history',
+  exportMarkdown: 'Export Markdown', exportHtml: 'Export HTML', exportPdf: 'Export PDF', printArticle: 'Print', deleteNote: 'Delete note',
+  exportingHtml: 'Exporting HTML…', exportingPdf: 'Exporting PDF…', preparingPrint: 'Preparing to print…',
+  htmlExported: 'HTML exported', pdfExported: 'PDF exported',
+  htmlExportFailed: 'Could not export HTML. Try again.', pdfExportFailed: 'Could not export PDF. Try again.', printFailed: 'Could not print. Try again.',
+  pdfTooLong: 'This article is too long to export safely. Use Print to save as PDF, or split the article and try again.'
 })

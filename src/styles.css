@@ -451,6 +451,7 @@ body, button, input, select, textarea { font-family: -apple-system, BlinkMacSyst
 .friday-editor-toolbar .toolbar-more-menu button:hover { background:var(--bg-hover); }
 .friday-editor-toolbar .toolbar-more-menu button.danger { color:#c2413b; }
 .friday-editor-toolbar .toolbar-more-divider { height:1px; margin:4px 6px; background:var(--line); }
+.friday-editor-toolbar .toolbar-export-status { display:inline-flex; align-items:center; gap:5px; max-width:140px; margin:0 4px; color:var(--text-secondary); font-size:11px; line-height:1; white-space:nowrap; }
 .friday-editor-toolbar .knowledge-menu-anchor { position:relative; }
 .friday-editor-toolbar .toolbar-knowledge-menu { position:absolute; z-index:40; top:36px; right:0; width:188px; max-height:320px; overflow:auto; padding:5px; border:1px solid var(--border-color); border-radius:8px; background:var(--bg-primary); box-shadow:0 10px 26px rgba(0,0,0,.14); animation:note-context-menu-in .12s ease-out; }
 .friday-editor-toolbar .toolbar-knowledge-menu button { width:100%; min-width:0; min-height:30px; height:30px; justify-content:flex-start; gap:8px; padding:0 9px; border-radius:5px; color:var(--text-primary); font-size:12px; font-weight:400; }

@@ -88,13 +88,39 @@ describe('NoteEditor article modes', () => {
   it('offers separate print, PDF, and HTML actions instead of a combined print/PDF command', async () => {
     const wrapper = await mountEditor()
 
-    await wrapper.get('button[title="更多"]').trigger('click')
+    const trigger = wrapper.get('button[title="更多"]')
+    expect(trigger.attributes('aria-expanded')).toBe('false')
+    await trigger.trigger('click')
+    expect(trigger.attributes('aria-expanded')).toBe('true')
+    expect(wrapper.get('.toolbar-more-menu').attributes('role')).toBe('menu')
     const labels = wrapper.findAll('.toolbar-more-menu button').map(button => button.text().trim())
 
     expect(labels).toContain('打印')
     expect(labels).toContain('导出 PDF')
     expect(labels).toContain('导出 HTML')
     expect(labels).not.toContain('打印 / 保存 PDF')
+    await wrapper.get('.toolbar-more-menu').trigger('keydown', { key: 'Escape' })
+    expect(wrapper.find('.toolbar-more-menu').exists()).toBe(false)
+    expect(window.document.activeElement).toBe(trigger.element)
+    wrapper.unmount()
+  })
+
+  it('keeps export progress visible after the more menu closes', async () => {
+    let finishPdf
+    noteExportMocks.exportNotePdf.mockImplementationOnce(() => new Promise(resolve => { finishPdf = resolve }))
+    const wrapper = await mountEditor()
+
+    await wrapper.get('button[title="更多"]').trigger('click')
+    await wrapper.findAll('.toolbar-more-menu button').find(button => button.text().includes('导出 PDF')).trigger('click')
+    await flushPromises()
+
+    expect(wrapper.find('.toolbar-more-menu').exists()).toBe(false)
+    expect(wrapper.get('.toolbar-export-status').text()).toContain('正在导出 PDF')
+    expect(wrapper.get('.toolbar-export-status').attributes('role')).toBe('status')
+
+    finishPdf()
+    await flushPromises()
+    expect(wrapper.find('.toolbar-export-status').exists()).toBe(false)
     wrapper.unmount()
   })
 
@@ -117,10 +143,13 @@ describe('NoteEditor article modes', () => {
     await wrapper.get('button[title="更多"]').trigger('click')
     await wrapper.findAll('.toolbar-more-menu button').find(button => button.text().includes('导出 HTML')).trigger('click')
     await flushPromises()
-    expect(noteExportMocks.downloadNoteHtml).toHaveBeenCalledWith(expect.objectContaining({
-      title: '四种模式',
-      contentHtml: expect.stringContaining('最新草稿')
-    }))
+    expect(noteExportMocks.downloadNoteHtml).toHaveBeenCalledWith(
+      expect.objectContaining({
+        title: '四种模式',
+        contentHtml: expect.stringContaining('最新草稿')
+      }),
+      { lang: 'zh-CN' }
+    )
 
     await wrapper.get('button[title="更多"]').trigger('click')
     await wrapper.findAll('.toolbar-more-menu button').find(button => button.text().includes('导出 PDF')).trigger('click')

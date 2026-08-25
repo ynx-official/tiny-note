@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import {
   buildNoteExportHtml,
+  calculatePdfRenderScale,
   createSafeExportFilename,
   downloadBlob,
   exportNotePdf,
@@ -13,8 +14,8 @@ const unsafeNote = {
 }
 
 afterEach(() => {
-  document.body.innerHTML = ''
-  document.body.className = ''
+  window.document.body.innerHTML = ''
+  window.document.body.className = ''
   vi.restoreAllMocks()
 })
 
@@ -38,63 +39,147 @@ describe('note export documents', () => {
     expect(createSafeExportFilename('  CON.  ', '.html')).toBe('note.html')
     expect(createSafeExportFilename('灵感 💡', 'html')).toBe('灵感 💡.html')
     expect(createSafeExportFilename('', 'pdf')).toBe('note.pdf')
+    const longFilename = createSafeExportFilename('🚀'.repeat(100), 'html')
+    expect(new globalThis.TextEncoder().encode(longFilename).length).toBeLessThanOrEqual(255)
+  })
+
+  it('keeps the PDF canvas within browser limits instead of producing a blank long document', () => {
+    expect(calculatePdfRenderScale(660, 16_000)).toBe(1.5)
+    expect(() => calculatePdfRenderScale(660, 50_000)).toThrow(/文章过长/)
   })
 
   it('downloads a Blob and always revokes its temporary URL', () => {
-    const click = vi.spyOn(HTMLAnchorElement.prototype, 'click').mockImplementation(() => {})
+    const click = vi.spyOn(window.HTMLAnchorElement.prototype, 'click').mockImplementation(() => {})
     const urlApi = { createObjectURL: vi.fn(() => 'blob:tiny-note-export'), revokeObjectURL: vi.fn() }
     const schedule = vi.fn(callback => callback())
-    const blob = new Blob(['hello'], { type: 'text/plain' })
+    const blob = new window.Blob(['hello'], { type: 'text/plain' })
 
-    downloadBlob(blob, 'note.txt', { documentRef: document, urlApi, schedule })
+    downloadBlob(blob, 'note.txt', { documentRef: window.document, urlApi, schedule })
 
     expect(urlApi.createObjectURL).toHaveBeenCalledWith(blob)
     expect(click).toHaveBeenCalledOnce()
     expect(schedule).toHaveBeenCalledWith(expect.any(Function), 0)
     expect(urlApi.revokeObjectURL).toHaveBeenCalledWith('blob:tiny-note-export')
-    expect(document.querySelector('a[download]')).toBeNull()
+    expect(window.document.querySelector('a[download]')).toBeNull()
   })
 
   it('exports a real PDF Blob through a dedicated renderer and removes its render stage', async () => {
-    const pdfBlob = new Blob(['%PDF-1.7\n'], { type: 'application/pdf' })
+    const pdfBlob = new window.Blob(['%PDF-1.7\n'], { type: 'application/pdf' })
     const outputPdf = vi.fn().mockResolvedValue(pdfBlob)
     const from = vi.fn(() => ({ outputPdf }))
     const set = vi.fn(() => ({ from }))
     const pdfFactory = vi.fn(async () => () => ({ set }))
     const download = vi.fn()
 
-    await exportNotePdf(unsafeNote, { pdfFactory, download, documentRef: document })
+    await exportNotePdf(unsafeNote, { pdfFactory, download, documentRef: window.document })
 
     expect(set).toHaveBeenCalledWith(expect.objectContaining({
       filename: '方案 & 复盘.pdf',
       jsPDF: expect.objectContaining({ format: 'a4', orientation: 'portrait' }),
       pagebreak: expect.objectContaining({ avoid: expect.arrayContaining(['p', 'h2', 'pre', 'tr']) })
     }))
-    expect(from).toHaveBeenCalledWith(expect.any(HTMLElement))
+    expect(from).toHaveBeenCalledWith(expect.any(window.HTMLElement))
     const article = from.mock.calls[0][0]
     const headingGroup = article.querySelector('.tiny-note-pdf-heading-group')
     expect(headingGroup?.firstElementChild?.tagName).toBe('H2')
     expect(headingGroup?.lastElementChild?.tagName).toBe('P')
+    const stageCss = article.parentElement.querySelector('style')?.textContent || ''
+    expect(stageCss).not.toContain(':root')
+    expect(stageCss).not.toContain('html, body')
     expect(outputPdf).toHaveBeenCalledWith('blob')
     expect(download).toHaveBeenCalledWith(pdfBlob, '方案 & 复盘.pdf')
-    expect(document.querySelector('.tiny-note-pdf-stage')).toBeNull()
+    expect(window.document.querySelector('.tiny-note-pdf-stage')).toBeNull()
   })
 
   it('prints only the standalone article snapshot and cleans it after printing', async () => {
     const print = vi.fn()
     const windowRef = { print, addEventListener: window.addEventListener.bind(window), setTimeout: window.setTimeout.bind(window) }
 
-    await printNote(unsafeNote, { documentRef: document, windowRef })
+    await printNote(unsafeNote, { documentRef: window.document, windowRef })
 
     expect(print).toHaveBeenCalledOnce()
-    expect(document.body.classList.contains('tiny-note-app-printing')).toBe(true)
-    const printRoot = document.querySelector('.tiny-note-print-root')
+    expect(window.document.body.classList.contains('tiny-note-app-printing')).toBe(true)
+    const printRoot = window.document.querySelector('.tiny-note-print-root')
     expect(printRoot?.textContent).toContain('方案 & <复盘>')
     expect(printRoot?.textContent).toContain('安全正文')
     expect(printRoot?.innerHTML).not.toMatch(/<script|onclick=|javascript:/i)
+    expect(printRoot?.querySelector('style')?.textContent).toMatch(/@media print[\s\S]*min-width:\s*0[\s\S]*overflow:\s*visible/)
 
-    window.dispatchEvent(new Event('afterprint'))
-    expect(document.querySelector('.tiny-note-print-root')).toBeNull()
-    expect(document.body.classList.contains('tiny-note-app-printing')).toBe(false)
+    window.dispatchEvent(new window.Event('afterprint'))
+    expect(window.document.querySelector('.tiny-note-print-root')).toBeNull()
+    expect(window.document.body.classList.contains('tiny-note-app-printing')).toBe(false)
+  })
+
+  it('shows a visible placeholder when a remote image cannot be embedded with CORS', async () => {
+    const outputPdf = vi.fn().mockResolvedValue(new window.Blob(['%PDF'], { type: 'application/pdf' }))
+    const from = vi.fn(() => ({ outputPdf }))
+    const set = vi.fn(() => ({ from }))
+    const pdfFactory = vi.fn(async () => () => ({ set }))
+
+    await exportNotePdf({
+      title: '远程图片',
+      contentHtml: '<p>封面</p><img src="https://cdn.example.com/cover.png" alt="文章封面">'
+    }, {
+      pdfFactory,
+      download: vi.fn(),
+      documentRef: window.document,
+      embedRemoteImage: vi.fn().mockRejectedValue(new Error('CORS blocked'))
+    })
+
+    const article = from.mock.calls[0][0]
+    expect(article.querySelector('img')).toBeNull()
+    expect(article.querySelector('.tiny-note-export-image-fallback')?.textContent).toContain('文章封面（cdn.example.com）')
+  })
+
+  it('embeds remote images through the CSP-approved image path without cross-origin fetch', async () => {
+    const outputPdf = vi.fn().mockResolvedValue(new window.Blob(['%PDF'], { type: 'application/pdf' }))
+    const from = vi.fn(() => ({ outputPdf }))
+    const pdfFactory = vi.fn(async () => () => ({ set: () => ({ from }) }))
+    const embedRemoteImage = vi.fn().mockResolvedValue('data:image/png;base64,dGlueQ==')
+    const fetchRef = vi.fn(() => { throw new Error('connect-src must not be required') })
+    vi.spyOn(window.HTMLImageElement.prototype, 'complete', 'get').mockReturnValue(true)
+
+    await exportNotePdf({
+      title: '远程图片',
+      contentHtml: '<img src="https://cdn.example.com/cover.png" alt="文章封面">'
+    }, {
+      pdfFactory,
+      download: vi.fn(),
+      documentRef: window.document,
+      embedRemoteImage,
+      fetchRef
+    })
+
+    const article = from.mock.calls[0][0]
+    expect(embedRemoteImage).toHaveBeenCalledWith('https://cdn.example.com/cover.png', window.document, expect.any(Object))
+    expect(fetchRef).not.toHaveBeenCalled()
+    expect(article.querySelector('img')?.getAttribute('src')).toBe('data:image/png;base64,dGlueQ==')
+  })
+
+  it('keeps consecutive code blocks with their heading to avoid clipped border fragments', async () => {
+    const outputPdf = vi.fn().mockResolvedValue(new window.Blob(['%PDF'], { type: 'application/pdf' }))
+    const from = vi.fn(() => ({ outputPdf }))
+    const pdfFactory = vi.fn(async () => () => ({ set: () => ({ from }) }))
+
+    await exportNotePdf({
+      title: '代码',
+      contentHtml: '<h2>代码示例</h2><pre><code>one</code></pre><pre><code>two</code></pre>'
+    }, { pdfFactory, download: vi.fn(), documentRef: window.document })
+
+    expect(from.mock.calls[0][0].querySelectorAll('.tiny-note-pdf-heading-group pre')).toHaveLength(2)
+  })
+
+  it('awaits an asynchronous native print command and cleans up when it fails', async () => {
+    const printError = new Error('print permission denied')
+    const windowRef = {
+      print: vi.fn().mockRejectedValue(printError),
+      addEventListener: window.addEventListener.bind(window),
+      setTimeout: window.setTimeout.bind(window)
+    }
+
+    await expect(printNote(unsafeNote, { documentRef: window.document, windowRef })).rejects.toThrow(printError)
+
+    expect(window.document.querySelector('.tiny-note-print-root')).toBeNull()
+    expect(window.document.body.classList.contains('tiny-note-app-printing')).toBe(false)
   })
 })
