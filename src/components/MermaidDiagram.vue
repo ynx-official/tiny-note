@@ -31,7 +31,7 @@ let fullscreenTrigger
 let inertRoot
 let inertRootWasAlreadyInert = false
 let lastWheelZoomAt = -Infinity
-let inlineFit = false
+let inlineFit = true
 let fullscreenFit = true
 let panPointerId = null
 let panStartX = 0
@@ -114,7 +114,7 @@ function scheduleRender({ resetPreview = false } = {}) {
     svg.value = ''
     naturalWidth.value = 0
     zoom.value = 100
-    inlineFit = false
+    inlineFit = true
     if (fullscreen.value) closeFullscreen()
   }
   renderTimer = window.setTimeout(renderDiagram, 220)
@@ -137,9 +137,10 @@ function availableStageWidth(stage) {
 
 function updateFitZoom(useFullscreen = fullscreen.value) {
   const stage = useFullscreen ? fullscreenStage.value : inlineStage.value
+  if (!stage) return
   const available = availableStageWidth(stage)
   const fitted = available && naturalWidth.value
-    ? Math.min(100, Math.max(10, Math.floor(available / naturalWidth.value * 100)))
+    ? Math.min(100, Math.max(1, Math.floor(available / naturalWidth.value * 100)))
     : 100
   if (useFullscreen) fullscreenZoom.value = fitted
   else zoom.value = fitted
@@ -153,11 +154,11 @@ function zoomIn() {
 }
 
 function zoomOut() {
+  const minimum = fullscreen.value ? 10 : 75
+  if (activeZoom.value <= minimum) return
   viewportRevision += 1
   if (fullscreen.value) fullscreenFit = false
   else inlineFit = false
-  const minimum = fullscreen.value ? 10 : 75
-  if (activeZoom.value <= minimum) return
   activeZoom.value = Math.max(minimum, activeZoom.value - 25)
 }
 
@@ -189,6 +190,7 @@ async function closeFullscreen() {
   fullscreen.value = false
   setAppInert(false)
   await nextTick()
+  if (inlineFit) updateFitZoom(false)
   fullscreenTrigger?.focus?.()
 }
 
@@ -241,7 +243,11 @@ async function zoomAroundPointer(event) {
   const beforeAnchorY = before.top + before.height * anchorY
   const direction = event.deltaY < 0 ? 1 : -1
   const minimum = fullscreen.value ? 10 : 75
-  const nextZoom = clamp(activeZoom.value + direction * 15, minimum, 250)
+  const nextZoom = direction > 0
+    ? Math.min(250, activeZoom.value + 15)
+    : activeZoom.value <= minimum
+      ? activeZoom.value
+      : Math.max(minimum, activeZoom.value - 15)
   if (nextZoom === activeZoom.value) return
 
   if (fullscreen.value) fullscreenFit = false
@@ -398,8 +404,8 @@ onMounted(() => {
   themeObserver.observe(document.documentElement, { attributes: true, attributeFilter: ['data-theme'] })
   if (typeof ResizeObserver !== 'undefined') {
     stageObserver = new ResizeObserver(() => {
-      if (inlineFit) updateFitZoom(false)
-      if (fullscreen.value && fullscreenFit) updateFitZoom(true)
+      if (inlineFit && inlineStage.value) updateFitZoom(false)
+      if (fullscreen.value && fullscreenFit && fullscreenStage.value) updateFitZoom(true)
     })
     if (inlineStage.value) stageObserver.observe(inlineStage.value)
   }

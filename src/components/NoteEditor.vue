@@ -30,6 +30,7 @@ import { useTasksStore } from '../stores/tasks'
 import { useI18n } from 'vue-i18n'
 import { createNoteExtensions } from '../editor/noteExtensions'
 import { DEFAULT_NOTE_MODE, NOTE_MODES, applyMarkdownSourceToEditor, clampSplitRatio, isRichClipboardHtml, markdownToEditorHtml, sanitizeEditorHtml, scrollOffset, scrollProgress } from '../utils/noteMarkdown'
+import { createSafeExportFilename, downloadBlob, downloadNoteHtml, exportNotePdf, printNote as printNoteDocument } from '../utils/noteExport'
 import { prepareTaskFlight } from '../utils/taskFlight'
 import { markMermaidDiagramForEditing } from '../utils/mermaidEditorState'
 import { requestPrompt } from '../services/promptDialog'
@@ -58,6 +59,7 @@ const sourceEditorRef = ref(null)
 const previewScroller = ref(null)
 const pendingSourceDrafts = new Map()
 const persistedSignatures = new Map()
+const exportingFormat = ref('')
 let applyingEditorContent = false
 let markdownParseTimer
 let markdownPasteTimer
@@ -659,8 +661,46 @@ async function stopAssistant() {
 }
 async function copyAssistantMessage(content) { if (content) await navigator.clipboard?.writeText(content) }
 async function stopAi() { if (!aiRequestId.value) return; await tasksStore.cancel(aiRequestId.value); aiBusy.value = false }
-async function exportMarkdown() { if (!props.note || !editor.value || !await flushLatestContent()) return; const markdown = props.note.contentMarkdown || getEditorMarkdown(); const blob = new Blob([markdown], { type: 'text/markdown;charset=utf-8' }); const url = URL.createObjectURL(blob); const link = document.createElement('a'); link.href = url; link.download = `${props.note.title || 'note'}.md`; link.click(); URL.revokeObjectURL(url) }
-function printNote() { window.print() }
+async function prepareExportSnapshot() {
+  if (!props.note || !editor.value || !await flushLatestContent()) return null
+  return {
+    title: String(props.note.title || '').trim() || '未命名笔记',
+    contentHtml: sanitizeEditorHtml(prepareEditorContent(props.note))
+  }
+}
+async function runArticleExport(format) {
+  if (exportingFormat.value) return
+  moreOpen.value = false
+  const snapshot = await prepareExportSnapshot()
+  if (!snapshot) return
+  exportingFormat.value = format
+  try {
+    if (format === 'html') {
+      downloadNoteHtml(snapshot)
+      showToast('HTML 已导出')
+    } else if (format === 'pdf') {
+      await exportNotePdf(snapshot)
+      showToast('PDF 已导出')
+    } else if (format === 'print') {
+      await printNoteDocument(snapshot)
+    }
+  } catch (error) {
+    const label = format === 'pdf' ? 'PDF' : format === 'html' ? 'HTML' : '文章'
+    showToast(error?.message || `${label}${format === 'print' ? '打印' : '导出'}失败，请重试`, { tone: 'error' })
+  } finally {
+    exportingFormat.value = ''
+  }
+}
+async function exportMarkdown() {
+  moreOpen.value = false
+  if (!props.note || !editor.value || !await flushLatestContent()) return
+  const markdown = props.note.contentMarkdown || getEditorMarkdown()
+  const blob = new Blob([markdown], { type: 'text/markdown;charset=utf-8' })
+  downloadBlob(blob, createSafeExportFilename(props.note.title, 'md'))
+}
+function exportHtml() { return runArticleExport('html') }
+function exportPdf() { return runArticleExport('pdf') }
+function printNote() { return runArticleExport('print') }
 async function openRevisions() { if (!props.note) return; moreOpen.value = false; revisionsOpen.value = true; revisionsBusy.value = true; try { revisions.value = await (await import('../services/tauri')).invoke('note_revision_list', { noteId: props.note.id }) } finally { revisionsBusy.value = false } }
 async function restoreRevision(revision) { if (!(await requestConfirmation({ title: '恢复历史版本', message: '恢复这个版本？当前内容也会先保存为可恢复版本。', confirmLabel: '恢复' }))) return; const updated = await (await import('../services/tauri')).invoke('note_revision_restore', { id: revision.id }); Object.assign(props.note, updated); applyingEditorContent = true; editor.value?.commands.setContent(prepareEditorContent(updated), { emitUpdate: false }); applyingEditorContent = false; markdownDraft.value = updated.contentMarkdown || getEditorMarkdown() || ''; sourceDirty.value = false; markdownParseError.value = ''; pendingSourceDrafts.delete(updated.id); persistedSignatures.set(updated.id, noteContentSignature(updated)); revisions.value = await (await import('../services/tauri')).invoke('note_revision_list', { noteId: props.note.id }) }
 function formatRevisionTime(value) { try { return new Intl.DateTimeFormat('zh-CN', { dateStyle: 'medium', timeStyle: 'short' }).format(new Date(value)) } catch { return value } }
@@ -1158,7 +1198,7 @@ const title = computed({
             </button>
           </div>
         </span>
-        <span class="toolbar-menu-anchor"><button title="更多" @click="knowledgeMenuOpen = false; moreOpen = !moreOpen"><MoreHorizontal :size="20" /></button><div v-if="moreOpen" class="toolbar-more-menu"><button @click="openRevisions"><RotateCcw :size="15" /> AI 版本历史</button><button @click="exportMarkdown(); moreOpen = false"><Download :size="15" /> 导出 Markdown</button><button @click="printNote(); moreOpen = false"><Printer :size="15" /> 打印 / 保存 PDF</button><button class="danger" @click="emit('deleted', note.id); moreOpen = false"><Trash2 :size="15" /> 删除笔记</button></div></span>
+        <span class="toolbar-menu-anchor"><button title="更多" @click="knowledgeMenuOpen = false; moreOpen = !moreOpen"><MoreHorizontal :size="20" /></button><div v-if="moreOpen" class="toolbar-more-menu"><button @click="openRevisions"><RotateCcw :size="15" /> AI 版本历史</button><div class="toolbar-more-divider"></div><button :disabled="Boolean(exportingFormat)" @click="exportMarkdown"><FileText :size="15" /> 导出 Markdown</button><button :disabled="Boolean(exportingFormat)" @click="exportHtml"><FileCode2 :size="15" /> 导出 HTML</button><button :disabled="Boolean(exportingFormat)" :aria-busy="exportingFormat === 'pdf'" @click="exportPdf"><Download :size="15" /> {{ exportingFormat === 'pdf' ? '正在导出 PDF…' : '导出 PDF' }}</button><button :disabled="Boolean(exportingFormat)" @click="printNote"><Printer :size="15" /> 打印</button><div class="toolbar-more-divider"></div><button class="danger" @click="emit('deleted', note.id); moreOpen = false"><Trash2 :size="15" /> 删除笔记</button></div></span>
         <button v-if="assistantTriggerVisible" class="ai-button" @click="toggleAssistant"><Layers :size="17" /> Tiny Note 助理</button>
       </div>
     </div>

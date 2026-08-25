@@ -35,7 +35,7 @@ cargo clippy --all-targets --all-features -- -D warnings
 
 - SQLite 笔记/笔记本、三表示（原始 Markdown、安全 HTML、纯文本）原子保存、800ms 自动保存、搜索、复制/移动、最近删除恢复和 Markdown/TXT 导入；Windows/macOS 安装包注册 `.md/.markdown` 打开方式，双击后直接编辑并保存回源文件。
 - TipTap 提供 Notion 式即时编辑，Markdown 快捷输入和粘贴立即呈现格式；处理后的源码可切到 CodeMirror 6 继续编辑，并通过固定版本的 `@tiptap/markdown` 与即时编辑双向同步。
-- 文章主模式为即时编辑、Markdown、阅读；Markdown 内可开关实时预览，分栏支持 30%–70% 拖拽、窄宽度上下布局和双向滚动联动。阅读模式锁定独立标题与正文，但保留选择、复制、目录、知识库和全文助理。
+- 文章主模式为即时编辑、Markdown、阅读；Markdown 内可开关实时预览，分栏支持 30%–70% 拖拽、窄宽度上下布局和双向滚动联动。阅读模式锁定独立标题与正文，但保留选择、复制、目录、知识库和全文助理；文章可分别打印、直接导出 PDF，或导出带内嵌阅读样式的 HTML。
 - 个人/本地知识库、文件夹、相对路径安全校验、文本导入、递归名称搜索、预览和系统回收站。
 - 主题/语言，以及一对多的 SQLite 模型服务：厂商连接统一保存 Base URL、API Key 和端点协议，其下可通过 `/models` 自由选择多个模型。支持 OpenAI Responses、OpenAI Chat Completions、Anthropic Messages；编辑连接时 API Key 始终留空且不向前端回显，留空获取模型或保存时由 Rust 继续使用 SQLite 中的原密钥。
 - 首页对话模式与笔记 AI 共用 Rust 流式请求层；请求路径、请求体、认证头和 SSE 事件解析由模型配置的端点类型决定。首页请求按 `chat` 来源写入用量统计，笔记 AI 按 `note_ai` 来源统计。模型返回的 prompt、completion、reasoning 和 total token 会记录到本地 SQLite。

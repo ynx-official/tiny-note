@@ -10,11 +10,22 @@ import MarkdownSourceEditor from './MarkdownSourceEditor.vue'
 import NoteAssistantSidebar from './NoteAssistantSidebar.vue'
 
 const tauriMocks = vi.hoisted(() => ({ invoke: vi.fn() }))
+const noteExportMocks = vi.hoisted(() => ({
+  downloadNoteHtml: vi.fn(),
+  exportNotePdf: vi.fn(),
+  printNote: vi.fn()
+}))
 vi.mock('@tauri-apps/api/core', () => ({
   Channel: class Channel {
     onmessage = null
   },
   invoke: tauriMocks.invoke
+}))
+vi.mock('../utils/noteExport', async importOriginal => ({
+  ...await importOriginal(),
+  downloadNoteHtml: noteExportMocks.downloadNoteHtml,
+  exportNotePdf: noteExportMocks.exportNotePdf,
+  printNote: noteExportMocks.printNote
 }))
 
 if (!window.Range.prototype.getClientRects) window.Range.prototype.getClientRects = () => []
@@ -67,10 +78,62 @@ afterEach(() => {
   vi.useRealTimers()
   localStorage.clear()
   tauriMocks.invoke.mockReset()
+  noteExportMocks.downloadNoteHtml.mockReset()
+  noteExportMocks.exportNotePdf.mockReset()
+  noteExportMocks.printNote.mockReset()
   delete window.__TAURI_INTERNALS__
 })
 
 describe('NoteEditor article modes', () => {
+  it('offers separate print, PDF, and HTML actions instead of a combined print/PDF command', async () => {
+    const wrapper = await mountEditor()
+
+    await wrapper.get('button[title="更多"]').trigger('click')
+    const labels = wrapper.findAll('.toolbar-more-menu button').map(button => button.text().trim())
+
+    expect(labels).toContain('打印')
+    expect(labels).toContain('导出 PDF')
+    expect(labels).toContain('导出 HTML')
+    expect(labels).not.toContain('打印 / 保存 PDF')
+    wrapper.unmount()
+  })
+
+  it('flushes the latest Markdown draft before exporting HTML, PDF, or printing', async () => {
+    const active = note('note-export')
+    const wrapper = await mountEditor(active)
+    await wrapper.get('.editor-mode-trigger').trigger('click')
+    await wrapper.findAll('[role="menuitemradio"]')[1].trigger('click')
+    await flushPromises()
+
+    const source = wrapper.findComponent(MarkdownSourceEditor)
+    source.vm.view.dispatch({
+      changes: {
+        from: 0,
+        to: source.vm.view.state.doc.length,
+        insert: '## 最新草稿\n\n尚未经过 150ms 防抖'
+      }
+    })
+
+    await wrapper.get('button[title="更多"]').trigger('click')
+    await wrapper.findAll('.toolbar-more-menu button').find(button => button.text().includes('导出 HTML')).trigger('click')
+    await flushPromises()
+    expect(noteExportMocks.downloadNoteHtml).toHaveBeenCalledWith(expect.objectContaining({
+      title: '四种模式',
+      contentHtml: expect.stringContaining('最新草稿')
+    }))
+
+    await wrapper.get('button[title="更多"]').trigger('click')
+    await wrapper.findAll('.toolbar-more-menu button').find(button => button.text().includes('导出 PDF')).trigger('click')
+    await flushPromises()
+    expect(noteExportMocks.exportNotePdf).toHaveBeenCalledWith(expect.objectContaining({ contentHtml: expect.stringContaining('最新草稿') }))
+
+    await wrapper.get('button[title="更多"]').trigger('click')
+    await wrapper.findAll('.toolbar-more-menu button').find(button => button.text().trim() === '打印').trigger('click')
+    await flushPromises()
+    expect(noteExportMocks.printNote).toHaveBeenCalledWith(expect.objectContaining({ contentHtml: expect.stringContaining('最新草稿') }))
+    wrapper.unmount()
+  })
+
   it('hides the assistant trigger while the sidebar is open and restores it after closing', async () => {
     vi.useFakeTimers()
     const wrapper = await mountEditor()

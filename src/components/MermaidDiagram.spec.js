@@ -2,6 +2,9 @@ import { flushPromises, mount } from '@vue/test-utils'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import MermaidDiagram from './MermaidDiagram.vue'
 
+const initialResizeObserver = globalThis.ResizeObserver
+const initialClientWidthDescriptor = Object.getOwnPropertyDescriptor(window.HTMLElement.prototype, 'clientWidth')
+
 const rendererMocks = vi.hoisted(() => ({
   renderMermaidDiagram: vi.fn()
 }))
@@ -23,6 +26,12 @@ describe('MermaidDiagram', () => {
   })
 
   afterEach(() => {
+    vi.useRealTimers()
+    vi.restoreAllMocks()
+    if (initialResizeObserver) globalThis.ResizeObserver = initialResizeObserver
+    else delete globalThis.ResizeObserver
+    if (initialClientWidthDescriptor) Object.defineProperty(window.HTMLElement.prototype, 'clientWidth', initialClientWidthDescriptor)
+    else delete window.HTMLElement.prototype.clientWidth
     rendererMocks.renderMermaidDiagram.mockReset()
     window.document.body.innerHTML = ''
     delete window.document.documentElement.dataset.theme
@@ -72,6 +81,147 @@ describe('MermaidDiagram', () => {
 
     expect(rendererMocks.renderMermaidDiagram).toHaveBeenCalledWith('flowchart TD\nA --> B', { theme: 'dark' })
     wrapper.unmount()
+  })
+
+  it('defaults wide diagrams to fit width and refits after the source changes', async () => {
+    vi.useFakeTimers()
+    let resolveFirstRender
+    rendererMocks.renderMermaidDiagram.mockImplementationOnce(() => new Promise(resolve => {
+      resolveFirstRender = resolve
+    }))
+
+    const wrapper = mount(MermaidDiagram, { props: { source: 'flowchart LR\nA --> B' } })
+    const stage = wrapper.get('.mermaid-diagram-stage')
+    Object.defineProperty(stage.element, 'clientWidth', { configurable: true, value: 400 })
+
+    resolveFirstRender({ svg: '<svg viewBox="0 0 40000 360"><text>超宽流程</text></svg>' })
+    await flushPromises()
+    expect(wrapper.get('.mermaid-zoom-value').text()).toBe('1%')
+
+    await wrapper.get('[aria-label="放大图表"]').trigger('click')
+    expect(wrapper.get('.mermaid-zoom-value').text()).toBe('26%')
+
+    await wrapper.setProps({ source: 'flowchart LR\nA --> C' })
+    await vi.advanceTimersByTimeAsync(220)
+    await flushPromises()
+    expect(wrapper.get('.mermaid-zoom-value').text()).toBe('50%')
+
+    wrapper.unmount()
+    vi.useRealTimers()
+  })
+
+  it('preserves auto-fit below the manual zoom floor and avoids wheel jumps', async () => {
+    const originalResizeObserver = globalThis.ResizeObserver
+    let resizeCallback
+    globalThis.ResizeObserver = class {
+      constructor(callback) { resizeCallback = callback }
+      observe() {}
+      unobserve() {}
+      disconnect() {}
+    }
+    let resolveRender
+    rendererMocks.renderMermaidDiagram.mockImplementationOnce(() => new Promise(resolve => {
+      resolveRender = resolve
+    }))
+    const nowSpy = vi.spyOn(window.performance, 'now')
+      .mockReturnValueOnce(100)
+      .mockReturnValueOnce(200)
+
+    const wrapper = mount(MermaidDiagram, { props: { source: 'flowchart LR\nA --> B' } })
+    const stage = wrapper.get('.mermaid-diagram-stage')
+    Object.defineProperty(stage.element, 'clientWidth', { configurable: true, value: 400 })
+    resolveRender({ svg: '<svg viewBox="0 0 8000 360"><text>宽流程</text></svg>' })
+    await flushPromises()
+    expect(wrapper.get('.mermaid-zoom-value').text()).toBe('5%')
+
+    await stage.trigger('keydown', { key: '-' })
+    Object.defineProperty(stage.element, 'clientWidth', { configurable: true, value: 800 })
+    resizeCallback()
+    await flushPromises()
+    expect(wrapper.get('.mermaid-zoom-value').text()).toBe('10%')
+
+    Object.defineProperty(stage.element, 'clientWidth', { configurable: true, value: 400 })
+    await wrapper.get('[aria-label="适合宽度"]').trigger('click')
+    const zoomInWheel = new window.WheelEvent('wheel', {
+      bubbles: true,
+      cancelable: true,
+      ctrlKey: true,
+      clientX: 200,
+      clientY: 100,
+      deltaY: -100
+    })
+    stage.element.dispatchEvent(zoomInWheel)
+    await flushPromises()
+    expect(wrapper.get('.mermaid-zoom-value').text()).toBe('20%')
+
+    await wrapper.get('[aria-label="适合宽度"]').trigger('click')
+    const zoomOutWheel = new window.WheelEvent('wheel', {
+      bubbles: true,
+      cancelable: true,
+      ctrlKey: true,
+      clientX: 200,
+      clientY: 100,
+      deltaY: 100
+    })
+    stage.element.dispatchEvent(zoomOutWheel)
+    await flushPromises()
+    expect(wrapper.get('.mermaid-zoom-value').text()).toBe('5%')
+
+    Object.defineProperty(stage.element, 'clientWidth', { configurable: true, value: 800 })
+    resizeCallback()
+    await flushPromises()
+    expect(wrapper.get('.mermaid-zoom-value').text()).toBe('10%')
+
+    await wrapper.get('[aria-label="放大图表"]').trigger('click')
+    Object.defineProperty(stage.element, 'clientWidth', { configurable: true, value: 1200 })
+    resizeCallback()
+    await flushPromises()
+    expect(wrapper.get('.mermaid-zoom-value').text()).toBe('35%')
+
+    wrapper.unmount()
+    nowSpy.mockRestore()
+    if (originalResizeObserver) globalThis.ResizeObserver = originalResizeObserver
+    else delete globalThis.ResizeObserver
+  })
+
+  it('does not let fullscreen resize observations overwrite inline fit', async () => {
+    const originalResizeObserver = globalThis.ResizeObserver
+    const clientWidthDescriptor = Object.getOwnPropertyDescriptor(window.HTMLElement.prototype, 'clientWidth')
+    let resizeCallback
+    globalThis.ResizeObserver = class {
+      constructor(callback) { resizeCallback = callback }
+      observe() {}
+      unobserve() {}
+      disconnect() {}
+    }
+    Object.defineProperty(window.HTMLElement.prototype, 'clientWidth', {
+      configurable: true,
+      get() {
+        if (this.classList?.contains('mermaid-diagram-stage')) return 400
+        if (this.classList?.contains('mermaid-fullscreen-stage')) return 800
+        return clientWidthDescriptor?.get?.call(this) || 0
+      }
+    })
+
+    const wrapper = mount(MermaidDiagram, {
+      attachTo: window.document.body,
+      props: { source: 'flowchart LR\nA --> B' }
+    })
+    await flushPromises()
+    expect(wrapper.get('.mermaid-zoom-value').text()).toBe('50%')
+
+    await wrapper.get('[aria-label="全屏查看图表"]').trigger('click')
+    await flushPromises()
+    resizeCallback()
+    window.document.querySelector('[aria-label="关闭全屏图表"]').click()
+    await flushPromises()
+    expect(wrapper.get('.mermaid-zoom-value').text()).toBe('50%')
+
+    wrapper.unmount()
+    if (clientWidthDescriptor) Object.defineProperty(window.HTMLElement.prototype, 'clientWidth', clientWidthDescriptor)
+    else delete window.HTMLElement.prototype.clientWidth
+    if (originalResizeObserver) globalThis.ResizeObserver = originalResizeObserver
+    else delete globalThis.ResizeObserver
   })
 
   it('keeps fit-width overview zoom stable when it is below the manual minimum', async () => {
