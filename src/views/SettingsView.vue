@@ -4,7 +4,7 @@ import { storeToRefs } from 'pinia'
 import { useI18n } from 'vue-i18n'
 import { AlertCircle, Check, ChevronDown, ChevronRight, Cpu, FlaskConical, Globe2, Info, Languages, LoaderCircle, Moon, Monitor, Palette, Pencil, Plus, RefreshCw, Search, Sparkles, Sun, Trash2, Wrench, X } from 'lucide-vue-next'
 import { invoke } from '../services/tauri'
-import { appUpdater } from '../services/appUpdater'
+import { appUpdater, BUNDLED_APP_VERSION } from '../services/appUpdater'
 import { requestConfirmation, showToast } from '../services/appFeedback'
 import { useAppStore } from '../stores/app'
 import { modelProviderLabel } from '../utils/modelProvider'
@@ -39,7 +39,7 @@ const balanceStates = ref({})
 const balanceRefreshingAll = ref(false)
 const indexStatus = ref(null)
 const indexBusy = ref(false)
-const appVersion = ref('0.1.8')
+const appVersion = ref(BUNDLED_APP_VERSION)
 const updateStatus = ref('idle')
 const updateInfo = ref(null)
 const updateProgress = ref(null)

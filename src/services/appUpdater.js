@@ -1,5 +1,8 @@
+import packageMetadata from '../../package.json'
+
 export const UPDATE_CHECK_INTERVAL_MS = 6 * 60 * 60 * 1000
 export const UPDATE_CHECKED_AT_KEY = 'tiny-note-update-checked-at'
+export const BUNDLED_APP_VERSION = packageMetadata.version
 
 const defaultDependencies = {
   isDesktop: () => typeof window !== 'undefined' && Boolean(window.__TAURI_INTERNALS__),
@@ -22,7 +25,7 @@ export function createAppUpdater(dependencies = {}) {
   }
 
   return {
-    async currentVersion(fallback = '0.1.8') {
+    async currentVersion(fallback = BUNDLED_APP_VERSION) {
       if (!deps.isDesktop()) return fallback
       const { getVersion } = await deps.loadApp()
       return getVersion()

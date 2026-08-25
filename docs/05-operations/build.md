@@ -1,16 +1,16 @@
 # 构建、发布与在线升级（Review）
 
-最后更新：2026-08-23
+最后更新：2026-08-25
 关联配置：`.github/workflows/ci.yml`、`.github/workflows/release.yml`、`src-tauri/tauri.conf.json`
 
 ## 产物矩阵
 
-| 平台 | 架构 | 安装包 | 在线升级包 |
+| 平台 | 架构 | 安装包 | 在线升级资产 |
 | --- | --- | --- | --- |
-| Windows | x86_64 | NSIS `.exe` | NSIS `.exe` + `.sig` |
-| Linux | x86_64 | AppImage、DEB | AppImage + `.sig` |
-| macOS | Intel x86_64 | DMG | `.app.tar.gz` + `.sig` |
-| macOS | Apple Silicon aarch64 | DMG | `.app.tar.gz` + `.sig` |
+| Windows | x86_64 | NSIS `.exe` | 同一 NSIS `.exe` + 清单中的 SHA-256 |
+| Linux | x86_64 | AppImage、DEB | 同一 AppImage/DEB + 清单中的 SHA-256 |
+| macOS | Intel x86_64 | DMG | 同一 DMG + 清单中的 SHA-256 |
+| macOS | Apple Silicon aarch64 | DMG | 同一 DMG + 清单中的 SHA-256 |
 
 普通 push/PR 由 `Tiny Note CI` 执行测试、lint、Rust 检查和四组安装包构建，并把产物保存为 workflow artifacts。正式发布由 `tiny-note-v*` tag 触发。CI 和 Release 均使用仓库锁定的 npm 依赖与项目内 Tauri CLI；Release 矩阵串行上传，随后生成 `update-manifest.json`。
 
@@ -23,8 +23,6 @@ https://github.com/ynx-official/tiny-note/releases/latest/download/update-manife
 ```
 
 Release 流水线通过固定版本的 `tauri-action` 上传各平台安装包，再由 `scripts/update-manifest.mjs` 下载已发布资产、计算 SHA-256 并上传清单。GitHub Release 必须是非草稿、非 prerelease，才能被 `/releases/latest/` 稳定发现。该方案不需要 Tauri updater 签名 Secrets。
-
-私钥一旦用于首个正式版本，就必须长期安全保留。丢失私钥后，已安装的旧版本无法信任用新密钥签发的更新。
 
 ## macOS 正式签名与公证
 

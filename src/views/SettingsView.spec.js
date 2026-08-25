@@ -20,6 +20,7 @@ const mocks = vi.hoisted(() => ({ invoke: vi.fn() }))
 
 vi.mock('../services/tauri', () => ({ invoke: mocks.invoke }))
 vi.mock('../services/appUpdater', () => ({
+  BUNDLED_APP_VERSION: '0.1.10',
   appUpdater: { currentVersion: vi.fn(async value => value), check: vi.fn() }
 }))
 
