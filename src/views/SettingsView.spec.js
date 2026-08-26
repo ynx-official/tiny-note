@@ -17,8 +17,10 @@ const model = {
   isDefault: true
 }
 const mocks = vi.hoisted(() => ({ invoke: vi.fn() }))
+const dialogMocks = vi.hoisted(() => ({ open: vi.fn() }))
 
 vi.mock('../services/tauri', () => ({ invoke: mocks.invoke }))
+vi.mock('@tauri-apps/plugin-dialog', () => ({ open: dialogMocks.open }))
 vi.mock('../services/appUpdater', () => ({
   BUNDLED_APP_VERSION: '0.1.10',
   appUpdater: { currentVersion: vi.fn(async value => value), check: vi.fn() }
@@ -32,6 +34,7 @@ describe('SettingsView model services', () => {
     localStorage.clear()
     setActivePinia(createPinia())
     mocks.invoke.mockReset()
+    dialogMocks.open.mockReset()
     mocks.invoke.mockImplementation(async (command, args) => {
       if (command === 'settings_get') return { theme: 'light', language: 'zh-CN', fimEnabled: false }
       if (command === 'model_list') return [model]
@@ -41,6 +44,36 @@ describe('SettingsView model services', () => {
       if (command === 'model_upsert') return args
       return null
     })
+  })
+
+  it('shows, changes, and clears the default article export directory', async () => {
+    mocks.invoke.mockImplementation(async (command, args) => {
+      if (command === 'settings_get') return { theme: 'light', language: 'zh-CN', fimEnabled: false, exportDirectory: 'D:\\Old exports' }
+      if (command === 'settings_update') return args.settings
+      if (command === 'model_list') return [model]
+      if (command === 'search_index_status') return null
+      return null
+    })
+    dialogMocks.open.mockResolvedValue('D:\\New exports')
+    const wrapper = mount(SettingsView, {
+      global: { plugins: [createPinia(), createI18n({ legacy: false, locale: 'zh-CN', messages })], stubs: { AgentToolsCatalog: true } }
+    })
+    await vi.waitFor(() => expect(wrapper.text()).toContain('文件保存位置'))
+    await wrapper.findAll('.settings-nav-item').find(button => button.text().includes('文件保存')).trigger('click')
+
+    expect(wrapper.get('[data-testid="export-directory-path"]').text()).toContain('D:\\Old exports')
+    await wrapper.get('[data-testid="choose-export-directory"]').trigger('click')
+    await vi.waitFor(() => expect(mocks.invoke).toHaveBeenCalledWith('settings_update', {
+      settings: expect.objectContaining({ exportDirectory: 'D:\\New exports' })
+    }))
+    expect(wrapper.get('[data-testid="export-directory-path"]').text()).toContain('D:\\New exports')
+
+    await vi.waitFor(() => expect(wrapper.get('[data-testid="clear-export-directory"]').attributes('disabled')).toBeUndefined())
+    await wrapper.get('[data-testid="clear-export-directory"]').trigger('click')
+    await vi.waitFor(() => expect(mocks.invoke).toHaveBeenCalledWith('settings_update', {
+      settings: expect.objectContaining({ exportDirectory: '' })
+    }))
+    expect(wrapper.get('[data-testid="export-directory-path"]').text()).toContain('每次导出时选择')
   })
 
   it('organizes editor shortcuts in their own settings category and supports recording and reset', async () => {

@@ -38,6 +38,18 @@ describe('Tiny Note Markdown conversion', () => {
     expect(editor.state.selection.$from.parent.type.name).toBe('paragraph')
   })
 
+  it('round-trips Friday small body paragraphs without turning them into normal body text', () => {
+    const editor = createEditor('<p data-small-text="true">辅助说明</p>')
+
+    expect(editor.getHTML()).toContain('<p data-small-text="true">辅助说明</p>')
+    const markdown = editor.getMarkdown()
+    expect(markdown).toContain('<p data-small-text="true">辅助说明</p>')
+
+    const restored = createEditor()
+    restored.commands.setContent(markdown, { contentType: 'markdown', emitUpdate: false })
+    expect(restored.getHTML()).toContain('<p data-small-text="true">辅助说明</p>')
+  })
+
   it('applies Markdown shortcuts immediately in the instant editor', () => {
     const editor = createEditor('<p></p>')
     editor.commands.focus('start')

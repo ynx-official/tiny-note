@@ -5,7 +5,7 @@ use rusqlite::{params, Connection, OptionalExtension};
 use serde::{ser::SerializeStruct, Deserialize, Serialize, Serializer};
 use std::{
     collections::{HashMap, HashSet},
-    fs,
+    fs::{self, OpenOptions},
     io::Write,
     path::{Component, Path, PathBuf},
     sync::{
@@ -15,6 +15,7 @@ use std::{
     thread,
 };
 use tauri::{ipc::Channel, Emitter, Manager, State};
+use tauri_plugin_opener::OpenerExt;
 use thiserror::Error;
 use uuid::Uuid;
 use walkdir::WalkDir;
@@ -91,6 +92,7 @@ pub struct AppState {
     db: Arc<Mutex<Connection>>,
     data_dir: PathBuf,
     cancels: Arc<Mutex<HashMap<String, Arc<AtomicBool>>>>,
+    exported_files: Arc<Mutex<HashSet<PathBuf>>>,
 }
 
 #[derive(Default)]
@@ -455,6 +457,94 @@ pub struct SettingsDto {
     pub theme: String,
     pub language: String,
     pub fim_enabled: bool,
+    #[serde(default)]
+    pub export_directory: String,
+}
+
+const MAX_EXPORT_FILE_BYTES: usize = 64 * 1024 * 1024;
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ExportWriteRequest {
+    pub directory: String,
+    pub file_name: String,
+    pub content_base64: String,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ExportWriteResult {
+    pub path: String,
+    pub file_name: String,
+}
+
+fn write_export_file(
+    directory: &Path,
+    file_name: &str,
+    bytes: &[u8],
+) -> Result<ExportWriteResult, AppError> {
+    if bytes.len() > MAX_EXPORT_FILE_BYTES {
+        return Err(AppError::invalid(
+            "export_too_large",
+            "导出文件超过 64 MB 限制",
+        ));
+    }
+    let file_path = Path::new(file_name);
+    if file_name.is_empty()
+        || file_name.contains('\0')
+        || file_path.components().count() != 1
+        || !matches!(file_path.components().next(), Some(Component::Normal(_)))
+    {
+        return Err(AppError::invalid(
+            "invalid_export_filename",
+            "导出文件名无效",
+        ));
+    }
+    let canonical_directory = fs::canonicalize(directory).map_err(AppError::fs)?;
+    if !canonical_directory.is_dir() {
+        return Err(AppError::invalid(
+            "invalid_export_directory",
+            "导出位置不是文件夹",
+        ));
+    }
+
+    let stem = file_path
+        .file_stem()
+        .and_then(|value| value.to_str())
+        .unwrap_or("note");
+    let extension = file_path.extension().and_then(|value| value.to_str());
+    for copy in 1..=10_000_u32 {
+        let candidate_name = if copy == 1 {
+            file_name.to_string()
+        } else if let Some(extension) = extension {
+            format!("{stem} ({copy}).{extension}")
+        } else {
+            format!("{stem} ({copy})")
+        };
+        let candidate = canonical_directory.join(&candidate_name);
+        match OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(&candidate)
+        {
+            Ok(mut file) => {
+                if let Err(error) = file.write_all(bytes).and_then(|_| file.sync_all()) {
+                    let _ = fs::remove_file(&candidate);
+                    return Err(AppError::fs(error));
+                }
+                return Ok(ExportWriteResult {
+                    path: candidate.to_string_lossy().into_owned(),
+                    file_name: candidate_name,
+                });
+            }
+            Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => continue,
+            Err(error) => return Err(AppError::fs(error)),
+        }
+    }
+    Err(AppError::Operation {
+        code: "export_name_exhausted".into(),
+        message: "无法生成可用的导出文件名".into(),
+    })
 }
 
 #[derive(Debug, Serialize)]
@@ -999,6 +1089,7 @@ fn app_state(app: &tauri::AppHandle) -> Result<AppState, AppError> {
         db: Arc::new(Mutex::new(conn)),
         data_dir,
         cancels: Arc::new(Mutex::new(HashMap::new())),
+        exported_files: Arc::new(Mutex::new(HashSet::new())),
     };
     ensure_default_kbs(&state)?;
     migrate_note_knowledge_base_links(&state)?;
@@ -1737,6 +1828,13 @@ pub mod commands {
                     |row| row.get(0),
                 )
                 .unwrap_or_else(|_| "zh-CN".into()),
+            export_directory: conn
+                .query_row(
+                    "SELECT value FROM settings WHERE key='exportDirectory'",
+                    [],
+                    |row| row.get(0),
+                )
+                .unwrap_or_default(),
             fim_enabled: conn
                 .query_row(
                     "SELECT value FROM settings WHERE key='fimEnabled'",
@@ -2038,6 +2136,10 @@ pub mod commands {
             (
                 "fimEnabled",
                 request.backup.settings.fim_enabled.to_string(),
+            ),
+            (
+                "exportDirectory",
+                request.backup.settings.export_directory.clone(),
             ),
         ] {
             transaction
@@ -3283,6 +3385,7 @@ pub mod commands {
             theme: get("theme", "system"),
             language: get("language", "zh-CN"),
             fim_enabled: get("fimEnabled", "false") == "true",
+            export_directory: get("exportDirectory", ""),
         })
     }
 
@@ -3299,11 +3402,88 @@ pub mod commands {
             ("theme", settings.theme.clone()),
             ("language", settings.language.clone()),
             ("fimEnabled", settings.fim_enabled.to_string()),
+            ("exportDirectory", settings.export_directory.clone()),
         ] {
             conn.execute("INSERT INTO settings(key,value) VALUES (?1,?2) ON CONFLICT(key) DO UPDATE SET value=excluded.value",params![k,v]).map_err(AppError::db)?;
         }
         drop(conn);
         settings_get(state)
+    }
+
+    #[tauri::command]
+    pub fn export_write_file(
+        state: State<'_, AppState>,
+        request: ExportWriteRequest,
+    ) -> Result<ExportWriteResult, AppError> {
+        if request.content_base64.len() > (MAX_EXPORT_FILE_BYTES * 4 / 3) + 8 {
+            return Err(AppError::invalid(
+                "export_too_large",
+                "导出文件超过 64 MB 限制",
+            ));
+        }
+        let bytes = BASE64
+            .decode(request.content_base64)
+            .map_err(|_| AppError::invalid("invalid_export_content", "导出文件内容无效"))?;
+        let result = write_export_file(Path::new(&request.directory), &request.file_name, &bytes)?;
+        let path = fs::canonicalize(&result.path).map_err(AppError::fs)?;
+        let mut exported_files = state
+            .exported_files
+            .lock()
+            .map_err(|_| AppError::fs("export authorization lock poisoned"))?;
+        if exported_files.len() >= 256 {
+            exported_files.clear();
+        }
+        exported_files.insert(path);
+        Ok(result)
+    }
+
+    pub(super) fn authorized_export_path(
+        state: &AppState,
+        path: &str,
+    ) -> Result<PathBuf, AppError> {
+        let path = fs::canonicalize(path).map_err(AppError::fs)?;
+        let allowed = state
+            .exported_files
+            .lock()
+            .map_err(|_| AppError::fs("export authorization lock poisoned"))?
+            .contains(&path);
+        if !allowed {
+            return Err(AppError::invalid(
+                "export_file_not_authorized",
+                "只能打开本次运行中由 Tiny Note 导出的文件",
+            ));
+        }
+        Ok(path)
+    }
+
+    #[tauri::command]
+    pub fn export_open_file(
+        app: tauri::AppHandle,
+        state: State<'_, AppState>,
+        path: String,
+    ) -> Result<(), AppError> {
+        let path = authorized_export_path(&state, &path)?;
+        app.opener()
+            .open_path(path.to_string_lossy(), None::<&str>)
+            .map_err(|error| AppError::Operation {
+                code: "export_open_failed".into(),
+                message: error.to_string(),
+            })
+    }
+
+    #[tauri::command]
+    pub fn export_reveal_file(
+        app: tauri::AppHandle,
+        state: State<'_, AppState>,
+        path: String,
+    ) -> Result<(), AppError> {
+        let path = authorized_export_path(&state, &path)?;
+        app.opener()
+            .reveal_item_in_dir(path)
+            .map_err(|error| AppError::Operation {
+                code: "export_reveal_failed".into(),
+                message: error.to_string(),
+            })
     }
 
     #[tauri::command]
@@ -4715,6 +4895,8 @@ pub fn run() {
             }
         }))
         .plugin(tauri_plugin_process::init())
+        .plugin(tauri_plugin_dialog::init())
+        .plugin(tauri_plugin_opener::init())
         .setup(|app| {
             let state =
                 app_state(app.handle()).map_err(|e| Box::new(e) as Box<dyn std::error::Error>)?;
@@ -4785,6 +4967,9 @@ pub fn run() {
             commands::note_revision_restore,
             commands::settings_get,
             commands::settings_update,
+            commands::export_write_file,
+            commands::export_open_file,
+            commands::export_reveal_file,
             commands::memory_list,
             commands::memory_update,
             commands::usage_get_stats,
@@ -4927,6 +5112,53 @@ mod tests {
             matches!(error, AppError::Operation { ref code, .. } if code == "external_file_changed")
         );
         assert_eq!(fs::read_to_string(path).unwrap(), "changed elsewhere");
+    }
+
+    #[test]
+    fn export_writer_uses_a_collision_safe_name_and_preserves_bytes() {
+        let directory = tempfile::tempdir().unwrap();
+        fs::write(directory.path().join("文章.pdf"), b"existing").unwrap();
+
+        let result = write_export_file(directory.path(), "文章.pdf", b"%PDF-1.7").unwrap();
+
+        assert_eq!(result.file_name, "文章 (2).pdf");
+        assert_eq!(fs::read(result.path).unwrap(), b"%PDF-1.7");
+        assert_eq!(
+            fs::read(directory.path().join("文章.pdf")).unwrap(),
+            b"existing"
+        );
+    }
+
+    #[test]
+    fn export_writer_rejects_paths_instead_of_file_names() {
+        let directory = tempfile::tempdir().unwrap();
+        let error = write_export_file(directory.path(), "../escape.html", b"bad").unwrap_err();
+        assert!(
+            matches!(error, AppError::InvalidInput { ref code, .. } if code == "invalid_export_filename")
+        );
+    }
+
+    #[test]
+    fn exported_file_actions_only_accept_registered_paths() {
+        let directory = tempfile::tempdir().unwrap();
+        let exported = directory.path().join("article.pdf");
+        let unrelated = directory.path().join("other.pdf");
+        fs::write(&exported, b"pdf").unwrap();
+        fs::write(&unrelated, b"other").unwrap();
+        let state = AppState {
+            db: Arc::new(Mutex::new(Connection::open_in_memory().unwrap())),
+            data_dir: directory.path().to_path_buf(),
+            cancels: Arc::new(Mutex::new(HashMap::new())),
+            exported_files: Arc::new(Mutex::new(HashSet::from([
+                fs::canonicalize(&exported).unwrap()
+            ]))),
+        };
+
+        assert_eq!(
+            commands::authorized_export_path(&state, exported.to_str().unwrap()).unwrap(),
+            fs::canonicalize(exported).unwrap()
+        );
+        assert!(commands::authorized_export_path(&state, unrelated.to_str().unwrap()).is_err());
     }
 
     #[test]
@@ -5308,6 +5540,7 @@ mod tests {
             db: Arc::new(Mutex::new(conn)),
             data_dir: root.clone(),
             cancels: Arc::new(Mutex::new(HashMap::new())),
+            exported_files: Arc::new(Mutex::new(HashSet::new())),
         };
         let result = search::resolve_context(
             &state,

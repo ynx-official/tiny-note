@@ -21,13 +21,18 @@ Object.assign(messages['zh-CN'], {
   more: '更多', moreActions: '更多操作', aiVersionHistory: 'AI 版本历史',
   exportMarkdown: '导出 Markdown', exportHtml: '导出 HTML', exportPdf: '导出 PDF', printArticle: '打印', deleteNote: '删除笔记',
   exportingHtml: '正在导出 HTML…', exportingPdf: '正在导出 PDF…', preparingPrint: '正在准备打印…',
-  htmlExported: 'HTML 已导出', pdfExported: 'PDF 已导出',
+  htmlExported: 'HTML 已导出', pdfExported: 'PDF 已导出', markdownExported: 'Markdown 已导出',
   htmlExportFailed: 'HTML 导出失败，请重试', pdfExportFailed: 'PDF 导出失败，请重试', printFailed: '打印失败，请重试',
   pdfTooLong: '文章过长，无法安全生成 PDF。请使用“打印”保存为 PDF，或拆分文章后重试。',
   shortcutSettings: '快捷键', shortcutSettingsHint: '按功能分类查看并自定义应用快捷键', editorShortcuts: '编辑器',
   editorModeShortcut: '切换编辑模式', editorModeShortcutHint: '在即时编辑和 Markdown 之间切换，仅保存在当前设备。',
   recordShortcut: '点击后按下新的组合键', pressShortcut: '请按下新快捷键',
   shortcutRequiresModifier: '请同时按下 Ctrl（macOS 为 ⌘）和一个按键', resetShortcut: '恢复默认'
+  , fileSaveLocation: '文件保存位置', fileSaveLocationHint: '设置 Markdown、HTML 和 PDF 的默认导出文件夹', defaultExportDirectory: '默认导出文件夹',
+  chooseEveryExport: '每次导出时选择', chooseExportLocation: '选择文章导出位置', chooseExportLocationHint: '选择一个文件夹保存本次导出。已有同名文件时会自动生成新名称。',
+  rememberExportLocation: '以后都保存到此目录', rememberExportLocationHint: '可随时在“设置 → 文件保存位置”中更改', selectFolder: '选择文件夹', openingFolderPicker: '正在打开…',
+  changeFolder: '更换文件夹', clearFolder: '清除', exportLocationSaved: '文件保存位置已更新', exportLocationCleared: '已恢复为每次导出时选择'
+  , exportSucceeded: '导出成功', exportSucceededHint: '“{fileName}”已经保存完成。', openContainingFolder: '打开所在文件夹', openExportedFile: '打开文件', maybeLater: '以后再说'
 })
 
 Object.assign(messages.en, {
@@ -44,11 +49,16 @@ Object.assign(messages.en, {
   more: 'More', moreActions: 'More actions', aiVersionHistory: 'AI version history',
   exportMarkdown: 'Export Markdown', exportHtml: 'Export HTML', exportPdf: 'Export PDF', printArticle: 'Print', deleteNote: 'Delete note',
   exportingHtml: 'Exporting HTML…', exportingPdf: 'Exporting PDF…', preparingPrint: 'Preparing to print…',
-  htmlExported: 'HTML exported', pdfExported: 'PDF exported',
+  htmlExported: 'HTML exported', pdfExported: 'PDF exported', markdownExported: 'Markdown exported',
   htmlExportFailed: 'Could not export HTML. Try again.', pdfExportFailed: 'Could not export PDF. Try again.', printFailed: 'Could not print. Try again.',
   pdfTooLong: 'This article is too long to export safely. Use Print to save as PDF, or split the article and try again.',
   shortcutSettings: 'Shortcuts', shortcutSettingsHint: 'Browse and customize shortcuts by feature', editorShortcuts: 'Editor',
   editorModeShortcut: 'Switch editor mode', editorModeShortcutHint: 'Switch between instant editing and Markdown. Stored on this device only.',
   recordShortcut: 'Click, then press a new shortcut', pressShortcut: 'Press a new shortcut',
   shortcutRequiresModifier: 'Press Ctrl (⌘ on macOS) together with another key', resetShortcut: 'Reset'
+  , fileSaveLocation: 'File save location', fileSaveLocationHint: 'Set the default folder for Markdown, HTML, and PDF exports', defaultExportDirectory: 'Default export folder',
+  chooseEveryExport: 'Choose on every export', chooseExportLocation: 'Choose article export location', chooseExportLocationHint: 'Choose a folder for this export. A new name is created when a file already exists.',
+  rememberExportLocation: 'Always save to this folder', rememberExportLocationHint: 'You can change it later in Settings → File save location', selectFolder: 'Choose folder', openingFolderPicker: 'Opening…',
+  changeFolder: 'Change folder', clearFolder: 'Clear', exportLocationSaved: 'File save location updated', exportLocationCleared: 'Export location will be chosen each time'
+  , exportSucceeded: 'Export complete', exportSucceededHint: '“{fileName}” has been saved.', openContainingFolder: 'Show in folder', openExportedFile: 'Open file', maybeLater: 'Maybe later'
 })

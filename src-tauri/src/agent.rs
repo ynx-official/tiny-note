@@ -3502,7 +3502,7 @@ fn record_usage(state: &AppState, input: UsageInput<'_>) -> Result<(), AppError>
 mod tests {
     use super::*;
     use crate::init_database;
-    use std::collections::HashMap;
+    use std::collections::{HashMap, HashSet};
     use std::sync::Mutex;
 
     fn test_state() -> AppState {
@@ -3515,6 +3515,7 @@ mod tests {
             db: Arc::new(Mutex::new(conn)),
             data_dir,
             cancels: Arc::new(Mutex::new(HashMap::new())),
+            exported_files: Arc::new(Mutex::new(HashSet::new())),
         }
     }
 

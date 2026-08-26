@@ -2,7 +2,7 @@
 import { computed, onMounted, ref, watch } from 'vue'
 import { storeToRefs } from 'pinia'
 import { useI18n } from 'vue-i18n'
-import { AlertCircle, Check, ChevronDown, ChevronRight, Cpu, FlaskConical, Globe2, Info, Keyboard, Languages, LoaderCircle, Moon, Monitor, Palette, Pencil, Plus, RefreshCw, Search, Sparkles, Sun, Trash2, Wrench, X } from 'lucide-vue-next'
+import { AlertCircle, Check, ChevronDown, ChevronRight, Cpu, FlaskConical, FolderDown, FolderOpen, Globe2, Info, Keyboard, Languages, LoaderCircle, Moon, Monitor, Palette, Pencil, Plus, RefreshCw, Search, Sparkles, Sun, Trash2, Wrench, X } from 'lucide-vue-next'
 import { invoke } from '../services/tauri'
 import { appUpdater, BUNDLED_APP_VERSION } from '../services/appUpdater'
 import { requestConfirmation, showToast } from '../services/appFeedback'
@@ -10,6 +10,7 @@ import { useAppStore } from '../stores/app'
 import { shortcutDisplayParts, shortcutFromKeyboardEvent } from '../utils/keyboardShortcut'
 import { modelProviderLabel } from '../utils/modelProvider'
 import AgentToolsCatalog from '../components/AgentToolsCatalog.vue'
+import { pickNativeExportDirectory } from '../services/exportLocation'
 import doubaoIcon from '../assets/providers/doubao.png'
 import qwenIcon from '../assets/providers/qwen.png'
 import zhipuIcon from '../assets/providers/zhipu.png'
@@ -50,6 +51,7 @@ const backupStatus = ref('')
 const selectedImageModelIds = ref([])
 const shortcutRecording = ref(false)
 const shortcutError = ref('')
+const exportDirectoryBusy = ref(false)
 
 const providerOptions = [
   { key: 'doubao', label: '豆包', mark: '豆', icon: doubaoIcon, baseUrl: 'https://ark.cn-beijing.volces.com/api/v3' },
@@ -80,6 +82,7 @@ const editorModeShortcutParts = computed(() => shortcutDisplayParts(editorModeSh
 const settingsSections = computed(() => [
   { id: 'appearance', label: t('appearance'), description: t('appearanceHint'), icon: Palette },
   { id: 'shortcuts', label: t('shortcutSettings'), description: t('shortcutSettingsHint'), icon: Keyboard },
+  { id: 'files', label: t('fileSaveLocation'), description: t('fileSaveLocationHint'), icon: FolderDown },
   { id: 'ai', label: t('aiWriting'), description: t('aiWritingHint'), icon: Sparkles },
   { id: 'agent-tools', label: locale.value === 'zh-CN' ? 'Agent 工具（实验）' : 'Agent tools (Experimental)', description: locale.value === 'zh-CN' ? '查看实验能力和强制审批策略' : 'Inspect experimental capabilities and approval policies', icon: Wrench },
   { id: 'models', label: t('models'), description: t('modelsHint'), icon: Cpu },
@@ -164,6 +167,32 @@ async function selectLanguage(value) {
   locale.value = value
   showLanguageDropdown.value = false
   await save()
+}
+
+async function chooseDefaultExportDirectory() {
+  if (exportDirectoryBusy.value) return
+  exportDirectoryBusy.value = true
+  try {
+    const directory = await pickNativeExportDirectory(settings.value.exportDirectory)
+    if (!directory) return
+    await appStore.saveSettings({ ...settings.value, exportDirectory: directory })
+    showToast(t('exportLocationSaved'))
+  } catch (error) {
+    showToast(error?.message || t('htmlExportFailed'), { tone: 'error' })
+  } finally {
+    exportDirectoryBusy.value = false
+  }
+}
+
+async function clearDefaultExportDirectory() {
+  if (exportDirectoryBusy.value) return
+  exportDirectoryBusy.value = true
+  try {
+    await appStore.saveSettings({ ...settings.value, exportDirectory: '' })
+    showToast(t('exportLocationCleared'))
+  } finally {
+    exportDirectoryBusy.value = false
+  }
 }
 
 function beginShortcutRecording() {
@@ -639,6 +668,21 @@ watch(filteredSections, sections => {
                 <span id="editor-mode-shortcut-help" class="settings-shortcut-status" :class="{ error: shortcutError }" role="status" aria-live="polite">{{ shortcutError || t('recordShortcut') }}</span>
               </div>
             </div>
+          </section>
+
+          <section v-else-if="activeSectionId === 'files'" class="settings-detail-section settings-files-section">
+            <div class="settings-section-kicker">{{ t('fileSaveLocation') }}</div>
+            <div class="settings-setting-row settings-export-directory-row">
+              <div class="settings-setting-copy"><strong>{{ t('defaultExportDirectory') }}</strong><span>{{ t('fileSaveLocationHint') }}</span></div>
+              <div class="settings-export-directory-control">
+                <div data-testid="export-directory-path" class="settings-export-directory-path" :title="settings.exportDirectory || t('chooseEveryExport')"><FolderOpen :size="15" /><span>{{ settings.exportDirectory || t('chooseEveryExport') }}</span></div>
+                <div class="settings-export-directory-actions">
+                  <button data-testid="choose-export-directory" type="button" class="settings-fetch-button" :disabled="exportDirectoryBusy" @click="chooseDefaultExportDirectory"><LoaderCircle v-if="exportDirectoryBusy" class="spinning" :size="14" /><FolderOpen v-else :size="14" />{{ settings.exportDirectory ? t('changeFolder') : t('selectFolder') }}</button>
+                  <button v-if="settings.exportDirectory" data-testid="clear-export-directory" type="button" class="settings-shortcut-reset" :disabled="exportDirectoryBusy" @click="clearDefaultExportDirectory">{{ t('clearFolder') }}</button>
+                </div>
+              </div>
+            </div>
+            <p class="settings-inline-note">{{ t('chooseExportLocationHint') }}</p>
           </section>
 
           <section v-else-if="activeSectionId === 'ai'" class="settings-detail-section">

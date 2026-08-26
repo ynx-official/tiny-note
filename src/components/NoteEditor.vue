@@ -21,7 +21,8 @@ import CodeBlockComponent from './CodeBlockComponent.vue'
 import MarkdownSourceEditor from './MarkdownSourceEditor.vue'
 import MarkdownMessage from './MarkdownMessage.vue'
 import NoteAssistantSidebar from './NoteAssistantSidebar.vue'
-import { BookOpen, Bold, CalendarDays, Check, ChevronDown, CircleHelp, Columns2, Copy, FileCode2, FileText, Italic, Languages, LoaderCircle, Maximize2, MessageSquare, Pin, RotateCcw, Send, ShieldCheck, Table2, ThumbsDown, ThumbsUp, Underline as UnderlineIcon, Strikethrough, List, ListOrdered, ListChecks, Quote, Code2, Undo2, Redo2, Eraser, Link2, Highlighter, PenLine, AlignLeft, AlignCenter, AlignRight, Plus, PlusCircle, MoreHorizontal, Layers, Sparkles, Trash2, Download, Printer, Workflow, X, Zap } from 'lucide-vue-next'
+import FridayDropdownChevron from './FridayDropdownChevron.vue'
+import { BookOpen, Bold, CalendarDays, Check, CircleHelp, Columns2, Copy, FileCode2, FileText, Italic, Languages, LoaderCircle, Maximize2, MessageSquare, Pin, RotateCcw, Send, ShieldCheck, Table2, ThumbsDown, ThumbsUp, Underline as UnderlineIcon, Strikethrough, List, ListOrdered, ListChecks, Quote, Code2, Undo2, Redo2, Eraser, Link2, Highlighter, PenLine, AlignLeft, AlignCenter, AlignRight, Plus, PlusCircle, MoreHorizontal, Layers, Sparkles, Trash2, Download, Printer, Workflow, X, Zap } from 'lucide-vue-next'
 import { useNotesStore } from '../stores/notes'
 import { useLibraryStore } from '../stores/library'
 import { useAppStore } from '../stores/app'
@@ -30,11 +31,13 @@ import { useI18n } from 'vue-i18n'
 import { createNoteExtensions } from '../editor/noteExtensions'
 import { DEFAULT_NOTE_MODE, NOTE_MODES, applyMarkdownSourceToEditor, clampSplitRatio, isRichClipboardHtml, markdownToEditorHtml, sanitizeEditorHtml, scrollOffset, scrollProgress } from '../utils/noteMarkdown'
 import { matchesKeyboardShortcut, shortcutDisplayParts } from '../utils/keyboardShortcut'
-import { createSafeExportFilename, downloadBlob, downloadNoteHtml, exportNotePdf, printNote as printNoteDocument } from '../utils/noteExport'
+import { createSafeExportFilename, downloadNoteHtml, exportNotePdf, printNote as printNoteDocument } from '../utils/noteExport'
 import { prepareTaskFlight } from '../utils/taskFlight'
 import { markMermaidDiagramForEditing } from '../utils/mermaidEditorState'
 import { requestPrompt } from '../services/promptDialog'
 import { requestConfirmation, showToast } from '../services/appFeedback'
+import { saveExportBlob } from '../services/exportLocation'
+import { showExportSuccess } from '../services/exportSuccess'
 
 const lowlight = createLowlight()
 lowlight.register('javascript', javascript); lowlight.register('typescript', typescript); lowlight.register('python', python); lowlight.register('json', json); lowlight.register('html', xml); lowlight.register('xml', xml); lowlight.register('css', css); lowlight.register('bash', bash); lowlight.register('sql', sql); lowlight.register('markdown', markdown); lowlight.register('yaml', yaml); lowlight.register('rust', rust)
@@ -216,7 +219,22 @@ const knowledgeGroups = computed(() => [
 function shouldShowBubbleMenu({ state }) { return richMode.value && !aiOutputOpen.value && !state.selection.empty && state.doc.textBetween(state.selection.from, state.selection.to, '\n').trim().length > 0 }
 const textColorPalette = ['#1c1917', '#dc2626', '#ea580c', '#ca8a04', '#16a34a', '#0891b2', '#2563eb', '#7c3aed', '#db2777']
 const highlightPalette = ['#fef08a', '#fed7aa', '#fecaca', '#bbf7d0', '#bae6fd', '#c7d2fe', '#e9d5ff', '#fbcfe8']
-const currentHeadingLabel = computed(() => { editorStateTick.value; const instance = editor.value; if (!instance || instance.isActive('noteTitle')) return '标题'; for (const level of [1, 2, 3]) if (instance.isActive('heading', { level })) return `H${level}`; return '正文' })
+const currentHeadingLabel = computed(() => {
+  editorStateTick.value
+  const instance = editor.value
+  if (!instance || instance.isActive('noteTitle')) return '标题'
+  for (const level of [1, 2, 3]) {
+    if (instance.isActive('heading', { level })) return `标题 ${level}`
+  }
+  return instance.isActive('smallParagraph') ? '小正' : '正文'
+})
+const canSetNoteTitle = computed(() => {
+  editorStateTick.value
+  const instance = editor.value
+  if (!instance) return false
+  const { $from } = instance.state.selection
+  return $from.depth === 1 && $from.index(0) === 0
+})
 
 function noteContentSignature(note) {
   if (!note) return ''
@@ -427,6 +445,7 @@ function handleMoreMenuKeydown(event) {
 }
 
 function handleDocumentPointerDown(event) {
+  if (!event.target.closest('.toolbar-menu-anchor')) closeToolbarMenus()
   if (!event.target.closest('.mode-menu-anchor')) modeMenuOpen.value = false
   if (!event.target.closest('.more-menu-anchor')) moreOpen.value = false
 }
@@ -627,6 +646,12 @@ async function setMarkdownHeading(level) {
   await nextTick()
   commitMarkdown(props.note)
 }
+async function setMarkdownSmallBody() {
+  if (!sourceEditorRef.value?.setSmallParagraph()) return
+  headingOpen.value = false
+  await nextTick()
+  commitMarkdown(props.note)
+}
 function hasNoteContextConsent() {
   const key = `tiny-note-context-consent:${contextConsentModelId.value}`
   return localStorage.getItem(key) === 'granted'
@@ -778,11 +803,19 @@ async function runArticleExport(format) {
     const snapshot = await prepareExportSnapshot()
     if (!snapshot) return
     if (format === 'html') {
-      downloadNoteHtml(snapshot, { lang: locale.value })
-      showToast(t('htmlExported'))
+      let artifact
+      downloadNoteHtml(snapshot, { lang: locale.value, download: (blob, filename) => { artifact = { blob, filename } } })
+      const result = await saveExportBlob(artifact.blob, artifact.filename, { appStore })
+      if (result.cancelled) return
+      if (result.path) showExportSuccess(result)
+      else showToast(t('htmlExported'))
     } else if (format === 'pdf') {
-      await exportNotePdf(snapshot)
-      showToast(t('pdfExported'))
+      let artifact
+      await exportNotePdf(snapshot, { download: (blob, filename) => { artifact = { blob, filename } } })
+      const result = await saveExportBlob(artifact.blob, artifact.filename, { appStore })
+      if (result.cancelled) return
+      if (result.path) showExportSuccess(result)
+      else showToast(t('pdfExported'))
     } else if (format === 'print') {
       await printNoteDocument(snapshot)
     }
@@ -800,7 +833,10 @@ async function exportMarkdown() {
   if (!props.note || !editor.value || !await flushLatestContent()) return
   const markdown = props.note.contentMarkdown || getEditorMarkdown()
   const blob = new Blob([markdown], { type: 'text/markdown;charset=utf-8' })
-  downloadBlob(blob, createSafeExportFilename(props.note.title, 'md'))
+  const result = await saveExportBlob(blob, createSafeExportFilename(props.note.title, 'md'), { appStore })
+  if (result.cancelled) return
+  if (result.path) showExportSuccess(result)
+  else showToast(t('markdownExported'))
 }
 function exportHtml() { return runArticleExport('html') }
 function exportPdf() { return runArticleExport('pdf') }
@@ -1171,6 +1207,18 @@ function setHeading(level) {
   else editor.value.chain().focus().toggleHeading({ level }).run()
   headingOpen.value = false
 }
+function setNoteTitle() {
+  if (!editor.value || !canSetNoteTitle.value) return
+  editor.value.chain().focus().setNode('noteTitle').run()
+  headingOpen.value = false
+}
+function setSmallBody() {
+  if (!editor.value || editor.value.isActive('noteTitle')) return
+  const chain = editor.value.chain().focus()
+  if (editor.value.isActive('smallParagraph')) chain.setParagraph().run()
+  else chain.setNode('smallParagraph').run()
+  headingOpen.value = false
+}
 function clearRichFormatting() {
   if (!editor.value) return
   const chain = editor.value.chain().focus().unsetAllMarks()
@@ -1247,7 +1295,7 @@ async function createKnowledgeFromEditor() {
         <button :title="t('redo')" :disabled="!canRedo" @click="editor?.chain().focus().redo().run()"><Redo2 :size="19" /></button>
         <button title="清除格式" @click="clearRichFormatting"><Eraser :size="19" /></button>
         <button title="链接" :class="{ pressed: linkActive }" :disabled="!canEditLink" @click="editLink"><Link2 :size="19" /></button><i></i>
-        <span class="toolbar-menu-anchor"><button title="插入" @click="toggleInsertMenu"><PlusCircle :size="19" /><span class="toolbar-label">插入</span><span class="toolbar-chevron">▾</span></button><div v-if="insertOpen" class="toolbar-insert-menu insert-command-menu">
+        <span class="toolbar-menu-anchor"><button title="插入" @click="toggleInsertMenu"><PlusCircle :size="19" /><span class="toolbar-label">插入</span><FridayDropdownChevron /></button><div v-if="insertOpen" class="toolbar-insert-menu insert-command-menu">
           <div class="insert-submenu-anchor"><button class="insert-menu-item" @click.stop="tablePickerOpen = !tablePickerOpen"><span class="insert-menu-icon">▦</span><span>表格</span><span class="insert-menu-arrow">›</span></button><div v-if="tablePickerOpen" class="table-picker-menu" @click.stop><div class="table-picker-label">{{ tableRows }} × {{ tableCols }}</div><div v-for="row in 10" :key="`table-row-${row}`" class="table-picker-row"><button v-for="col in 10" :key="`table-cell-${row}-${col}`" class="table-picker-cell" :class="{ active: row <= tableRows && col <= tableCols }" @mouseenter="selectTableCell(row, col)" @click="insertTable(row, col)"></button></div></div></div>
           <button class="insert-menu-item" @click="openImageDialog"><span class="insert-menu-icon">▧</span><span>图片</span></button>
           <button class="insert-menu-item" @click="insertCodeBlock"><Code2 :size="15" /><span>代码块</span></button>
@@ -1260,9 +1308,19 @@ async function createKnowledgeFromEditor() {
         <button @click="toggle('toggleItalic')"><Italic :size="19" /></button>
         <button @click="toggle('toggleUnderline')"><UnderlineIcon :size="19" /></button>
         <button @click="toggle('toggleStrike')"><Strikethrough :size="19" /></button>
-        <span class="toolbar-menu-anchor color-menu-anchor"><button title="文字颜色" :class="{ pressed: textColorOpen }" @click="closeToolbarMenus(); textColorOpen = !textColorOpen"><PenLine :size="19" /><span class="toolbar-chevron">▾</span></button><div v-if="textColorOpen" class="editor-color-menu"><strong>文字颜色</strong><button class="color-reset" @click="setTextColor('inherit')">默认颜色</button><div class="editor-color-grid"><button v-for="color in textColorPalette" :key="color" class="editor-color-swatch" :style="{ backgroundColor: color }" :title="color" @click="setTextColor(color)"></button></div></div></span>
-        <span class="toolbar-menu-anchor color-menu-anchor"><button title="背景颜色" :class="{ pressed: highlightOpen }" @click="closeToolbarMenus(); highlightOpen = !highlightOpen"><Highlighter :size="19" /><span class="toolbar-chevron">▾</span></button><div v-if="highlightOpen" class="editor-color-menu"><strong>背景颜色</strong><button class="color-reset" @click="setHighlightColor('none')">无背景</button><div class="editor-color-grid"><button v-for="color in highlightPalette" :key="color" class="editor-color-swatch" :style="{ backgroundColor: color }" :title="color" @click="setHighlightColor(color)"></button></div></div></span><i></i>
-        <span class="toolbar-menu-anchor heading-menu-anchor"><button title="标题" :class="{ pressed: headingOpen }" @click="closeToolbarMenus(); headingOpen = !headingOpen"><span class="toolbar-label heading-label">{{ currentHeadingLabel }}</span><span class="toolbar-chevron">▾</span></button><div v-if="headingOpen" class="editor-heading-menu"><button @click="setHeading(0)">正文</button><button @click="setHeading(1)">H1 标题</button><button @click="setHeading(2)">H2 标题</button><button @click="setHeading(3)">H3 标题</button></div></span><i></i>
+        <span class="toolbar-menu-anchor color-menu-anchor"><button title="文字颜色" :class="{ pressed: textColorOpen }" @click="closeToolbarMenus(); textColorOpen = !textColorOpen"><PenLine :size="19" /><FridayDropdownChevron /></button><div v-if="textColorOpen" class="editor-color-menu"><strong>文字颜色</strong><button class="color-reset" @click="setTextColor('inherit')">默认颜色</button><div class="editor-color-grid"><button v-for="color in textColorPalette" :key="color" class="editor-color-swatch" :style="{ backgroundColor: color }" :title="color" @click="setTextColor(color)"></button></div></div></span>
+        <span class="toolbar-menu-anchor color-menu-anchor"><button title="背景颜色" :class="{ pressed: highlightOpen }" @click="closeToolbarMenus(); highlightOpen = !highlightOpen"><Highlighter :size="19" /><FridayDropdownChevron /></button><div v-if="highlightOpen" class="editor-color-menu"><strong>背景颜色</strong><button class="color-reset" @click="setHighlightColor('none')">无背景</button><div class="editor-color-grid"><button v-for="color in highlightPalette" :key="color" class="editor-color-swatch" :style="{ backgroundColor: color }" :title="color" @click="setHighlightColor(color)"></button></div></div></span><i></i>
+        <span class="toolbar-menu-anchor heading-menu-anchor">
+          <button title="标题" :class="{ pressed: headingOpen }" @click="closeToolbarMenus(); headingOpen = !headingOpen"><span class="toolbar-label heading-label">{{ currentHeadingLabel }}</span><FridayDropdownChevron /></button>
+          <div v-if="headingOpen" class="editor-heading-menu">
+            <button class="heading-preview" :class="{ active: editor?.isActive('noteTitle') }" :disabled="!canSetNoteTitle" @click="setNoteTitle"><span class="note-title-menu-label">标题</span></button>
+            <button class="heading-preview" :class="{ active: editor?.isActive('heading', { level: 1 }) }" :disabled="editor?.isActive('noteTitle')" @click="setHeading(1)"><span class="heading-level-1">标题 1</span></button>
+            <button class="heading-preview" :class="{ active: editor?.isActive('heading', { level: 2 }) }" :disabled="editor?.isActive('noteTitle')" @click="setHeading(2)"><span class="heading-level-2">标题 2</span></button>
+            <button class="heading-preview" :class="{ active: editor?.isActive('heading', { level: 3 }) }" :disabled="editor?.isActive('noteTitle')" @click="setHeading(3)"><span class="heading-level-3">标题 3</span></button>
+            <button class="heading-preview" :class="{ active: editor?.isActive('paragraph') }" :disabled="editor?.isActive('noteTitle')" @click="setHeading(0)"><span>正文</span></button>
+            <button class="heading-preview" :class="{ active: editor?.isActive('smallParagraph') }" :disabled="editor?.isActive('noteTitle')" @click="setSmallBody"><span class="small-body-label">小正</span></button>
+          </div>
+        </span><i></i>
         <button title="项目列表" @click="toggle('toggleBulletList')"><List :size="19" /></button>
         <button title="编号列表" @click="toggle('toggleOrderedList')"><ListOrdered :size="19" /></button>
         <button title="任务列表" @click="toggle('toggleTaskList')"><ListChecks :size="19" /></button><i></i>
@@ -1279,7 +1337,17 @@ async function createKnowledgeFromEditor() {
             <button title="斜体" @click="applyMarkdownFormat('italic')"><Italic :size="19" /></button>
             <button title="删除线" @click="applyMarkdownFormat('strike')"><Strikethrough :size="19" /></button>
             <button title="行内代码" @click="applyMarkdownFormat('code')"><Code2 :size="19" /></button><i></i>
-            <span class="toolbar-menu-anchor heading-menu-anchor"><button title="标题" :class="{ pressed: headingOpen }" @click="closeToolbarMenus(); headingOpen = !headingOpen"><span class="toolbar-label heading-label">标题</span><span class="toolbar-chevron">▾</span></button><div v-if="headingOpen" class="editor-heading-menu"><button @click="setMarkdownHeading(0)">正文</button><button @click="setMarkdownHeading(1)">H1 标题</button><button @click="setMarkdownHeading(2)">H2 标题</button><button @click="setMarkdownHeading(3)">H3 标题</button></div></span><i></i>
+            <span class="toolbar-menu-anchor heading-menu-anchor">
+              <button title="标题" :class="{ pressed: headingOpen }" @click="closeToolbarMenus(); headingOpen = !headingOpen"><span class="toolbar-label heading-label">标题</span><FridayDropdownChevron /></button>
+              <div v-if="headingOpen" class="editor-heading-menu">
+                <button class="heading-preview" @click="setMarkdownHeading(1)"><span class="note-title-menu-label">标题</span></button>
+                <button class="heading-preview" @click="setMarkdownHeading(1)"><span class="heading-level-1">标题 1</span></button>
+                <button class="heading-preview" @click="setMarkdownHeading(2)"><span class="heading-level-2">标题 2</span></button>
+                <button class="heading-preview" @click="setMarkdownHeading(3)"><span class="heading-level-3">标题 3</span></button>
+                <button class="heading-preview" @click="setMarkdownHeading(0)"><span>正文</span></button>
+                <button class="heading-preview" @click="setMarkdownSmallBody"><span class="small-body-label">小正</span></button>
+              </div>
+            </span><i></i>
             <button title="项目列表" @click="applyMarkdownFormat('bullet')"><List :size="19" /></button>
             <button title="编号列表" @click="applyMarkdownFormat('ordered')"><ListOrdered :size="19" /></button>
             <button title="任务列表" @click="applyMarkdownFormat('task')"><ListChecks :size="19" /></button>
@@ -1312,7 +1380,7 @@ async function createKnowledgeFromEditor() {
           <button type="button" class="editor-mode-trigger" :aria-expanded="modeMenuOpen" aria-haspopup="menu" :title="`文章模式：${currentMode.label}（${modeShortcutLabel}）`" @click="toggleModeMenu" @keydown.esc.stop="modeMenuOpen = false">
             <component :is="currentMode.icon" :size="16" />
             <span class="editor-mode-label">{{ currentMode.label }}</span>
-            <ChevronDown :size="13" />
+            <FridayDropdownChevron />
           </button>
           <div v-if="modeMenuOpen" ref="modeMenuRef" class="editor-mode-menu" role="menu" aria-label="文章模式" @keydown="handleModeMenuKeydown" @click.stop>
             <button v-for="(mode, index) in editorModes" :key="mode.id" type="button" role="menuitemradio" :aria-checked="editorMode === mode.id" :tabindex="index === modeMenuIndex ? 0 : -1" @focus="modeMenuIndex = index" @click="changeEditorMode(mode.id)">
@@ -1374,7 +1442,7 @@ async function createKnowledgeFromEditor() {
         <div class="tiny-note-ai-input-actions">
           <div class="tiny-note-ai-action-left">
             <div class="tiny-note-command-dropdown">
-              <button class="tiny-note-command-btn" :class="{ active: commandMenuOpen }" @click.stop="toggleCommandMenu"><Zap :size="13" /><span>AI 指令</span><ChevronDown :size="12" /></button>
+              <button class="tiny-note-command-btn" :class="{ active: commandMenuOpen }" @click.stop="toggleCommandMenu"><Zap :size="13" /><span>AI 指令</span><FridayDropdownChevron /></button>
               <Transition name="tiny-note-command-transition">
                 <div v-if="commandMenuOpen" class="tiny-note-command-menu" :class="`menu-${commandMenuDirection}`" @click.stop>
                   <button class="tiny-note-command-item" @click="selectAiCommand('translate', $event)"><Languages :size="14" /><span>翻译</span></button>

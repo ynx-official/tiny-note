@@ -78,6 +78,11 @@ function renderBlockHtml(node) {
     const style = align ? ` style="text-align: ${align}"` : ''
     return `<p${style}>${renderInlineHtml(node.content)}</p>`
   }
+  if (node.type === 'smallParagraph') {
+    const align = safeAlign(node.attrs?.textAlign)
+    const style = align ? ` style="text-align: ${align}"` : ''
+    return `<p data-small-text="true"${style}>${renderInlineHtml(node.content)}</p>`
+  }
   if (node.type === 'heading') {
     const level = Math.min(6, Math.max(1, Number(node.attrs?.level) || 1))
     const align = safeAlign(node.attrs?.textAlign)
@@ -183,6 +188,26 @@ const NoteTitleKeyboard = Extension.create({
   }
 })
 
+// Friday keeps auxiliary copy as a dedicated block so it survives rich-text
+// and Markdown round-trips instead of becoming a visual-only font-size change.
+const SmallParagraph = Node.create({
+  name: 'smallParagraph',
+  group: 'block',
+  content: 'inline*',
+
+  parseHTML() {
+    return [{ tag: 'p[data-small-text]', priority: 60 }]
+  },
+
+  renderHTML({ HTMLAttributes }) {
+    return ['p', { ...HTMLAttributes, 'data-small-text': 'true' }, 0]
+  },
+
+  renderMarkdown(node, helpers) {
+    return `<p data-small-text="true">${helpers.renderChildren(node.content || [])}</p>`
+  }
+})
+
 const MarkdownTextStyle = TextStyle.extend({
   renderMarkdown(node, helpers) {
     const color = safeColorValue(node.attrs?.color)
@@ -228,6 +253,7 @@ export function createNoteExtensions({ lowlight, codeBlockNodeView, placeholder,
     MarkdownParagraph,
     NoteTitle,
     NoteTitleKeyboard,
+    SmallParagraph,
     MarkdownHeading,
     Underline,
     Link.configure({ openOnClick: false }),
@@ -243,7 +269,7 @@ export function createNoteExtensions({ lowlight, codeBlockNodeView, placeholder,
     MarkdownSuperscript,
     MarkdownTextStyle,
     Color,
-    TextAlign.configure({ types: ['noteTitle', 'heading', 'paragraph'] }),
+    TextAlign.configure({ types: ['noteTitle', 'smallParagraph', 'heading', 'paragraph'] }),
     Markdown.configure({ markedOptions: { gfm: true } })
   ]
 

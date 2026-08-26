@@ -9,10 +9,12 @@ import AppShell from './components/AppShell.vue'
 import AppPromptDialog from './components/AppPromptDialog.vue'
 import AppFeedbackHost from './components/AppFeedbackHost.vue'
 import AppUpdateDialog from './components/AppUpdateDialog.vue'
+import AppExportLocationDialog from './components/AppExportLocationDialog.vue'
+import AppExportSuccessDialog from './components/AppExportSuccessDialog.vue'
 
 const route = useRoute(); const { locale } = useI18n(); const notes = useNotesStore(); const library = useLibraryStore(); const tasks = useTasksStore()
 const active = computed(() => route.path === '/' || route.path.startsWith('/home') || route.path.startsWith('/chat') ? 'home' : route.path.startsWith('/library') ? 'library' : route.path.startsWith('/images') ? 'images' : route.path.startsWith('/tasks') ? 'tasks' : route.path.startsWith('/settings') ? 'settings' : 'notes')
 onMounted(async () => { await Promise.allSettled([notes.load(), library.load(), tasks.initialize()]) })
 watch(locale, value => localStorage.setItem('tiny-note-language', value))
 </script>
-<template><AppShell :active="active"><router-view /></AppShell><AppPromptDialog /><AppFeedbackHost /><AppUpdateDialog /></template>
+<template><AppShell :active="active"><router-view /></AppShell><AppPromptDialog /><AppFeedbackHost /><AppUpdateDialog /><AppExportLocationDialog /><AppExportSuccessDialog /></template>

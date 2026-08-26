@@ -421,7 +421,7 @@ mod tests {
     use super::*;
     use rusqlite::Connection;
     use std::{
-        collections::HashMap,
+        collections::{HashMap, HashSet},
         sync::{Arc, Mutex},
     };
 
@@ -433,6 +433,7 @@ mod tests {
             db: Arc::new(Mutex::new(Connection::open_in_memory().unwrap())),
             data_dir: root,
             cancels: Arc::new(Mutex::new(HashMap::new())),
+            exported_files: Arc::new(Mutex::new(HashSet::new())),
         }
     }
 

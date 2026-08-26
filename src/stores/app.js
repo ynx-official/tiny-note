@@ -6,7 +6,7 @@ import {
   normalizeShortcut
 } from '../utils/keyboardShortcut'
 
-const DEFAULT_SETTINGS = { theme: 'system', language: 'zh-CN', fimEnabled: false }
+const DEFAULT_SETTINGS = { theme: 'system', language: 'zh-CN', fimEnabled: false, exportDirectory: '' }
 let initialization = null
 let stopSystemThemeListener = null
 

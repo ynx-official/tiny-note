@@ -60,4 +60,19 @@ describe('MarkdownSourceEditor', () => {
 
     wrapper.unmount()
   })
+
+  it('applies and removes the Friday small body block in Markdown source', () => {
+    const wrapper = mount(MarkdownSourceEditor, {
+      props: { modelValue: '辅助说明', ariaLabel: '源码' }
+    })
+
+    wrapper.vm.view.dispatch({ selection: { anchor: 0, head: 4 } })
+    expect(wrapper.vm.setSmallParagraph()).toBe(true)
+    expect(wrapper.vm.view.state.doc.toString()).toBe('<p data-small-text="true">辅助说明</p>')
+
+    wrapper.vm.view.dispatch({ selection: { anchor: 0, head: wrapper.vm.view.state.doc.length } })
+    expect(wrapper.vm.setSmallParagraph()).toBe(true)
+    expect(wrapper.vm.view.state.doc.toString()).toBe('辅助说明')
+    wrapper.unmount()
+  })
 })

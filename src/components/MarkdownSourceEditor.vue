@@ -169,7 +169,38 @@ function setHeading(level = 0) {
   return replaceLinePrefixes(prefix, /^(?: {0,3}#{1,6}\s*)/)
 }
 
-defineExpose({ view, focus, getScrollElement, setScrollProgress, applyFormat, setHeading })
+function setSmallParagraph() {
+  const instance = view.value
+  if (!instance || props.readonly) return false
+
+  const selection = instance.state.selection.main
+  const firstLine = instance.state.doc.lineAt(selection.from)
+  const selectedLastLine = instance.state.doc.lineAt(selection.to)
+  const lastLineNumber = selection.to > selection.from && selectedLastLine.from === selection.to
+    ? selectedLastLine.number - 1
+    : selectedLastLine.number
+  const lines = []
+  const smallParagraphPattern = /^<p data-small-text="true">([\s\S]*)<\/p>$/
+
+  for (let number = firstLine.number; number <= lastLineNumber; number += 1) {
+    lines.push(instance.state.doc.line(number))
+  }
+
+  const shouldUnwrap = lines.length > 0 && lines.every(line => smallParagraphPattern.test(line.text))
+  const changes = lines.map(line => ({
+    from: line.from,
+    to: line.to,
+    insert: shouldUnwrap
+      ? line.text.match(smallParagraphPattern)?.[1] || ''
+      : `<p data-small-text="true">${line.text}</p>`
+  }))
+
+  instance.dispatch({ changes, scrollIntoView: true })
+  instance.focus()
+  return true
+}
+
+defineExpose({ view, focus, getScrollElement, setScrollProgress, applyFormat, setHeading, setSmallParagraph })
 </script>
 
 <template>

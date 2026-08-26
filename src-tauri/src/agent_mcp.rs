@@ -357,7 +357,7 @@ pub fn agent_mcp_refresh(state: State<'_, AppState>, id: String) -> Result<McpSe
 mod tests {
     use super::*;
     use rusqlite::Connection;
-    use std::collections::HashMap;
+    use std::collections::{HashMap, HashSet};
     use std::sync::{Arc, Mutex};
     use uuid::Uuid;
 
@@ -367,6 +367,7 @@ mod tests {
             db: Arc::new(Mutex::new(Connection::open_in_memory().unwrap())),
             data_dir,
             cancels: Arc::new(Mutex::new(HashMap::new())),
+            exported_files: Arc::new(Mutex::new(HashSet::new())),
         }
     }
 

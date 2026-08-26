@@ -16,6 +16,8 @@ const noteExportMocks = vi.hoisted(() => ({
   exportNotePdf: vi.fn(),
   printNote: vi.fn()
 }))
+const exportLocationMocks = vi.hoisted(() => ({ saveExportBlob: vi.fn(async () => ({ fileName: 'exported' })) }))
+const exportSuccessMocks = vi.hoisted(() => ({ showExportSuccess: vi.fn() }))
 vi.mock('@tauri-apps/api/core', () => ({
   Channel: class Channel {
     onmessage = null
@@ -28,6 +30,8 @@ vi.mock('../utils/noteExport', async importOriginal => ({
   exportNotePdf: noteExportMocks.exportNotePdf,
   printNote: noteExportMocks.printNote
 }))
+vi.mock('../services/exportLocation', () => ({ saveExportBlob: exportLocationMocks.saveExportBlob }))
+vi.mock('../services/exportSuccess', () => ({ showExportSuccess: exportSuccessMocks.showExportSuccess }))
 
 if (!window.Range.prototype.getClientRects) window.Range.prototype.getClientRects = () => []
 if (!window.Range.prototype.getBoundingClientRect) window.Range.prototype.getBoundingClientRect = () => ({ left: 0, right: 0, top: 0, bottom: 0, width: 0, height: 0 })
@@ -47,6 +51,8 @@ function note(id = 'note-1') {
 }
 
 async function mountEditor(activeNote = note(), extraProps = {}) {
+  noteExportMocks.downloadNoteHtml.mockImplementation((snapshot, options) => options.download(new globalThis.Blob(['html']), `${snapshot.title}.html`))
+  noteExportMocks.exportNotePdf.mockImplementation(async (snapshot, options) => options.download(new globalThis.Blob(['pdf']), `${snapshot.title}.pdf`))
   const pinia = createPinia()
   const appStore = useAppStore(pinia)
   const notesStore = useNotesStore(pinia)
@@ -84,6 +90,8 @@ afterEach(() => {
   noteExportMocks.downloadNoteHtml.mockReset()
   noteExportMocks.exportNotePdf.mockReset()
   noteExportMocks.printNote.mockReset()
+  exportLocationMocks.saveExportBlob.mockClear()
+  exportSuccessMocks.showExportSuccess.mockClear()
   delete window.__TAURI_INTERNALS__
 })
 
@@ -127,6 +135,18 @@ describe('NoteEditor article modes', () => {
     wrapper.unmount()
   })
 
+  it('shows the exported file actions after a desktop file is written', async () => {
+    exportLocationMocks.saveExportBlob.mockResolvedValueOnce({ path: 'D:\\Exports\\四种模式.html', fileName: '四种模式.html' })
+    const wrapper = await mountEditor()
+
+    await wrapper.get('button[title="更多"]').trigger('click')
+    await wrapper.findAll('.toolbar-more-menu button').find(button => button.text().includes('导出 HTML')).trigger('click')
+    await flushPromises()
+
+    expect(exportSuccessMocks.showExportSuccess).toHaveBeenCalledWith({ path: 'D:\\Exports\\四种模式.html', fileName: '四种模式.html' })
+    wrapper.unmount()
+  })
+
   it('flushes the latest Markdown draft before exporting HTML, PDF, or printing', async () => {
     const active = note('note-export')
     const wrapper = await mountEditor(active)
@@ -151,14 +171,14 @@ describe('NoteEditor article modes', () => {
         title: '最新草稿',
         contentHtml: expect.stringContaining('尚未经过 150ms 防抖')
       }),
-      { lang: 'zh-CN' }
+      expect.objectContaining({ lang: 'zh-CN', download: expect.any(Function) })
     )
     expect(noteExportMocks.downloadNoteHtml.mock.calls[0][0].contentHtml).not.toContain('最新草稿')
 
     await wrapper.get('button[title="更多"]').trigger('click')
     await wrapper.findAll('.toolbar-more-menu button').find(button => button.text().includes('导出 PDF')).trigger('click')
     await flushPromises()
-    expect(noteExportMocks.exportNotePdf).toHaveBeenCalledWith(expect.objectContaining({ contentHtml: expect.stringContaining('尚未经过 150ms 防抖') }))
+    expect(noteExportMocks.exportNotePdf).toHaveBeenCalledWith(expect.objectContaining({ contentHtml: expect.stringContaining('尚未经过 150ms 防抖') }), expect.objectContaining({ download: expect.any(Function) }))
 
     await wrapper.get('button[title="更多"]').trigger('click')
     await wrapper.findAll('.toolbar-more-menu button').find(button => button.text().trim() === '打印').trigger('click')
@@ -224,6 +244,64 @@ describe('NoteEditor article modes', () => {
 
     expect(source.vm.view.state.doc.toString()).toContain('**正文**')
     expect(active.contentMarkdown).toContain('**正文**')
+    wrapper.unmount()
+  })
+
+  it('shows the full Friday heading hierarchy in Markdown mode', async () => {
+    const wrapper = await mountEditor(note('note-markdown-heading-menu'))
+    await wrapper.get('.editor-mode-trigger').trigger('click')
+    await wrapper.findAll('[role="menuitemradio"]')[1].trigger('click')
+    await flushPromises()
+
+    await wrapper.get('.markdown-toolbar-controls .heading-menu-anchor > button').trigger('click')
+    expect(wrapper.findAll('.editor-heading-menu button').map(item => item.text())).toEqual([
+      '标题', '标题 1', '标题 2', '标题 3', '正文', '小正'
+    ])
+    wrapper.unmount()
+  })
+
+  it('uses the Friday SVG chevron for every toolbar dropdown in both editor modes', async () => {
+    const wrapper = await mountEditor(note('note-heading-chevron'))
+    const richDropdownTriggers = [
+      'button[title="插入"]',
+      'button[title="文字颜色"]',
+      'button[title="背景颜色"]',
+      '.heading-menu-anchor > button',
+      '.editor-mode-trigger'
+    ]
+
+    for (const selector of richDropdownTriggers) {
+      const chevron = wrapper.get(`${selector} .friday-dropdown-chevron`)
+      expect(chevron.element.tagName.toLowerCase()).toBe('svg')
+      expect(chevron.attributes('width')).toBe('12')
+      expect(chevron.attributes('height')).toBe('12')
+      expect(chevron.get('polyline').attributes('points')).toBe('6 9 12 15 18 9')
+    }
+    expect(wrapper.text()).not.toContain('▾')
+
+    await wrapper.get('.editor-mode-trigger').trigger('click')
+    await wrapper.findAll('[role="menuitemradio"]')[1].trigger('click')
+    await flushPromises()
+    expect(wrapper.get('.markdown-toolbar-controls .friday-dropdown-chevron').get('polyline').attributes('points')).toBe('6 9 12 15 18 9')
+    expect(wrapper.get('.editor-mode-trigger .friday-dropdown-chevron').get('polyline').attributes('points')).toBe('6 9 12 15 18 9')
+    wrapper.unmount()
+  })
+
+  it('closes the heading menu when article content is pressed in either editor mode', async () => {
+    const wrapper = await mountEditor(note('note-heading-menu-dismiss'))
+
+    await wrapper.get('.heading-menu-anchor > button[title="标题"]').trigger('click')
+    expect(wrapper.find('.editor-heading-menu').exists()).toBe(true)
+    await wrapper.get('.note-prose').trigger('pointerdown')
+    expect(wrapper.find('.editor-heading-menu').exists()).toBe(false)
+
+    await wrapper.get('.editor-mode-trigger').trigger('click')
+    await wrapper.findAll('[role="menuitemradio"]')[1].trigger('click')
+    await flushPromises()
+    await wrapper.get('.markdown-toolbar-controls .heading-menu-anchor > button').trigger('click')
+    expect(wrapper.find('.editor-heading-menu').exists()).toBe(true)
+    await wrapper.get('.cm-content').trigger('pointerdown')
+    expect(wrapper.find('.editor-heading-menu').exists()).toBe(false)
     wrapper.unmount()
   })
 
@@ -797,6 +875,22 @@ describe('NoteEditor article modes', () => {
 
     expect(wrapper.get('.note-prose > h1').attributes('data-note-title')).toBe('true')
     expect(wrapper.get('.note-prose > h1').text()).toBe('标题')
+    wrapper.unmount()
+  })
+
+  it('shows and applies the complete Friday heading hierarchy in instant editing', async () => {
+    const wrapper = await mountEditor(note('note-heading-hierarchy'))
+    wrapper.vm.editor.commands.setTextSelection(6)
+
+    await wrapper.get('.heading-menu-anchor > button[title="标题"]').trigger('click')
+    const options = wrapper.findAll('.editor-heading-menu button')
+    expect(options.map(item => item.text())).toEqual(['标题', '标题 1', '标题 2', '标题 3', '正文', '小正'])
+    expect(options[0].attributes('disabled')).toBeDefined()
+    await options[5].trigger('click')
+    await flushPromises()
+
+    expect(wrapper.get('.note-prose p[data-small-text]').text()).toBe('正文')
+    expect(wrapper.get('.heading-menu-anchor > button[title="标题"]').text()).toContain('小正')
     wrapper.unmount()
   })
 
