@@ -1,6 +1,6 @@
 <script setup>
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
-import { AlertTriangle, Check, Copy, Expand, Maximize2, Minus, Plus, RefreshCw, Scan, Workflow, X } from 'lucide-vue-next'
+import { AlertTriangle, Check, Copy, Expand, Maximize2, Minimize2, Minus, Plus, RefreshCw, Scan, Workflow, X } from 'lucide-vue-next'
 import { renderMermaidDiagram } from '../utils/mermaidRenderer'
 
 const props = defineProps({
@@ -16,6 +16,7 @@ const zoom = ref(100)
 const fullscreenZoom = ref(100)
 const naturalWidth = ref(0)
 const fullscreen = ref(false)
+const screenFullscreen = ref(false)
 const sourceCopied = ref(false)
 const inlineStage = ref(null)
 const fullscreenStage = ref(null)
@@ -39,6 +40,7 @@ let panStartY = 0
 let panStartScrollLeft = 0
 let panStartScrollTop = 0
 let viewportRevision = 0
+let usingNativeFullscreen = false
 
 const diagramKind = computed(() => {
   const firstLine = props.source.trimStart().split(/\r?\n/, 1)[0]?.toLowerCase() || ''
@@ -183,10 +185,62 @@ async function openFullscreen(event) {
   fullscreenClose.value?.focus()
 }
 
+async function enterScreenFullscreen() {
+  if (!fullscreen.value || !fullscreenDialog.value) return
+  viewportRevision += 1
+  cancelPan()
+  const dialog = fullscreenDialog.value
+  if (typeof dialog.requestFullscreen === 'function') {
+    usingNativeFullscreen = true
+    try {
+      await dialog.requestFullscreen()
+    } catch {
+      usingNativeFullscreen = false
+    }
+  }
+  screenFullscreen.value = true
+  await nextTick()
+  if (fullscreen.value && fullscreenFit) updateFitZoom(true)
+  fullscreenStage.value?.focus?.({ preventScroll: true })
+}
+
+async function exitScreenFullscreen() {
+  if (!screenFullscreen.value && !usingNativeFullscreen) return
+  viewportRevision += 1
+  cancelPan()
+  const dialog = fullscreenDialog.value
+  if (usingNativeFullscreen && document.fullscreenElement === dialog && typeof document.exitFullscreen === 'function') {
+    try {
+      await document.exitFullscreen()
+    } catch {
+      // The WebView can end native fullscreen before this promise settles.
+    }
+  }
+  usingNativeFullscreen = false
+  screenFullscreen.value = false
+  await nextTick()
+  if (fullscreen.value && fullscreenFit) updateFitZoom(true)
+}
+
+function toggleScreenFullscreen() {
+  return screenFullscreen.value ? exitScreenFullscreen() : enterScreenFullscreen()
+}
+
+function handleFullscreenChange() {
+  if (!usingNativeFullscreen) return
+  const active = document.fullscreenElement === fullscreenDialog.value
+  screenFullscreen.value = active
+  if (!active) usingNativeFullscreen = false
+  nextTick(() => {
+    if (fullscreen.value && fullscreenFit) updateFitZoom(true)
+  })
+}
+
 async function closeFullscreen() {
   if (!fullscreen.value) return
   viewportRevision += 1
   cancelPan()
+  await exitScreenFullscreen()
   fullscreen.value = false
   setAppInert(false)
   await nextTick()
@@ -355,7 +409,8 @@ function handleWindowKeydown(event) {
   if (!fullscreen.value) return
   if (event.key === 'Escape') {
     event.preventDefault()
-    closeFullscreen()
+    if (screenFullscreen.value) exitScreenFullscreen()
+    else closeFullscreen()
     return
   }
   if (event.key === '+' || event.key === '=') {
@@ -410,6 +465,7 @@ onMounted(() => {
     if (inlineStage.value) stageObserver.observe(inlineStage.value)
   }
   window.addEventListener('keydown', handleWindowKeydown)
+  document.addEventListener('fullscreenchange', handleFullscreenChange)
   renderDiagram()
 })
 
@@ -421,8 +477,14 @@ onBeforeUnmount(() => {
   themeObserver?.disconnect()
   stageObserver?.disconnect()
   cancelPan()
+  if (usingNativeFullscreen && document.fullscreenElement === fullscreenDialog.value) {
+    document.exitFullscreen?.().catch?.(() => {})
+  }
+  usingNativeFullscreen = false
+  screenFullscreen.value = false
   setAppInert(false)
   window.removeEventListener('keydown', handleWindowKeydown)
+  document.removeEventListener('fullscreenchange', handleFullscreenChange)
 })
 </script>
 
@@ -434,7 +496,6 @@ onBeforeUnmount(() => {
       <span v-else class="mermaid-zoom-value" aria-live="polite">{{ zoom }}%</span>
       <div class="mermaid-diagram-actions" role="toolbar" aria-label="图表视图">
         <button type="button" aria-label="缩小图表" title="缩小" :disabled="!svg || zoom <= 75" @click="zoomOut"><Minus :size="14" /></button>
-        <button type="button" aria-label="适合宽度" title="适合宽度 (0)" :disabled="!svg" @click="fitWidth"><Scan :size="14" /></button>
         <button type="button" aria-label="放大图表" title="放大" :disabled="!svg || zoom >= 250" @click="zoomIn"><Plus :size="14" /></button>
         <button type="button" aria-label="全屏查看图表" title="全屏查看" :disabled="!svg || !!error" @click="openFullscreen"><Maximize2 :size="14" /></button>
         <slot name="actions"></slot>
@@ -455,8 +516,8 @@ onBeforeUnmount(() => {
   </figure>
 
   <Teleport to="body">
-    <div v-if="fullscreen" class="mermaid-fullscreen" role="presentation" @mousedown.self="closeFullscreen">
-      <section ref="fullscreenDialog" class="mermaid-fullscreen-dialog" role="dialog" aria-modal="true" :aria-label="`${diagramKind}全屏预览`">
+    <div v-if="fullscreen" class="mermaid-fullscreen" :class="{ 'is-screen-fullscreen': screenFullscreen }" role="presentation" @mousedown.self="closeFullscreen">
+      <section ref="fullscreenDialog" class="mermaid-fullscreen-dialog" :class="{ 'is-screen-fullscreen': screenFullscreen }" role="dialog" aria-modal="true" :aria-label="`${diagramKind}全屏预览`">
         <header>
           <span><Expand :size="15" />{{ diagramKind }}</span>
           <span class="mermaid-fullscreen-hint">按住左键拖动 · 滚轮指向缩放</span>
@@ -466,6 +527,7 @@ onBeforeUnmount(() => {
             <button type="button" aria-label="适合宽度" title="适合宽度 (0)" @click="fitWidth"><Scan :size="16" /></button>
             <button type="button" aria-label="放大图表" title="放大" :disabled="fullscreenZoom >= 250" @click="zoomIn"><Plus :size="16" /></button>
             <button type="button" :aria-label="sourceCopied ? '图表源码已复制' : '复制图表源码'" :title="sourceCopied ? '已复制' : '复制源码'" @click="copySource"><Check v-if="sourceCopied" :size="16" /><Copy v-else :size="16" /></button>
+            <button type="button" :aria-label="screenFullscreen ? '退出屏幕全屏' : '占满屏幕查看图表'" :title="screenFullscreen ? '退出屏幕全屏' : '屏幕全屏'" :aria-pressed="screenFullscreen" @click="toggleScreenFullscreen"><Minimize2 v-if="screenFullscreen" :size="16" /><Maximize2 v-else :size="16" /></button>
             <button ref="fullscreenClose" type="button" aria-label="关闭全屏图表" title="关闭 (Esc)" @click="closeFullscreen"><X :size="17" /></button>
           </div>
         </header>
@@ -573,6 +635,19 @@ onBeforeUnmount(() => {
   color:var(--text-primary);
   background:var(--bg-primary);
   box-shadow:0 28px 80px rgba(0,0,0,.42);
+}
+.mermaid-fullscreen.is-screen-fullscreen { place-items:stretch; padding:0; background:var(--bg-primary); backdrop-filter:none; }
+.mermaid-fullscreen-dialog.is-screen-fullscreen,
+.mermaid-fullscreen-dialog:fullscreen {
+  width:100vw;
+  height:100vh;
+  height:100dvh;
+  max-width:none;
+  max-height:none;
+  border:0;
+  border-radius:0;
+  background:var(--bg-primary);
+  box-shadow:none;
 }
 .mermaid-fullscreen-dialog > header { min-height:48px; display:flex; align-items:center; gap:10px; padding:8px 10px 8px 16px; border-bottom:1px solid var(--line,var(--border-color)); background:var(--bg-secondary); }
 .mermaid-fullscreen-dialog > header > span:first-child { display:inline-flex; align-items:center; gap:7px; font-size:13px; font-weight:600; }

@@ -6,6 +6,7 @@ import {
   downloadNoteHtml,
   downloadBlob,
   exportNotePdf,
+  initializeExportMermaidViewers,
   printNote
 } from './noteExport'
 
@@ -39,9 +40,68 @@ describe('note export documents', () => {
       reader.readAsText(blob)
     })
     expect(html).toContain('class="tiny-note-export-mermaid"')
+    expect(html).toContain('data-mermaid-viewer')
+    expect(html).toContain('data-mermaid-action="zoom-in"')
+    expect(html).toContain('data-mermaid-action="fit"')
+    expect(html).toContain('data-mermaid-viewport')
+    expect(html).toContain('initializeExportMermaidViewers')
     expect(html).toContain('<svg viewBox="0 0 100 50">')
     expect(html).toContain('渲染完成')
     expect(html).not.toContain('class="language-mermaid"')
+  })
+
+  it('supports independent button zoom, wheel zoom, and left-button panning in exported Mermaid viewers', () => {
+    window.document.body.innerHTML = `
+      <figure data-mermaid-viewer>
+        <button data-mermaid-action="zoom-out"></button>
+        <button data-mermaid-action="zoom-in"></button>
+        <button data-mermaid-action="fit"></button>
+        <button data-mermaid-action="actual"></button>
+        <output data-mermaid-scale></output>
+        <div data-mermaid-viewport tabindex="0"><div data-mermaid-canvas><svg viewBox="0 0 100 50"></svg></div></div>
+      </figure>`
+    const root = window.document.querySelector('[data-mermaid-viewer]')
+    const viewport = root.querySelector('[data-mermaid-viewport]')
+    const canvas = root.querySelector('[data-mermaid-canvas]')
+    Object.defineProperties(viewport, {
+      clientWidth: { configurable: true, value: 400 },
+      clientHeight: { configurable: true, value: 240 }
+    })
+    Object.defineProperties(canvas, {
+      offsetWidth: { configurable: true, value: 400 },
+      offsetHeight: { configurable: true, value: 200 }
+    })
+    viewport.getBoundingClientRect = () => ({ left: 0, top: 0, width: 400, height: 240, right: 400, bottom: 240 })
+    viewport.setPointerCapture = vi.fn()
+    viewport.releasePointerCapture = vi.fn()
+
+    initializeExportMermaidViewers(window.document)
+    root.querySelector('[data-mermaid-action="zoom-in"]').click()
+    expect(root.dataset.mermaidScaleValue).toBe('1.25')
+    expect(root.querySelector('[data-mermaid-scale]').textContent).toBe('125%')
+
+    viewport.dispatchEvent(new window.WheelEvent('wheel', { deltaY: -100, clientX: 200, clientY: 100, bubbles: true, cancelable: true }))
+    expect(root.dataset.mermaidScaleValue).toBe('1.5')
+
+    const down = new window.MouseEvent('pointerdown', { button: 0, clientX: 200, clientY: 100, bubbles: true })
+    Object.defineProperty(down, 'pointerId', { value: 7 })
+    viewport.dispatchEvent(down)
+    const move = new window.MouseEvent('pointermove', { clientX: 150, clientY: 80, bubbles: true })
+    Object.defineProperty(move, 'pointerId', { value: 7 })
+    viewport.dispatchEvent(move)
+    expect(canvas.style.transform).toMatch(/translate\(-\d+px, -\d+px\) scale\(1\.5\)/)
+
+    root.querySelector('[data-mermaid-action="fit"]').click()
+    expect(root.dataset.mermaidScaleValue).toBe('1')
+    expect(canvas.style.transform).toBe('translate(0px, 0px) scale(1)')
+
+    Object.defineProperty(canvas, 'offsetWidth', { configurable: true, value: 1000 })
+    root.querySelector('[data-mermaid-action="fit"]').click()
+    expect(root.dataset.mermaidScaleValue).toBe('0.4')
+    viewport.dispatchEvent(new window.WheelEvent('wheel', { deltaY: 100, clientX: 200, clientY: 100, bubbles: true, cancelable: true }))
+    expect(root.dataset.mermaidScaleValue).toBe('0.4')
+    root.querySelector('[data-mermaid-action="zoom-in"]').click()
+    expect(root.dataset.mermaidScaleValue).toBe('0.75')
   })
 
   it('keeps Mermaid source visible when export rendering fails', async () => {
@@ -147,6 +207,8 @@ describe('note export documents', () => {
 
     const article = from.mock.calls[0][0]
     expect(article.querySelector('.tiny-note-export-mermaid svg')?.textContent).toContain('PDF 图表')
+    expect(article.querySelector('[data-mermaid-viewer]')).toBeNull()
+    expect(article.querySelector('[data-mermaid-action]')).toBeNull()
     expect(article.querySelector('code.language-mermaid')).toBeNull()
   })
 

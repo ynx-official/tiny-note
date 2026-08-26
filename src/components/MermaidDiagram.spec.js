@@ -37,7 +37,7 @@ describe('MermaidDiagram', () => {
     delete window.document.documentElement.dataset.theme
   })
 
-  it('renders a Mermaid flowchart and provides fit, zoom, and fullscreen controls', async () => {
+  it('renders a Mermaid flowchart with automatic fit and focused viewing controls', async () => {
     const source = 'flowchart LR\n  A[提交] --> B[审批]'
     const wrapper = mount(MermaidDiagram, {
       attachTo: window.document.body,
@@ -48,17 +48,19 @@ describe('MermaidDiagram', () => {
     expect(rendererMocks.renderMermaidDiagram).toHaveBeenCalledWith(source, { theme: 'light' })
     expect(wrapper.get('.mermaid-diagram-svg').html()).toContain('审批完成')
     expect(wrapper.get('.mermaid-zoom-value').text()).toBe('100%')
+    expect(wrapper.find('[aria-label="适合宽度"]').exists()).toBe(false)
 
     await wrapper.get('[aria-label="放大图表"]').trigger('click')
     await wrapper.get('[aria-label="放大图表"]').trigger('click')
     expect(wrapper.get('.mermaid-zoom-value').text()).toBe('150%')
     expect(wrapper.get('.mermaid-diagram-svg').attributes('style')).toContain('width: 1200px')
 
-    await wrapper.get('[aria-label="适合宽度"]').trigger('click')
+    await wrapper.get('.mermaid-diagram-stage').trigger('keydown', { key: '0' })
     expect(wrapper.get('.mermaid-zoom-value').text()).toBe('100%')
 
     await wrapper.get('[aria-label="全屏查看图表"]').trigger('click')
     expect(window.document.querySelector('.mermaid-fullscreen')).not.toBeNull()
+    expect(window.document.querySelector('.mermaid-fullscreen [aria-label="适合宽度"]')).not.toBeNull()
     expect(window.document.querySelector('.mermaid-fullscreen .mermaid-zoom-value').textContent).toBe('100%')
     window.dispatchEvent(new window.KeyboardEvent('keydown', { key: '+' }))
     await flushPromises()
@@ -72,6 +74,85 @@ describe('MermaidDiagram', () => {
     expect(wrapper.get('.mermaid-zoom-value').text()).toBe('100%')
 
     wrapper.unmount()
+  })
+
+  it('expands an open diagram preview to the entire screen and exits one level at a time', async () => {
+    const wrapper = mount(MermaidDiagram, {
+      attachTo: window.document.body,
+      props: { source: 'flowchart LR\nA --> B' }
+    })
+    await flushPromises()
+    await wrapper.get('[aria-label="全屏查看图表"]').trigger('click')
+    await flushPromises()
+
+    const overlay = window.document.querySelector('.mermaid-fullscreen')
+    const dialog = window.document.querySelector('.mermaid-fullscreen-dialog')
+    const enter = window.document.querySelector('[aria-label="占满屏幕查看图表"]')
+    expect(enter).not.toBeNull()
+
+    enter.click()
+    await flushPromises()
+    expect(overlay.classList.contains('is-screen-fullscreen')).toBe(true)
+    expect(dialog.classList.contains('is-screen-fullscreen')).toBe(true)
+    expect(window.document.querySelector('[aria-label="退出屏幕全屏"]')).not.toBeNull()
+
+    window.dispatchEvent(new window.KeyboardEvent('keydown', { key: 'Escape', cancelable: true }))
+    await flushPromises()
+    expect(window.document.querySelector('.mermaid-fullscreen')).not.toBeNull()
+    expect(overlay.classList.contains('is-screen-fullscreen')).toBe(false)
+
+    window.dispatchEvent(new window.KeyboardEvent('keydown', { key: 'Escape', cancelable: true }))
+    await flushPromises()
+    expect(window.document.querySelector('.mermaid-fullscreen')).toBeNull()
+    wrapper.unmount()
+  })
+
+  it('prefers the native fullscreen API when the WebView provides it', async () => {
+    const fullscreenElementDescriptor = Object.getOwnPropertyDescriptor(window.document, 'fullscreenElement')
+    const exitFullscreenDescriptor = Object.getOwnPropertyDescriptor(window.document, 'exitFullscreen')
+    let nativeFullscreenElement = null
+    const wrapper = mount(MermaidDiagram, {
+      attachTo: window.document.body,
+      props: { source: 'flowchart LR\nA --> B' }
+    })
+
+    try {
+      Object.defineProperty(window.document, 'fullscreenElement', {
+        configurable: true,
+        get: () => nativeFullscreenElement
+      })
+      Object.defineProperty(window.document, 'exitFullscreen', {
+        configurable: true,
+        value: vi.fn(async () => {
+          nativeFullscreenElement = null
+          window.document.dispatchEvent(new window.Event('fullscreenchange'))
+        })
+      })
+      await flushPromises()
+      await wrapper.get('[aria-label="全屏查看图表"]').trigger('click')
+      await flushPromises()
+
+      const dialog = window.document.querySelector('.mermaid-fullscreen-dialog')
+      dialog.requestFullscreen = vi.fn(async () => {
+        nativeFullscreenElement = dialog
+        window.document.dispatchEvent(new window.Event('fullscreenchange'))
+      })
+      window.document.querySelector('[aria-label="占满屏幕查看图表"]').click()
+      await flushPromises()
+
+      expect(dialog.requestFullscreen).toHaveBeenCalledTimes(1)
+      expect(window.document.fullscreenElement).toBe(dialog)
+      window.document.querySelector('[aria-label="退出屏幕全屏"]').click()
+      await flushPromises()
+      expect(window.document.exitFullscreen).toHaveBeenCalledTimes(1)
+      expect(window.document.fullscreenElement).toBeNull()
+    } finally {
+      wrapper.unmount()
+      if (fullscreenElementDescriptor) Object.defineProperty(window.document, 'fullscreenElement', fullscreenElementDescriptor)
+      else delete window.document.fullscreenElement
+      if (exitFullscreenDescriptor) Object.defineProperty(window.document, 'exitFullscreen', exitFullscreenDescriptor)
+      else delete window.document.exitFullscreen
+    }
   })
 
   it('uses the dark Mermaid theme when the app is in dark mode', async () => {
@@ -141,7 +222,7 @@ describe('MermaidDiagram', () => {
     expect(wrapper.get('.mermaid-zoom-value').text()).toBe('10%')
 
     Object.defineProperty(stage.element, 'clientWidth', { configurable: true, value: 400 })
-    await wrapper.get('[aria-label="适合宽度"]').trigger('click')
+    await stage.trigger('keydown', { key: '0' })
     const zoomInWheel = new window.WheelEvent('wheel', {
       bubbles: true,
       cancelable: true,
@@ -154,7 +235,7 @@ describe('MermaidDiagram', () => {
     await flushPromises()
     expect(wrapper.get('.mermaid-zoom-value').text()).toBe('20%')
 
-    await wrapper.get('[aria-label="适合宽度"]').trigger('click')
+    await stage.trigger('keydown', { key: '0' })
     const zoomOutWheel = new window.WheelEvent('wheel', {
       bubbles: true,
       cancelable: true,
@@ -230,7 +311,7 @@ describe('MermaidDiagram', () => {
     const stage = wrapper.get('.mermaid-diagram-stage')
     Object.defineProperty(stage.element, 'clientWidth', { configurable: true, value: 400 })
 
-    await wrapper.get('[aria-label="适合宽度"]').trigger('click')
+    await stage.trigger('keydown', { key: '0' })
     expect(wrapper.get('.mermaid-zoom-value').text()).toBe('50%')
     await stage.trigger('keydown', { key: '-' })
     expect(wrapper.get('.mermaid-zoom-value').text()).toBe('50%')
