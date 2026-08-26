@@ -260,7 +260,9 @@ const tocHeadings = computed(() => {
   if (!html || typeof document === 'undefined') return []
   const container = document.createElement('div')
   container.innerHTML = html
-  return Array.from(container.querySelectorAll('h1:not([data-note-title]), h2, h3'))
+  const titleBlock = container.firstElementChild
+  return Array.from(container.querySelectorAll('h1, h2, h3'))
+    .filter(element => element !== titleBlock)
     .map((element, index) => ({ level: Number(element.tagName.slice(1)), text: element.textContent?.trim() || '', index }))
     .filter(heading => heading.text)
 })
@@ -280,7 +282,9 @@ function scrollToHeading(index) {
   const activeScroller = previewPane || renderPane || editorPanel
   const editorContent = activeScroller?.querySelector('.editor-content')
   if (!activeScroller || !editorContent) return
-  const headings = editorContent.querySelectorAll('h1:not([data-note-title]), h2, h3')
+  const prose = editorContent.querySelector('.note-prose')
+  const titleBlock = prose?.firstElementChild
+  const headings = Array.from(prose?.querySelectorAll('h1, h2, h3') || []).filter(element => element !== titleBlock)
   const target = headings[index]
   if (!target) return
   const containerRect = activeScroller.getBoundingClientRect()

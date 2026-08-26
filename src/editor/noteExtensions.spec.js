@@ -25,6 +25,19 @@ function typeText(editor, text) {
 afterEach(() => editors.splice(0).forEach(editor => editor.destroy()))
 
 describe('Tiny Note Markdown conversion', () => {
+  it('keeps the Friday-style title node in Markdown and starts body text after Enter', () => {
+    const editor = createEditor('<h1 data-note-title="true">标题</h1><p></p>')
+
+    expect(editor.getHTML()).toContain('<h1 data-note-title="true">标题</h1>')
+    expect(editor.getMarkdown()).toContain('# 标题')
+
+    editor.commands.setTextSelection(3)
+    editor.view.dom.dispatchEvent(new window.KeyboardEvent('keydown', { key: 'Enter', bubbles: true, cancelable: true }))
+
+    expect(editor.getHTML()).toBe('<h1 data-note-title="true">标题</h1><p></p>')
+    expect(editor.state.selection.$from.parent.type.name).toBe('paragraph')
+  })
+
   it('applies Markdown shortcuts immediately in the instant editor', () => {
     const editor = createEditor('<p></p>')
     editor.commands.focus('start')

@@ -31,4 +31,33 @@ describe('MarkdownSourceEditor', () => {
     expect(wrapper.emitted('focus')).toBeTruthy()
     wrapper.unmount()
   })
+
+  it('wraps and unwraps the selected Markdown text without leaving an invalid selection', () => {
+    const wrapper = mount(MarkdownSourceEditor, {
+      props: { modelValue: '正文', ariaLabel: '源码' }
+    })
+
+    wrapper.vm.view.dispatch({ selection: { anchor: 0, head: 2 } })
+    expect(wrapper.vm.applyFormat('bold')).toBe(true)
+    expect(wrapper.vm.view.state.doc.toString()).toBe('**正文**')
+
+    wrapper.vm.view.dispatch({ selection: { anchor: 0, head: 6 } })
+    expect(wrapper.vm.applyFormat('bold')).toBe(true)
+    expect(wrapper.vm.view.state.doc.toString()).toBe('正文')
+    expect(wrapper.vm.view.state.selection.main.to).toBe(2)
+
+    wrapper.unmount()
+  })
+
+  it('does not prefix the next line when a selection ends at its start', () => {
+    const wrapper = mount(MarkdownSourceEditor, {
+      props: { modelValue: '第一行\n第二行', ariaLabel: '源码' }
+    })
+
+    wrapper.vm.view.dispatch({ selection: { anchor: 0, head: 4 } })
+    expect(wrapper.vm.applyFormat('bullet')).toBe(true)
+    expect(wrapper.vm.view.state.doc.toString()).toBe('- 第一行\n第二行')
+
+    wrapper.unmount()
+  })
 })

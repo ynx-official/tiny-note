@@ -139,13 +139,16 @@ function prepareEditorContent(note) {
   const container = document.createElement('div')
   container.innerHTML = note?.contentHtml || ''
 
-  // A development build briefly stored the independent note title as a
-  // data-note-title H1 inside the body. Remove that duplicate and repair
-  // table cells produced by the same schema before loading the document.
-  if (container.firstElementChild?.matches('h1[data-note-title]')) {
-    container.firstElementChild.remove()
-  }
+  // Friday treats the first editor block as a dedicated noteTitle node. A
+  // previous Tiny Note build accidentally put these nodes inside table cells,
+  // so retain only the top-level title and repair nested ones as paragraphs.
+  const legacyTitle = container.firstElementChild?.matches('h1[data-note-title]')
+    ? container.firstElementChild
+    : null
   container.querySelectorAll('[data-note-title]').forEach(titleNode => {
+    if (titleNode === legacyTitle) {
+      return
+    }
     const paragraph = document.createElement('p')
     const textAlign = titleNode.style?.textAlign
     if (textAlign) paragraph.style.textAlign = textAlign
@@ -153,7 +156,36 @@ function prepareEditorContent(note) {
     titleNode.replaceWith(paragraph)
   })
 
+  const firstBlock = container.firstElementChild
+  if (!firstBlock) return '<h1 data-note-title="true"></h1><p></p>'
+  if (/^H[1-3]$/.test(firstBlock.tagName) || firstBlock.tagName === 'P') {
+    if (!firstBlock.matches('h1[data-note-title]')) {
+      const title = document.createElement('h1')
+      title.setAttribute('data-note-title', 'true')
+      title.innerHTML = firstBlock.innerHTML
+      firstBlock.replaceWith(title)
+    }
+  } else {
+    container.insertAdjacentHTML('afterbegin', '<h1 data-note-title="true"></h1>')
+  }
   return container.innerHTML || '<p></p>'
+}
+function extractNoteTitle(text = '') {
+  const firstLine = String(text).split(/\r?\n/).find(line => line.trim())?.trim() || ''
+  return (firstLine || t('untitled')).slice(0, 50)
+}
+function textFromPreparedEditorContent(html = '') {
+  const container = document.createElement('div')
+  container.innerHTML = html
+  return Array.from(container.children).map(node => node.textContent || '').join('\n')
+}
+function syncNoteTitle(note, text, { schedule = false } = {}) {
+  if (!note) return false
+  const nextTitle = extractNoteTitle(text)
+  if (note.title === nextTitle) return false
+  note.title = nextTitle
+  if (schedule) scheduleNoteSave(note)
+  return true
 }
 function getEditorMarkdown(instance = editor.value) {
   return instance?.getMarkdown?.() || ''
@@ -163,7 +195,9 @@ const editor = useEditor({
   extensions: createNoteExtensions({
     lowlight,
     codeBlockNodeView: VueNodeViewRenderer(CodeBlockComponent),
-    placeholder: '写下此刻的想法…'
+    placeholder: ({ node }) => node.type.name === 'noteTitle'
+      ? '输入标题…'
+      : '写下此刻的想法…'
   }),
   editorProps: { attributes: { class: 'note-prose' }, handlePaste: handleMarkdownPaste },
   onTransaction: refreshEditorState,
@@ -182,7 +216,7 @@ const knowledgeGroups = computed(() => [
 function shouldShowBubbleMenu({ state }) { return richMode.value && !aiOutputOpen.value && !state.selection.empty && state.doc.textBetween(state.selection.from, state.selection.to, '\n').trim().length > 0 }
 const textColorPalette = ['#1c1917', '#dc2626', '#ea580c', '#ca8a04', '#16a34a', '#0891b2', '#2563eb', '#7c3aed', '#db2777']
 const highlightPalette = ['#fef08a', '#fed7aa', '#fecaca', '#bbf7d0', '#bae6fd', '#c7d2fe', '#e9d5ff', '#fbcfe8']
-const currentHeadingLabel = computed(() => { editorStateTick.value; const instance = editor.value; if (!instance) return '标题'; for (const level of [1, 2, 3]) if (instance.isActive('heading', { level })) return `H${level}`; return '正文' })
+const currentHeadingLabel = computed(() => { editorStateTick.value; const instance = editor.value; if (!instance || instance.isActive('noteTitle')) return '标题'; for (const level of [1, 2, 3]) if (instance.isActive('heading', { level })) return `H${level}`; return '正文' })
 
 function noteContentSignature(note) {
   if (!note) return ''
@@ -211,6 +245,7 @@ function handleRichEditorUpdate(instance) {
   sourceDirty.value = false
   markdownParseError.value = ''
   pendingSourceDrafts.delete(props.note.id)
+  syncNoteTitle(props.note, props.note.contentText)
   scheduleNoteSave(props.note)
   if (fimEnabled.value) {
     clearTimeout(fimTimer)
@@ -234,6 +269,8 @@ function commitMarkdown(note = props.note, { schedule = true } = {}) {
   try {
     previewApplied = applyMarkdownSourceToEditor(editor.value, source)
     if (previewApplied) {
+      const preparedHtml = prepareEditorContent({ contentHtml: editor.value.getHTML() })
+      editor.value.commands.setContent(preparedHtml, { emitUpdate: false })
       const editorHtml = editor.value.getHTML()
       const safeHtml = sanitizeEditorHtml(editorHtml)
       if (safeHtml !== editorHtml) {
@@ -245,6 +282,7 @@ function commitMarkdown(note = props.note, { schedule = true } = {}) {
       editor.value.commands.setContent(fallbackHtml, { emitUpdate: false })
     }
     note.contentMarkdown = source
+    syncNoteTitle(note, note.contentText)
     sourceDirty.value = false
     markdownParseError.value = previewApplied ? '' : '预览暂未更新，源码已保存'
     pendingSourceDrafts.delete(note.id)
@@ -289,13 +327,19 @@ function resetEditorSession(note) {
   modeMenuOpen.value = false
   markdownParseError.value = ''
   sourceDirty.value = pendingSourceDrafts.has(note?.id)
+  const previousSignature = noteContentSignature(note)
+  const preparedContent = prepareEditorContent(note)
   applyingEditorContent = true
-  if (note && editor.value) editor.value.commands.setContent(prepareEditorContent(note), { emitUpdate: false })
+  if (note && editor.value) editor.value.commands.setContent(preparedContent, { emitUpdate: false })
   applyingEditorContent = false
   setEditorEditable(editorMode.value === 'rich')
   markdownDraft.value = deriveMarkdown(note)
   if (sourceDirty.value) markdownParseError.value = '预览正在等待刷新，源码草稿仍保留'
-  if (note) persistedSignatures.set(note.id, noteContentSignature(note))
+  if (note) {
+    const titleChanged = syncNoteTitle(note, editor.value?.getText() || textFromPreparedEditorContent(preparedContent))
+    persistedSignatures.set(note.id, titleChanged ? previousSignature : noteContentSignature(note))
+    if (titleChanged) scheduleNoteSave(note)
+  }
 }
 
 async function changeEditorMode(mode) {
@@ -572,6 +616,17 @@ onMounted(async () => {
   setupSplitObserver()
 })
 function toggle(type) { editor.value?.chain().focus()[type]().run() }
+async function applyMarkdownFormat(format) {
+  if (!sourceEditorRef.value?.applyFormat(format)) return
+  await nextTick()
+  commitMarkdown(props.note)
+}
+async function setMarkdownHeading(level) {
+  if (!sourceEditorRef.value?.setHeading(level)) return
+  headingOpen.value = false
+  await nextTick()
+  commitMarkdown(props.note)
+}
 function hasNoteContextConsent() {
   const key = `tiny-note-context-consent:${contextConsentModelId.value}`
   return localStorage.getItem(key) === 'granted'
@@ -702,11 +757,17 @@ async function stopAssistant() {
 }
 async function copyAssistantMessage(content) { if (content) await navigator.clipboard?.writeText(content) }
 async function stopAi() { if (!aiRequestId.value) return; await tasksStore.cancel(aiRequestId.value); aiBusy.value = false }
+function exportBodyHtml(html = '') {
+  const container = document.createElement('div')
+  container.innerHTML = sanitizeEditorHtml(html)
+  if (container.firstElementChild?.matches('h1')) container.firstElementChild.remove()
+  return container.innerHTML
+}
 async function prepareExportSnapshot() {
   if (!props.note || !editor.value || !await flushLatestContent()) return null
   return {
     title: String(props.note.title || '').trim() || t('untitled'),
-    contentHtml: sanitizeEditorHtml(prepareEditorContent(props.note))
+    contentHtml: exportBodyHtml(prepareEditorContent(props.note))
   }
 }
 async function runArticleExport(format) {
@@ -1102,9 +1163,19 @@ function setHighlightColor(color) {
 }
 function setHeading(level) {
   if (!editor.value) return
+  if (editor.value.isActive('noteTitle')) {
+    headingOpen.value = false
+    return
+  }
   if (level === 0) editor.value.chain().focus().setParagraph().run()
   else editor.value.chain().focus().toggleHeading({ level }).run()
   headingOpen.value = false
+}
+function clearRichFormatting() {
+  if (!editor.value) return
+  const chain = editor.value.chain().focus().unsetAllMarks()
+  if (!editor.value.isActive('noteTitle')) chain.clearNodes()
+  chain.run()
 }
 function normalizeLinkHref(value) {
   let href = value.trim()
@@ -1165,23 +1236,16 @@ async function createKnowledgeFromEditor() {
   if (!name?.trim()) return
   try { await library.create(name.trim(), 'personal'); if (library.activeId) await addToKnowledge(library.activeId) } catch (error) { showToast(error?.message || '创建知识库失败，请重试', { tone: 'error' }) }
 }
-const title = computed({
-  get: () => props.note?.title || '',
-  set: value => {
-    if (!props.note) return
-    props.note.title = value
-    scheduleNoteSave(props.note)
-  }
-})
 </script>
 <template>
   <div v-if="note" class="note-editor-shell">
     <section class="editor-panel" :class="{ 'is-code-mode': codeMode }">
-    <div class="toolbar friday-editor-toolbar" :class="{ 'is-compact': !richMode, 'with-assistant': !assistantTriggerVisible }">
-      <div v-show="richMode" key="toolbar-rich-controls" class="toolbar-left-group">
+    <div class="toolbar friday-editor-toolbar" :class="{ 'with-assistant': !assistantTriggerVisible }">
+      <div key="toolbar-format-controls" class="toolbar-left-group">
+        <template v-if="richMode">
         <button :title="t('undo')" :disabled="!canUndo" @click="editor?.chain().focus().undo().run()"><Undo2 :size="19" /></button>
         <button :title="t('redo')" :disabled="!canRedo" @click="editor?.chain().focus().redo().run()"><Redo2 :size="19" /></button>
-        <button title="清除格式" @click="toggle('clearNodes')"><Eraser :size="19" /></button>
+        <button title="清除格式" @click="clearRichFormatting"><Eraser :size="19" /></button>
         <button title="链接" :class="{ pressed: linkActive }" :disabled="!canEditLink" @click="editLink"><Link2 :size="19" /></button><i></i>
         <span class="toolbar-menu-anchor"><button title="插入" @click="toggleInsertMenu"><PlusCircle :size="19" /><span class="toolbar-label">插入</span><span class="toolbar-chevron">▾</span></button><div v-if="insertOpen" class="toolbar-insert-menu insert-command-menu">
           <div class="insert-submenu-anchor"><button class="insert-menu-item" @click.stop="tablePickerOpen = !tablePickerOpen"><span class="insert-menu-icon">▦</span><span>表格</span><span class="insert-menu-arrow">›</span></button><div v-if="tablePickerOpen" class="table-picker-menu" @click.stop><div class="table-picker-label">{{ tableRows }} × {{ tableCols }}</div><div v-for="row in 10" :key="`table-row-${row}`" class="table-picker-row"><button v-for="col in 10" :key="`table-cell-${row}-${col}`" class="table-picker-cell" :class="{ active: row <= tableRows && col <= tableCols }" @mouseenter="selectTableCell(row, col)" @click="insertTable(row, col)"></button></div></div></div>
@@ -1205,6 +1269,23 @@ const title = computed({
         <button title="左对齐" @click="editor?.chain().focus().setTextAlign('left').run()"><AlignLeft :size="19" /></button>
         <button title="居中" @click="editor?.chain().focus().setTextAlign('center').run()"><AlignCenter :size="19" /></button>
         <button title="右对齐" @click="editor?.chain().focus().setTextAlign('right').run()"><AlignRight :size="19" /></button>
+        </template>
+        <template v-else>
+          <div class="markdown-toolbar-controls" role="toolbar" aria-label="Markdown 格式工具">
+            <button title="撤销" @click="applyMarkdownFormat('undo')"><Undo2 :size="19" /></button>
+            <button title="重做" @click="applyMarkdownFormat('redo')"><Redo2 :size="19" /></button>
+            <button title="链接" @click="applyMarkdownFormat('link')"><Link2 :size="19" /></button><i></i>
+            <button title="粗体" @click="applyMarkdownFormat('bold')"><Bold :size="19" /></button>
+            <button title="斜体" @click="applyMarkdownFormat('italic')"><Italic :size="19" /></button>
+            <button title="删除线" @click="applyMarkdownFormat('strike')"><Strikethrough :size="19" /></button>
+            <button title="行内代码" @click="applyMarkdownFormat('code')"><Code2 :size="19" /></button><i></i>
+            <span class="toolbar-menu-anchor heading-menu-anchor"><button title="标题" :class="{ pressed: headingOpen }" @click="closeToolbarMenus(); headingOpen = !headingOpen"><span class="toolbar-label heading-label">标题</span><span class="toolbar-chevron">▾</span></button><div v-if="headingOpen" class="editor-heading-menu"><button @click="setMarkdownHeading(0)">正文</button><button @click="setMarkdownHeading(1)">H1 标题</button><button @click="setMarkdownHeading(2)">H2 标题</button><button @click="setMarkdownHeading(3)">H3 标题</button></div></span><i></i>
+            <button title="项目列表" @click="applyMarkdownFormat('bullet')"><List :size="19" /></button>
+            <button title="编号列表" @click="applyMarkdownFormat('ordered')"><ListOrdered :size="19" /></button>
+            <button title="任务列表" @click="applyMarkdownFormat('task')"><ListChecks :size="19" /></button>
+            <button title="引用" @click="applyMarkdownFormat('quote')"><Quote :size="19" /></button>
+          </div>
+        </template>
       </div>
       <div key="toolbar-mode-controls" class="toolbar-right-group">
         <span class="toolbar-menu-anchor knowledge-menu-anchor"><button :title="t('addToKnowledge')" @click="closeToolbarMenus(); knowledgeMenuOpen = !knowledgeMenuOpen"><PlusCircle :size="19" /></button><div v-if="knowledgeMenuOpen" class="toolbar-knowledge-menu" @click.stop>
@@ -1259,13 +1340,13 @@ const title = computed({
         <button v-if="assistantTriggerVisible" class="ai-button" @click="toggleAssistant"><Layers :size="17" /> Tiny Note 助理</button>
       </div>
     </div>
-    <div class="editor-head"><input v-model="title" class="title-input" :placeholder="t('untitled')" /><div class="editor-meta"><button type="button" class="note-pin-button" :class="{ active: note.pinned }" :aria-pressed="note.pinned" :aria-label="note.pinned ? '取消置顶' : '置顶笔记'" :title="note.pinned ? '取消置顶' : '置顶笔记'" @click="togglePinned"><Pin :size="14" /></button><span :class="{ saving: store.saving }">{{ store.saving ? t('saving') : t('save') }}</span></div></div>
     <div class="note-metadata">
       <div class="note-tag-list">
         <span v-for="tag in note.tags || []" :key="tag" class="note-tag">#{{ tag }}<button type="button" aria-label="移除标签" @click="removeTag(tag)">×</button></span>
         <input v-model="tagDraft" class="note-tag-input" placeholder="添加标签" @keydown.enter.prevent="addTag" />
       </div>
       <div v-if="noteLinks.length" class="note-links" aria-label="关联笔记"><span>关联笔记</span><button v-for="link in noteLinks" :key="link.sourceNoteId + '-' + link.targetNoteId" type="button" @click="store.activeId = link.sourceNoteId === note.id ? link.targetNoteId : link.sourceNoteId">{{ link.targetTitle }}</button></div>
+      <div class="editor-meta"><button type="button" class="note-pin-button" :class="{ active: note.pinned }" :aria-pressed="note.pinned" :aria-label="note.pinned ? '取消置顶' : '置顶笔记'" :title="note.pinned ? '取消置顶' : '置顶笔记'" @click="togglePinned"><Pin :size="14" /></button><span :class="{ saving: store.saving }">{{ store.saving ? t('saving') : t('save') }}</span></div>
     </div>
     <button class="toc-btn" :class="{ 'is-open': tocVisible }" title="目录" aria-label="目录" @click="emit('toggle-toc')"><span class="toc-char">目</span><span class="toc-char">录</span></button>
     <div ref="splitWorkspace" class="editor-workspace" :class="[`mode-${editorMode}`, { 'is-previewing': splitMode, 'is-vertical': splitVertical }]">

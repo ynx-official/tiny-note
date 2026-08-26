@@ -181,7 +181,8 @@ body, button, input, select, textarea { font-family: -apple-system, BlinkMacSyst
 .note-pin-button:hover { color:var(--text-primary); background:var(--bg-hover); }
 .note-pin-button.active { border-color:var(--line); color:var(--text-primary); background:var(--bg-active); }
 .note-pin-button:focus-visible { outline:2px solid var(--accent-color); outline-offset:2px; }
-.note-metadata { display:flex; flex-wrap:wrap; align-items:center; gap:8px 16px; margin:-4px 56px 14px; color:var(--text-tertiary); font-size:11px; }
+.note-metadata { display:flex; flex-wrap:wrap; align-items:center; gap:8px 16px; margin:14px 56px 4px; color:var(--text-tertiary); font-size:11px; }
+.note-metadata .editor-meta { margin-left:auto; padding-top:0; }
 .note-tag-list { display:flex; flex-wrap:wrap; align-items:center; gap:5px; }
 .note-tag { display:inline-flex; align-items:center; gap:3px; padding:3px 7px; border-radius:999px; color:var(--accent-color); background:var(--accent-light); }
 .note-tag button { color:inherit; font-size:13px; line-height:1; }
@@ -212,8 +213,8 @@ body, button, input, select, textarea { font-family: -apple-system, BlinkMacSyst
 .note-prose h1 { font-size:20px; }
 .note-prose h2 { font-size:18px; }
 .note-prose h3 { font-size:16px; }
-.note-prose h1[data-note-title] { margin:.2em 0 .6em; font-size:22px; font-weight:500; line-height:1.25; }
-.note-prose h1[data-note-title].is-empty::before { content:attr(data-placeholder); float:left; color:var(--text-tertiary); pointer-events:none; height:0; }
+.note-prose > h1[data-note-title] { margin:.2em 0 .6em; font-size:22px; font-weight:500; line-height:1.25; }
+.note-prose > h1[data-note-title].is-empty::before { content:attr(data-placeholder); float:left; color:var(--text-tertiary); pointer-events:none; height:0; }
 .note-prose p { margin:.4em 0; }
 .note-prose ul,.note-prose ol { margin:.4em 0; padding-left:1.5em; }
 .note-prose ul { list-style-type:disc; }
@@ -423,6 +424,7 @@ body, button, input, select, textarea { font-family: -apple-system, BlinkMacSyst
 .history-pop-enter-from,.history-pop-leave-to { opacity:0; transform:translateY(7px) scale(.98); }
 .friday-editor-toolbar { width:100%; max-width:none; min-width:0; box-sizing:border-box; align-items:flex-start; gap:2px; padding:6px 40px; flex-wrap:nowrap; overflow:visible; }
 .friday-editor-toolbar .toolbar-left-group { min-width:0; flex:1 1 auto; display:flex; flex-wrap:wrap; align-items:center; gap:2px; }
+.friday-editor-toolbar .markdown-toolbar-controls { min-width:0; display:flex; flex-wrap:wrap; align-items:center; gap:2px; }
 .friday-editor-toolbar .toolbar-right-group { flex:0 0 auto; display:flex; align-items:center; gap:2px; margin-left:10px; }
 .friday-editor-toolbar button { min-width:30px; height:30px; padding:0 7px; font-size:14px; font-weight:600; flex:none; white-space:nowrap; }
 .friday-editor-toolbar button:disabled { color:var(--text-tertiary); opacity:.32; cursor:default; background:transparent; }

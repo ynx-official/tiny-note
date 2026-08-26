@@ -148,21 +148,22 @@ describe('NoteEditor article modes', () => {
     await flushPromises()
     expect(noteExportMocks.downloadNoteHtml).toHaveBeenCalledWith(
       expect.objectContaining({
-        title: '四种模式',
-        contentHtml: expect.stringContaining('最新草稿')
+        title: '最新草稿',
+        contentHtml: expect.stringContaining('尚未经过 150ms 防抖')
       }),
       { lang: 'zh-CN' }
     )
+    expect(noteExportMocks.downloadNoteHtml.mock.calls[0][0].contentHtml).not.toContain('最新草稿')
 
     await wrapper.get('button[title="更多"]').trigger('click')
     await wrapper.findAll('.toolbar-more-menu button').find(button => button.text().includes('导出 PDF')).trigger('click')
     await flushPromises()
-    expect(noteExportMocks.exportNotePdf).toHaveBeenCalledWith(expect.objectContaining({ contentHtml: expect.stringContaining('最新草稿') }))
+    expect(noteExportMocks.exportNotePdf).toHaveBeenCalledWith(expect.objectContaining({ contentHtml: expect.stringContaining('尚未经过 150ms 防抖') }))
 
     await wrapper.get('button[title="更多"]').trigger('click')
     await wrapper.findAll('.toolbar-more-menu button').find(button => button.text().trim() === '打印').trigger('click')
     await flushPromises()
-    expect(noteExportMocks.printNote).toHaveBeenCalledWith(expect.objectContaining({ contentHtml: expect.stringContaining('最新草稿') }))
+    expect(noteExportMocks.printNote).toHaveBeenCalledWith(expect.objectContaining({ contentHtml: expect.stringContaining('尚未经过 150ms 防抖') }))
     wrapper.unmount()
   })
 
@@ -201,9 +202,28 @@ describe('NoteEditor article modes', () => {
     await flushPromises()
     expect(wrapper.find('.markdown-source-editor').exists()).toBe(true)
     expect(wrapper.find('.split-preview-pane').exists()).toBe(true)
-    expect(wrapper.get('.toolbar-left-group').isVisible()).toBe(false)
+    expect(wrapper.get('.toolbar-left-group').isVisible()).toBe(true)
+    expect(wrapper.find('.markdown-toolbar-controls').exists()).toBe(true)
 
     expect(wrapper.text()).not.toContain('阅读模式')
+    wrapper.unmount()
+  })
+
+  it('applies formatting toolbar actions to the Markdown source selection', async () => {
+    const active = note('note-markdown-toolbar')
+    const wrapper = await mountEditor(active)
+    await wrapper.get('.editor-mode-trigger').trigger('click')
+    await wrapper.findAll('[role="menuitemradio"]')[1].trigger('click')
+    await flushPromises()
+
+    const source = wrapper.findComponent(MarkdownSourceEditor)
+    const start = source.vm.view.state.doc.toString().indexOf('正文')
+    source.vm.view.dispatch({ selection: { anchor: start, head: start + 2 } })
+    await wrapper.get('.markdown-toolbar-controls button[title="粗体"]').trigger('click')
+    await flushPromises()
+
+    expect(source.vm.view.state.doc.toString()).toContain('**正文**')
+    expect(active.contentMarkdown).toContain('**正文**')
     wrapper.unmount()
   })
 
@@ -329,7 +349,7 @@ describe('NoteEditor article modes', () => {
     await wrapper.setProps({ note: second })
     await flushPromises()
     expect(first.contentMarkdown).toBe(exactDraft)
-    expect(first.contentHtml).toContain('<h1>新稿</h1>')
+    expect(first.contentHtml).toContain('<h1 data-note-title="true">新稿</h1>')
     expect(first.contentText).toContain('保留空行')
     expect(JSON.parse(localStorage.getItem('tiny-note-browser-state')).notes[0].contentMarkdown).toBe(exactDraft)
     expect(wrapper.get('.editor-mode-trigger').text()).toContain('Markdown')
@@ -382,7 +402,7 @@ describe('NoteEditor article modes', () => {
     expect(active.contentMarkdown).toBe('# 标题\n\n正文')
     await vi.advanceTimersByTimeAsync(1)
     expect(active.contentMarkdown).toBe('## 自动保存')
-    expect(active.contentHtml).toContain('<h2>自动保存</h2>')
+    expect(active.contentHtml).toContain('<h1 data-note-title="true">自动保存</h1>')
     await vi.advanceTimersByTimeAsync(800)
     expect(JSON.parse(localStorage.getItem('tiny-note-browser-state')).notes[0].contentMarkdown).toBe('## 自动保存')
 
@@ -432,7 +452,7 @@ describe('NoteEditor article modes', () => {
     await wrapper.get('.ai-output-action.replace').trigger('click')
     await flushPromises()
     expect(active.contentMarkdown).toBe('# AI 新版')
-    expect(active.contentHtml).toContain('<h1>AI 新版</h1>')
+    expect(active.contentHtml).toContain('<h1 data-note-title="true">AI 新版</h1>')
     expect(wrapper.get('.editor-mode-trigger').text()).toContain('Markdown')
     expect(wrapper.findComponent(MarkdownSourceEditor).text()).toContain('# AI 新版')
     wrapper.unmount()
@@ -517,7 +537,7 @@ describe('NoteEditor article modes', () => {
     await wrapper.get('.editor-content').trigger('mousedown')
     await flushPromises()
 
-    expect(active.contentMarkdown).toBe('**核心内容** 保留段落')
+    expect(active.contentMarkdown).toContain('# **核心内容** 保留段落')
     expect(active.contentHtml).toContain('<strong>核心内容</strong>')
     wrapper.unmount()
   })
@@ -725,27 +745,58 @@ describe('NoteEditor article modes', () => {
       }
     })
     await new Promise(resolve => setTimeout(resolve, 180))
-    expect(wrapper.get('.split-preview-pane').html()).toContain('<h2>源码标题</h2>')
+    expect(wrapper.get('.split-preview-pane').html()).toContain('<h1 data-note-title="true">源码标题</h1>')
     expect(wrapper.get('.split-preview-pane').text()).toContain('已完成')
 
     await wrapper.get('.editor-mode-trigger').trigger('click')
     await wrapper.findAll('[role="menuitemradio"]')[0].trigger('click')
     await flushPromises()
-    expect(wrapper.get('.note-prose').html()).toContain('<h2>源码标题</h2>')
+    expect(wrapper.get('.note-prose').html()).toContain('<h1 data-note-title="true">源码标题</h1>')
     expect(wrapper.get('.note-prose').html()).toContain('<strong>加粗内容</strong>')
     wrapper.unmount()
   })
 
-  it('keeps the note title separate from Markdown body normalization', async () => {
+  it('reads the note title from the first non-empty editor line like Friday', async () => {
     const active = note('note-title')
     const wrapper = await mountEditor(active)
-    expect(wrapper.get('.title-input').element.value).toBe('四种模式')
+    expect(wrapper.find('.title-input').exists()).toBe(false)
+    expect(active.title).toBe('标题')
 
-    wrapper.vm.editor.commands.setContent('<h2>正文标题</h2><p>正文</p>')
+    wrapper.vm.editor.commands.setContent('<h2>新的文档标题</h2><p>正文</p>')
     await flushPromises()
-    expect(active.title).toBe('四种模式')
-    expect(active.contentMarkdown).toContain('## 正文标题')
-    expect(active.contentMarkdown.startsWith('# 四种模式')).toBe(false)
+    expect(active.title).toBe('新的文档标题')
+    expect(active.contentMarkdown).toContain('## 新的文档标题')
+
+    const longTitle = '很长的标题'.repeat(12)
+    wrapper.vm.editor.commands.setContent(`<h1>${longTitle}</h1><p>正文</p>`)
+    await flushPromises()
+    expect(active.title).toBe(longTitle.slice(0, 50))
+    wrapper.unmount()
+  })
+
+  it('starts a body paragraph when Enter is pressed at the end of the title', async () => {
+    const wrapper = await mountEditor(note('note-title-enter'))
+    wrapper.vm.editor.commands.setTextSelection(3)
+    wrapper.get('.note-prose').element.dispatchEvent(new window.KeyboardEvent('keydown', { key: 'Enter', bubbles: true, cancelable: true }))
+    await flushPromises()
+
+    const blocks = wrapper.find('.note-prose').element.children
+    expect(blocks[0].tagName).toBe('H1')
+    expect(blocks[0].getAttribute('data-note-title')).toBe('true')
+    expect(blocks[1].tagName).toBe('P')
+    wrapper.unmount()
+  })
+
+  it('does not let heading controls convert the Friday-style title node', async () => {
+    const wrapper = await mountEditor(note('note-title-heading'))
+    wrapper.vm.editor.commands.setTextSelection(2)
+
+    await wrapper.get('.heading-menu-anchor > button[title="标题"]').trigger('click')
+    await wrapper.findAll('.editor-heading-menu button')[2].trigger('click')
+    await flushPromises()
+
+    expect(wrapper.get('.note-prose > h1').attributes('data-note-title')).toBe('true')
+    expect(wrapper.get('.note-prose > h1').text()).toBe('标题')
     wrapper.unmount()
   })
 
@@ -879,9 +930,9 @@ describe('NoteEditor article modes', () => {
     legacy.contentHtml = '<h1 data-note-title="true">文档标题</h1><table><tbody><tr><th><h1 data-note-title="true"><strong>表头</strong></h1></th></tr><tr><td><h1 data-note-title="true">正文单元格</h1></td></tr></tbody></table>'
     const wrapper = await mountEditor(legacy)
 
-    expect(wrapper.findAll('.note-prose > h1[data-note-title]')).toHaveLength(0)
+    expect(wrapper.findAll('.note-prose > h1[data-note-title]')).toHaveLength(1)
     expect(wrapper.findAll('.note-prose table [data-note-title]')).toHaveLength(0)
-    expect(wrapper.get('.title-input').element.value).toBe('四种模式')
+    expect(legacy.title).toBe('文档标题')
     expect(wrapper.get('.note-prose th > p').text()).toBe('表头')
     expect(wrapper.get('.note-prose td > p').text()).toBe('正文单元格')
     wrapper.unmount()

@@ -1,8 +1,8 @@
 # 数据模型（Approved）
 
-最后更新：2026-08-24
+最后更新：2026-08-26
 
-SQLite 核心表：`notebooks`、`notes`、`knowledge_bases`、`model_providers`、`model_profiles`、`settings`、`chat_conversations`、`chat_messages`。`notes.title` 是独立元数据，不自动写入正文 H1。正文原子保存三种表示：`content_markdown` 是 Markdown 模式中的用户源码（即时编辑产生正文变更后可规范化为语义等价写法），`content_html` 是经过白名单清洗的 TipTap 渲染内容，`content_text` 是搜索与 AI 使用的纯文本。`notes.tags_json` 保存规范化的小写标签，`notes.is_pinned` 保存置顶状态；标签和置顶参与列表筛选及排序。旧库通过 `PRAGMA table_info` 检测后执行兼容迁移，Markdown 初始默认空字符串。
+SQLite 核心表：`notebooks`、`notes`、`knowledge_bases`、`model_providers`、`model_profiles`、`settings`、`chat_conversations`、`chat_messages`。`notes.title` 是由正文首个非空内容行派生、最多 50 个字符的列表、搜索和文件名元数据，并随正文原子保存，不再由独立标题输入框维护。即时编辑的首块以 Friday 同构的 TipTap `noteTitle` 节点和 `data-note-title` 属性持久化；正文原子保存三种表示：`content_markdown` 是 Markdown 模式中的用户源码（即时编辑产生正文变更后可规范化为语义等价写法），`content_html` 是经过白名单清洗的 TipTap 渲染内容，`content_text` 是搜索与 AI 使用的纯文本。`notes.tags_json` 保存规范化的小写标签，`notes.is_pinned` 保存置顶状态；标签和置顶参与列表筛选及排序。旧库通过 `PRAGMA table_info` 检测后执行兼容迁移，Markdown 初始默认空字符串。
 
 `note_revisions` 同样保存 `content_markdown`、`content_html` 和 `content_text`，因此 AI 应用前快照与版本恢复不会丢失源码。复制、导入、Agent 创建笔记及 AI 应用必须在一次逻辑操作中同步三种表示。旧记录保持可读，Markdown 在首次实际源码编辑或保存时延迟回填。
 

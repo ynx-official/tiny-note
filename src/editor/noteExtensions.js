@@ -19,6 +19,7 @@ import Superscript from '@tiptap/extension-superscript'
 import { TextStyle } from '@tiptap/extension-text-style'
 import Color from '@tiptap/extension-color'
 import { Markdown } from '@tiptap/markdown'
+import { Extension, Node } from '@tiptap/core'
 import { safeColorValue } from '../utils/noteMarkdown'
 
 function escapeHtml(value = '') {
@@ -129,6 +130,59 @@ const MarkdownHeading = Heading.extend({
   }
 })
 
+// Friday models the first editor block as a dedicated title node instead of a
+// regular heading. This keeps title keyboard behavior and metadata extraction
+// independent from the body heading controls.
+const NoteTitle = Node.create({
+  name: 'noteTitle',
+  group: 'block',
+  content: 'inline*',
+  defining: true,
+
+  parseHTML() {
+    return [{ tag: 'h1[data-note-title]' }]
+  },
+
+  renderHTML({ HTMLAttributes }) {
+    return ['h1', { ...HTMLAttributes, 'data-note-title': 'true' }, 0]
+  },
+
+  renderMarkdown(node, helpers) {
+    if (!node.content) return ''
+    return `# ${helpers.renderChildren(node.content)}`
+  }
+})
+
+// Keep the shortcut priority separate from the node priority. Raising the node
+// itself would make noteTitle ProseMirror's default block and create titles in
+// empty table cells; only the Enter handler needs to run before the base keymap.
+const NoteTitleKeyboard = Extension.create({
+  name: 'noteTitleKeyboard',
+  priority: 1100,
+  addKeyboardShortcuts() {
+    return {
+      Enter: () => {
+        if (!this.editor.isActive('noteTitle')) return false
+
+        const { doc, selection } = this.editor.state
+        const { $from } = selection
+        const blockIndex = $from.index(0)
+        const nextBlock = blockIndex + 1 < doc.childCount ? doc.child(blockIndex + 1) : null
+        const canReuseEmptyParagraph = selection.empty
+          && $from.parentOffset === $from.parent.content.size
+          && nextBlock?.type.name === 'paragraph'
+          && nextBlock.content.size === 0
+
+        if (canReuseEmptyParagraph) {
+          return this.editor.chain().focus().setTextSelection($from.after(1) + 1).run()
+        }
+
+        return this.editor.chain().splitBlock().setNode('paragraph').run()
+      }
+    }
+  }
+})
+
 const MarkdownTextStyle = TextStyle.extend({
   renderMarkdown(node, helpers) {
     const color = safeColorValue(node.attrs?.color)
@@ -172,6 +226,8 @@ export function createNoteExtensions({ lowlight, codeBlockNodeView, placeholder,
       underline: false
     }),
     MarkdownParagraph,
+    NoteTitle,
+    NoteTitleKeyboard,
     MarkdownHeading,
     Underline,
     Link.configure({ openOnClick: false }),
@@ -187,7 +243,7 @@ export function createNoteExtensions({ lowlight, codeBlockNodeView, placeholder,
     MarkdownSuperscript,
     MarkdownTextStyle,
     Color,
-    TextAlign.configure({ types: ['heading', 'paragraph'] }),
+    TextAlign.configure({ types: ['noteTitle', 'heading', 'paragraph'] }),
     Markdown.configure({ markedOptions: { gfm: true } })
   ]
 

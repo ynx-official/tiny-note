@@ -2,6 +2,7 @@
 import { onBeforeUnmount, onMounted, ref, shallowRef, watch } from 'vue'
 import { Compartment, EditorState } from '@codemirror/state'
 import { EditorView, basicSetup } from 'codemirror'
+import { redo, undo } from '@codemirror/commands'
 import { markdown } from '@codemirror/lang-markdown'
 import { languages } from '@codemirror/language-data'
 import { scrollOffset } from '../utils/noteMarkdown'
@@ -108,7 +109,67 @@ function setScrollProgress(progress) {
   if (element) element.scrollTop = scrollOffset(progress, element.scrollHeight, element.clientHeight)
 }
 
-defineExpose({ view, focus, getScrollElement, setScrollProgress })
+function replaceSelection(before, after = before, placeholder = '文字') {
+  const instance = view.value
+  if (!instance || props.readonly) return false
+  const { from, to } = instance.state.selection.main
+  const selected = instance.state.sliceDoc(from, to)
+  const unwrapped = selected.startsWith(before) && selected.endsWith(after)
+  const selectedContent = unwrapped
+    ? selected.slice(before.length, selected.length - after.length)
+    : selected || placeholder
+  const content = unwrapped ? selectedContent : `${before}${selectedContent}${after}`
+  const selectionFrom = unwrapped ? from : from + before.length
+  instance.dispatch({
+    changes: { from, to, insert: content },
+    selection: { anchor: selectionFrom, head: selectionFrom + selectedContent.length },
+    scrollIntoView: true
+  })
+  instance.focus()
+  return true
+}
+
+function replaceLinePrefixes(prefix, matcher = /^(?: {0,3}(?:[-+*]|\d+\.|>)(?: \[[ xX]\])?\s+)/) {
+  const instance = view.value
+  if (!instance || props.readonly) return false
+  const selection = instance.state.selection.main
+  const firstLine = instance.state.doc.lineAt(selection.from)
+  const selectedLastLine = instance.state.doc.lineAt(selection.to)
+  const lastLineNumber = selection.to > selection.from && selectedLastLine.from === selection.to
+    ? selectedLastLine.number - 1
+    : selectedLastLine.number
+  const changes = []
+  for (let number = firstLine.number; number <= lastLineNumber; number += 1) {
+    const line = instance.state.doc.line(number)
+    const match = line.text.match(matcher)
+    changes.push({ from: line.from, to: line.from + (match?.[0]?.length || 0), insert: prefix })
+  }
+  instance.dispatch({ changes, scrollIntoView: true })
+  instance.focus()
+  return true
+}
+
+function applyFormat(format) {
+  if (format === 'undo') return undo(view.value)
+  if (format === 'redo') return redo(view.value)
+  if (format === 'bold') return replaceSelection('**', '**', '粗体文字')
+  if (format === 'italic') return replaceSelection('*', '*', '斜体文字')
+  if (format === 'strike') return replaceSelection('~~', '~~', '删除线文字')
+  if (format === 'code') return replaceSelection('`', '`', '代码')
+  if (format === 'link') return replaceSelection('[', '](https://)', '链接文字')
+  if (format === 'quote') return replaceLinePrefixes('> ', /^(?: {0,3}>\s*)/)
+  if (format === 'bullet') return replaceLinePrefixes('- ')
+  if (format === 'ordered') return replaceLinePrefixes('1. ')
+  if (format === 'task') return replaceLinePrefixes('- [ ] ')
+  return false
+}
+
+function setHeading(level = 0) {
+  const prefix = level > 0 ? `${'#'.repeat(Math.min(6, level))} ` : ''
+  return replaceLinePrefixes(prefix, /^(?: {0,3}#{1,6}\s*)/)
+}
+
+defineExpose({ view, focus, getScrollElement, setScrollProgress, applyFormat, setHeading })
 </script>
 
 <template>
