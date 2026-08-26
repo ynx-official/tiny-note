@@ -96,6 +96,16 @@ afterEach(() => {
 })
 
 describe('NoteEditor article modes', () => {
+  it('does not render the pin and saved-status toolbar above the article', async () => {
+    const wrapper = await mountEditor()
+
+    expect(wrapper.find('.note-pin-button').exists()).toBe(false)
+    expect(wrapper.find('.editor-meta').exists()).toBe(false)
+    expect(wrapper.find('.note-metadata').exists()).toBe(false)
+    expect(wrapper.text()).not.toContain('已保存')
+    wrapper.unmount()
+  })
+
   it('marks an external source and offers an explicit import action', async () => {
     const external = { ...note('external-note'), external: true, externalPath: 'C:\\docs\\outside.md' }
     const wrapper = await mountEditor(external)
@@ -103,7 +113,8 @@ describe('NoteEditor article modes', () => {
     expect(wrapper.get('.external-note-banner').text()).toContain('外部文件')
     expect(wrapper.get('.external-note-banner').text()).toContain('outside.md')
     expect(wrapper.get('.external-note-banner').text()).toContain('不会出现在笔记列表')
-    expect(wrapper.get('.editor-mode-trigger').text()).toContain('Markdown')
+    expect(wrapper.get('.editor-mode-trigger').text()).toBe('')
+    expect(wrapper.get('.editor-mode-trigger').attributes('aria-label')).toContain('Markdown')
 
     await wrapper.get('.external-note-import').trigger('click')
     await flushPromises()
@@ -111,20 +122,19 @@ describe('NoteEditor article modes', () => {
     wrapper.unmount()
   })
 
-  it('offers separate print, PDF, and HTML actions instead of a combined print/PDF command', async () => {
+  it('uses a dedicated export trigger and keeps only export and print actions in its menu', async () => {
     const wrapper = await mountEditor()
 
-    const trigger = wrapper.get('button[title="更多"]')
+    const trigger = wrapper.get('button[title="导出与打印"]')
+    expect(trigger.classes()).toContain('toolbar-export-trigger')
+    expect(trigger.find('.lucide-file-output-icon').exists()).toBe(true)
     expect(trigger.attributes('aria-expanded')).toBe('false')
     await trigger.trigger('click')
     expect(trigger.attributes('aria-expanded')).toBe('true')
     expect(wrapper.get('.toolbar-more-menu').attributes('role')).toBe('menu')
     const labels = wrapper.findAll('.toolbar-more-menu button').map(button => button.text().trim())
 
-    expect(labels).toContain('打印')
-    expect(labels).toContain('导出 PDF')
-    expect(labels).toContain('导出 HTML')
-    expect(labels).not.toContain('打印 / 保存 PDF')
+    expect(labels).toEqual(['导出 Markdown', '导出 HTML', '导出 PDF', '打印'])
     await wrapper.get('.toolbar-more-menu').trigger('keydown', { key: 'Escape' })
     expect(wrapper.find('.toolbar-more-menu').exists()).toBe(false)
     expect(window.document.activeElement).toBe(trigger.element)
@@ -136,7 +146,7 @@ describe('NoteEditor article modes', () => {
     noteExportMocks.exportNotePdf.mockImplementationOnce(() => new Promise(resolve => { finishPdf = resolve }))
     const wrapper = await mountEditor()
 
-    await wrapper.get('button[title="更多"]').trigger('click')
+    await wrapper.get('button[title="导出与打印"]').trigger('click')
     await wrapper.findAll('.toolbar-more-menu button').find(button => button.text().includes('导出 PDF')).trigger('click')
     await flushPromises()
 
@@ -154,7 +164,7 @@ describe('NoteEditor article modes', () => {
     exportLocationMocks.saveExportBlob.mockResolvedValueOnce({ path: 'D:\\Exports\\四种模式.html', fileName: '四种模式.html' })
     const wrapper = await mountEditor()
 
-    await wrapper.get('button[title="更多"]').trigger('click')
+    await wrapper.get('button[title="导出与打印"]').trigger('click')
     await wrapper.findAll('.toolbar-more-menu button').find(button => button.text().includes('导出 HTML')).trigger('click')
     await flushPromises()
 
@@ -178,7 +188,7 @@ describe('NoteEditor article modes', () => {
       }
     })
 
-    await wrapper.get('button[title="更多"]').trigger('click')
+    await wrapper.get('button[title="导出与打印"]').trigger('click')
     await wrapper.findAll('.toolbar-more-menu button').find(button => button.text().includes('导出 HTML')).trigger('click')
     await flushPromises()
     expect(noteExportMocks.downloadNoteHtml).toHaveBeenCalledWith(
@@ -190,12 +200,12 @@ describe('NoteEditor article modes', () => {
     )
     expect(noteExportMocks.downloadNoteHtml.mock.calls[0][0].contentHtml).not.toContain('最新草稿')
 
-    await wrapper.get('button[title="更多"]').trigger('click')
+    await wrapper.get('button[title="导出与打印"]').trigger('click')
     await wrapper.findAll('.toolbar-more-menu button').find(button => button.text().includes('导出 PDF')).trigger('click')
     await flushPromises()
     expect(noteExportMocks.exportNotePdf).toHaveBeenCalledWith(expect.objectContaining({ contentHtml: expect.stringContaining('尚未经过 150ms 防抖') }), expect.objectContaining({ download: expect.any(Function) }))
 
-    await wrapper.get('button[title="更多"]').trigger('click')
+    await wrapper.get('button[title="导出与打印"]').trigger('click')
     await wrapper.findAll('.toolbar-more-menu button').find(button => button.text().trim() === '打印').trigger('click')
     await flushPromises()
     expect(noteExportMocks.printNote).toHaveBeenCalledWith(expect.objectContaining({ contentHtml: expect.stringContaining('尚未经过 150ms 防抖') }))
@@ -227,7 +237,9 @@ describe('NoteEditor article modes', () => {
 
   it('opens in instant editing and exposes only instant editing and Markdown', async () => {
     const wrapper = await mountEditor()
-    expect(wrapper.get('.editor-mode-trigger').text()).toContain('即时编辑')
+    expect(wrapper.get('.editor-mode-trigger').text()).toBe('')
+    expect(wrapper.get('.editor-mode-trigger').attributes('aria-label')).toContain('即时编辑')
+    expect(wrapper.find('.knowledge-menu-anchor').exists()).toBe(false)
     expect(wrapper.get('.toolbar-left-group').isVisible()).toBe(true)
 
     await wrapper.get('.editor-mode-trigger').trigger('click')
@@ -275,14 +287,13 @@ describe('NoteEditor article modes', () => {
     wrapper.unmount()
   })
 
-  it('uses the Friday SVG chevron for every toolbar dropdown in both editor modes', async () => {
+  it('uses the Friday SVG chevron for labeled toolbar dropdowns and keeps the mode trigger icon-only', async () => {
     const wrapper = await mountEditor(note('note-heading-chevron'))
     const richDropdownTriggers = [
       'button[title="插入"]',
       'button[title="文字颜色"]',
       'button[title="背景颜色"]',
-      '.heading-menu-anchor > button',
-      '.editor-mode-trigger'
+      '.heading-menu-anchor > button'
     ]
 
     for (const selector of richDropdownTriggers) {
@@ -292,13 +303,14 @@ describe('NoteEditor article modes', () => {
       expect(chevron.attributes('height')).toBe('12')
       expect(chevron.get('polyline').attributes('points')).toBe('6 9 12 15 18 9')
     }
+    expect(wrapper.find('.editor-mode-trigger .friday-dropdown-chevron').exists()).toBe(false)
     expect(wrapper.text()).not.toContain('▾')
 
     await wrapper.get('.editor-mode-trigger').trigger('click')
     await wrapper.findAll('[role="menuitemradio"]')[1].trigger('click')
     await flushPromises()
     expect(wrapper.get('.markdown-toolbar-controls .friday-dropdown-chevron').get('polyline').attributes('points')).toBe('6 9 12 15 18 9')
-    expect(wrapper.get('.editor-mode-trigger .friday-dropdown-chevron').get('polyline').attributes('points')).toBe('6 9 12 15 18 9')
+    expect(wrapper.find('.editor-mode-trigger .friday-dropdown-chevron').exists()).toBe(false)
     wrapper.unmount()
   })
 
@@ -330,7 +342,7 @@ describe('NoteEditor article modes', () => {
     wrapper.get('.note-prose').element.dispatchEvent(enterMarkdown)
     await flushPromises()
     expect(enterMarkdown.defaultPrevented).toBe(true)
-    expect(wrapper.get('.editor-mode-trigger').text()).toContain('Markdown')
+    expect(wrapper.get('.editor-mode-trigger').attributes('aria-label')).toContain('Markdown')
     expect(globalThis.document.activeElement).toBe(wrapper.get('.cm-content').element)
 
     const exactDraft = '# 快捷键保存\n\n\n保留空行\n'
@@ -342,7 +354,7 @@ describe('NoteEditor article modes', () => {
     wrapper.get('.cm-content').element.dispatchEvent(returnToRich)
     await flushPromises()
     expect(returnToRich.defaultPrevented).toBe(true)
-    expect(wrapper.get('.editor-mode-trigger').text()).toContain('即时编辑')
+    expect(wrapper.get('.editor-mode-trigger').attributes('aria-label')).toContain('即时编辑')
     expect(globalThis.document.activeElement).toBe(wrapper.get('.note-prose').element)
     expect(active.contentMarkdown).toBe(exactDraft)
     expect(wrapper.get('.note-prose').text()).toContain('保留空行')
@@ -358,13 +370,13 @@ describe('NoteEditor article modes', () => {
       key: '/', code: 'Slash', ctrlKey: true, bubbles: true, cancelable: true
     }))
     await flushPromises()
-    expect(wrapper.get('.editor-mode-trigger').text()).toContain('即时编辑')
+    expect(wrapper.get('.editor-mode-trigger').attributes('aria-label')).toContain('即时编辑')
 
     wrapper.get('.note-prose').element.dispatchEvent(new window.KeyboardEvent('keydown', {
       key: 'm', code: 'KeyM', ctrlKey: true, shiftKey: true, bubbles: true, cancelable: true
     }))
     await flushPromises()
-    expect(wrapper.get('.editor-mode-trigger').text()).toContain('Markdown')
+    expect(wrapper.get('.editor-mode-trigger').attributes('aria-label')).toContain('Markdown')
     expect(wrapper.get('.editor-mode-trigger').attributes('title')).toContain('Ctrl + Shift + M')
     wrapper.unmount()
   })
@@ -388,7 +400,7 @@ describe('NoteEditor article modes', () => {
     expect(second.defaultPrevented).toBe(true)
     expect(repeated.defaultPrevented).toBe(true)
     await flushPromises()
-    expect(wrapper.get('.editor-mode-trigger').text()).toContain('Markdown')
+    expect(wrapper.get('.editor-mode-trigger').attributes('aria-label')).toContain('Markdown')
     wrapper.unmount()
   })
 
@@ -403,7 +415,7 @@ describe('NoteEditor article modes', () => {
 
     await wrapper.setProps({ note: note('note-2') })
     await flushPromises()
-    expect(wrapper.get('.editor-mode-trigger').text()).toContain('Markdown')
+    expect(wrapper.get('.editor-mode-trigger').attributes('aria-label')).toContain('Markdown')
     expect(wrapper.find('.editor-workspace.mode-markdown.is-previewing').exists()).toBe(true)
     wrapper.unmount()
   })
@@ -415,6 +427,8 @@ describe('NoteEditor article modes', () => {
     await flushPromises()
 
     const previewToggle = wrapper.get('.markdown-preview-toggle')
+    expect(previewToggle.text()).toBe('')
+    expect(previewToggle.attributes('aria-label')).toBe('关闭实时预览')
     expect(previewToggle.attributes('aria-pressed')).toBe('true')
     expect(wrapper.find('.split-preview-pane').exists()).toBe(true)
     await previewToggle.trigger('click')
@@ -445,7 +459,7 @@ describe('NoteEditor article modes', () => {
     expect(first.contentHtml).toContain('<h1 data-note-title="true">新稿</h1>')
     expect(first.contentText).toContain('保留空行')
     expect(JSON.parse(localStorage.getItem('tiny-note-browser-state')).notes[0].contentMarkdown).toBe(exactDraft)
-    expect(wrapper.get('.editor-mode-trigger').text()).toContain('Markdown')
+    expect(wrapper.get('.editor-mode-trigger').attributes('aria-label')).toContain('Markdown')
     wrapper.unmount()
   })
 
@@ -546,7 +560,7 @@ describe('NoteEditor article modes', () => {
     await flushPromises()
     expect(active.contentMarkdown).toBe('# AI 新版')
     expect(active.contentHtml).toContain('<h1 data-note-title="true">AI 新版</h1>')
-    expect(wrapper.get('.editor-mode-trigger').text()).toContain('Markdown')
+    expect(wrapper.get('.editor-mode-trigger').attributes('aria-label')).toContain('Markdown')
     expect(wrapper.findComponent(MarkdownSourceEditor).text()).toContain('# AI 新版')
     wrapper.unmount()
   })
@@ -923,7 +937,7 @@ describe('NoteEditor article modes', () => {
 
     await wrapper.get('.markdown-paste-source').trigger('click')
     await flushPromises()
-    expect(wrapper.get('.editor-mode-trigger').text()).toContain('Markdown')
+    expect(wrapper.get('.editor-mode-trigger').attributes('aria-label')).toContain('Markdown')
     expect(wrapper.findComponent(MarkdownSourceEditor).text()).toContain('# 粘贴标题')
     wrapper.unmount()
   })

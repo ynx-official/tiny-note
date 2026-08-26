@@ -1,6 +1,7 @@
 import packageMetadata from '../../package.json'
 
 export const UPDATE_CHECK_INTERVAL_MS = 6 * 60 * 60 * 1000
+export const UPDATE_RETRY_INTERVAL_MS = 15 * 60 * 1000
 export const UPDATE_CHECKED_AT_KEY = 'tiny-note-update-checked-at'
 export const BUNDLED_APP_VERSION = packageMetadata.version
 
@@ -32,24 +33,26 @@ export function createAppUpdater(dependencies = {}) {
     },
 
     async check({ force = true } = {}) {
-      if (!force && Date.now() - readLastCheckedAt() < UPDATE_CHECK_INTERVAL_MS) {
-        return { supported: true, available: false, skipped: true }
+      const elapsed = Date.now() - readLastCheckedAt()
+      if (!force && elapsed < UPDATE_CHECK_INTERVAL_MS) {
+        return { supported: true, available: false, skipped: true, retryAfterMs: UPDATE_CHECK_INTERVAL_MS - elapsed }
       }
       if (checking) return checking
-      checking = (async () => {
+      const request = (async () => {
         pendingUpdate = null
-        try {
-          if (!deps.isDesktop()) return { supported: false, available: false }
-          const update = await deps.invoke('app_update_check')
-          if (!update?.available) return { supported: true, available: false, version: update?.version || null, body: update?.notes || '' }
-          pendingUpdate = update
-          return { ...update, body: update.notes || '', date: null }
-        } finally {
-          writeLastCheckedAt()
-          checking = null
-        }
+        if (!deps.isDesktop()) return { supported: false, available: false }
+        const update = await deps.invoke('app_update_check')
+        writeLastCheckedAt()
+        if (!update?.available) return { supported: true, available: false, version: update?.version || null, body: update?.notes || '' }
+        pendingUpdate = update
+        return { ...update, body: update.notes || '', date: null }
       })()
-      return checking
+      checking = request
+      try {
+        return await request
+      } finally {
+        if (checking === request) checking = null
+      }
     },
 
     async downloadAndInstall(onProgress = () => {}) {

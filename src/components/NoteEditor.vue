@@ -22,7 +22,7 @@ import MarkdownSourceEditor from './MarkdownSourceEditor.vue'
 import MarkdownMessage from './MarkdownMessage.vue'
 import NoteAssistantSidebar from './NoteAssistantSidebar.vue'
 import FridayDropdownChevron from './FridayDropdownChevron.vue'
-import { BookOpen, Bold, CalendarDays, Check, CircleHelp, Columns2, Copy, FileCode2, FileText, Italic, Languages, LoaderCircle, Maximize2, MessageSquare, Pin, RotateCcw, Send, ShieldCheck, Table2, ThumbsDown, ThumbsUp, Underline as UnderlineIcon, Strikethrough, List, ListOrdered, ListChecks, Quote, Code2, Undo2, Redo2, Eraser, Link2, Highlighter, PenLine, AlignLeft, AlignCenter, AlignRight, Plus, PlusCircle, MoreHorizontal, Layers, Sparkles, Trash2, Download, Printer, Workflow, X, Zap } from 'lucide-vue-next'
+import { Bold, CalendarDays, Check, CircleHelp, Columns2, Copy, FileCode2, FileOutput, FileText, Italic, Languages, LoaderCircle, Maximize2, MessageSquare, RotateCcw, Send, ShieldCheck, Table2, ThumbsDown, ThumbsUp, Underline as UnderlineIcon, Strikethrough, List, ListOrdered, ListChecks, Quote, Code2, Undo2, Redo2, Eraser, Link2, Highlighter, PenLine, AlignLeft, AlignCenter, AlignRight, PlusCircle, Layers, Sparkles, Trash2, Download, Printer, Workflow, X, Zap } from 'lucide-vue-next'
 import { useNotesStore } from '../stores/notes'
 import { useLibraryStore } from '../stores/library'
 import { useAppStore } from '../stores/app'
@@ -41,7 +41,7 @@ import { showExportSuccess } from '../services/exportSuccess'
 
 const lowlight = createLowlight()
 lowlight.register('javascript', javascript); lowlight.register('typescript', typescript); lowlight.register('python', python); lowlight.register('json', json); lowlight.register('html', xml); lowlight.register('xml', xml); lowlight.register('css', css); lowlight.register('bash', bash); lowlight.register('sql', sql); lowlight.register('markdown', markdown); lowlight.register('yaml', yaml); lowlight.register('rust', rust)
-const props = defineProps({ note: Object, tocVisible: { type: Boolean, default: false }, proposalId: { type: String, default: '' } }); const emit = defineEmits(['deleted', 'toggle-toc', 'proposal-reviewed', 'import-external']); const store = useNotesStore(); const library = useLibraryStore(); const appStore = useAppStore(); const tasksStore = useTasksStore(); const { t, locale } = useI18n(); const aiBusy = ref(false); const aiText = ref(''); const aiRequestId = ref(''); const aiAction = ref('summarize'); const aiResultAction = ref(''); const aiProposal = ref(null); const aiSources = ref([]); const aiConsentOpen = ref(false); const assistantOpen = ref(false); const assistantTriggerVisible = ref(true); const assistantBusy = ref(false); const assistantRequestId = ref(''); const assistantStreamingText = ref(''); const assistantMessages = ref([]); const assistantSelection = ref(null); const assistantResponseSources = ref([]); const assistantResponseProposal = ref(null); const aiPanelOpen = ref(false); const aiPanelSelectionText = ref(''); const commandMenuOpen = ref(false); const aiPrompt = ref(''); const aiInputRef = ref(null); const commandMenuDirection = ref('down'); const moreOpen = ref(false); const moreTriggerRef = ref(null); const moreMenuRef = ref(null); const revisionsOpen = ref(false); const revisions = ref([]); const revisionsBusy = ref(false); const insertOpen = ref(false); const tablePickerOpen = ref(false); const textColorOpen = ref(false); const highlightOpen = ref(false); const headingOpen = ref(false); const knowledgeMenuOpen = ref(false); const imageDialogOpen = ref(false); const imageUrl = ref(''); const imageAlt = ref(''); const imageInput = ref(null); const imageFileInput = ref(null); const tableRows = ref(0); const tableCols = ref(0); const fimEnabled = computed(() => appStore.settings.fimEnabled === true); const fimSuggestion = ref(''); const editorStateTick = ref(0); let fimTimer; let assistantTriggerTimer; let savedSelection = null; let pendingAiRequest = null; let pendingAiChange = null
+const props = defineProps({ note: Object, tocVisible: { type: Boolean, default: false }, proposalId: { type: String, default: '' } }); const emit = defineEmits(['deleted', 'toggle-toc', 'proposal-reviewed', 'import-external']); const store = useNotesStore(); const library = useLibraryStore(); const appStore = useAppStore(); const tasksStore = useTasksStore(); const { t, locale } = useI18n(); const aiBusy = ref(false); const aiText = ref(''); const aiRequestId = ref(''); const aiAction = ref('summarize'); const aiResultAction = ref(''); const aiProposal = ref(null); const aiSources = ref([]); const aiConsentOpen = ref(false); const assistantOpen = ref(false); const assistantTriggerVisible = ref(true); const assistantBusy = ref(false); const assistantRequestId = ref(''); const assistantStreamingText = ref(''); const assistantMessages = ref([]); const assistantSelection = ref(null); const assistantResponseSources = ref([]); const assistantResponseProposal = ref(null); const aiPanelOpen = ref(false); const aiPanelSelectionText = ref(''); const commandMenuOpen = ref(false); const aiPrompt = ref(''); const aiInputRef = ref(null); const commandMenuDirection = ref('down'); const moreOpen = ref(false); const moreTriggerRef = ref(null); const moreMenuRef = ref(null); const insertOpen = ref(false); const tablePickerOpen = ref(false); const textColorOpen = ref(false); const highlightOpen = ref(false); const headingOpen = ref(false); const imageDialogOpen = ref(false); const imageUrl = ref(''); const imageAlt = ref(''); const imageInput = ref(null); const imageFileInput = ref(null); const tableRows = ref(0); const tableCols = ref(0); const fimEnabled = computed(() => appStore.settings.fimEnabled === true); const fimSuggestion = ref(''); const editorStateTick = ref(0); let fimTimer; let assistantTriggerTimer; let savedSelection = null; let pendingAiRequest = null; let pendingAiChange = null
 const modeIcons = { rich: PenLine, markdown: FileCode2 }
 const noteLinks = ref([])
 const editorModes = NOTE_MODES.map(mode => ({ ...mode, icon: modeIcons[mode.id] }))
@@ -212,10 +212,6 @@ const canRedo = computed(() => { editorStateTick.value; return editor.value?.can
 const linkActive = computed(() => { editorStateTick.value; return editor.value?.isActive('link') ?? false })
 const canEditLink = computed(() => { editorStateTick.value; const instance = editor.value; return !!instance && (!instance.state.selection.empty || instance.isActive('link')) })
 const selectedText = computed(() => { editorStateTick.value; const instance = editor.value; if (!instance || instance.state.selection.empty) return ''; const { from, to } = instance.state.selection; return instance.state.doc.textBetween(from, to, '\n').trim() })
-const knowledgeGroups = computed(() => [
-  { id: 'personal', label: t('personal'), items: library.bases.filter(base => base.category === 'personal') },
-  { id: 'local', label: t('local'), items: library.bases.filter(base => base.category === 'local') }
-].filter(group => group.items.length))
 function shouldShowBubbleMenu({ state }) { return richMode.value && !aiOutputOpen.value && !state.selection.empty && state.doc.textBetween(state.selection.from, state.selection.to, '\n').trim().length > 0 }
 const textColorPalette = ['#1c1917', '#dc2626', '#ea580c', '#ca8a04', '#16a34a', '#0891b2', '#2563eb', '#7c3aed', '#db2777']
 const highlightPalette = ['#fef08a', '#fed7aa', '#fecaca', '#bbf7d0', '#bae6fd', '#c7d2fe', '#e9d5ff', '#fbcfe8']
@@ -841,9 +837,6 @@ async function exportMarkdown() {
 function exportHtml() { return runArticleExport('html') }
 function exportPdf() { return runArticleExport('pdf') }
 function printNote() { return runArticleExport('print') }
-async function openRevisions() { if (!props.note) return; moreOpen.value = false; revisionsOpen.value = true; revisionsBusy.value = true; try { revisions.value = await (await import('../services/tauri')).invoke('note_revision_list', { noteId: props.note.id }) } finally { revisionsBusy.value = false } }
-async function restoreRevision(revision) { if (!(await requestConfirmation({ title: '恢复历史版本', message: '恢复这个版本？当前内容也会先保存为可恢复版本。', confirmLabel: '恢复' }))) return; const updated = await (await import('../services/tauri')).invoke('note_revision_restore', { id: revision.id }); Object.assign(props.note, updated); applyingEditorContent = true; editor.value?.commands.setContent(prepareEditorContent(updated), { emitUpdate: false }); applyingEditorContent = false; markdownDraft.value = updated.contentMarkdown || getEditorMarkdown() || ''; sourceDirty.value = false; markdownParseError.value = ''; pendingSourceDrafts.delete(updated.id); persistedSignatures.set(updated.id, noteContentSignature(updated)); revisions.value = await (await import('../services/tauri')).invoke('note_revision_list', { noteId: props.note.id }) }
-function formatRevisionTime(value) { try { return new Intl.DateTimeFormat('zh-CN', { dateStyle: 'medium', timeStyle: 'short' }).format(new Date(value)) } catch { return value } }
 function restoreSavedSelection() { if (!editor.value || !savedSelection) return false; return editor.value.chain().focus().setTextSelection(savedSelection).run() }
 function clearAiResultState() { aiOutputOpen.value = false; aiText.value = ''; aiOriginalText.value = ''; aiResultAction.value = ''; aiFeedback.value = ''; aiDialogPosition.value = null; aiProposal.value = null; aiSources.value = [] }
 function syncNoteFromEditor() {
@@ -1147,7 +1140,7 @@ function insertMermaidDiagram(kind) {
   }).run()
   insertOpen.value = false
 }
-function closeToolbarMenus() { insertOpen.value = false; tablePickerOpen.value = false; textColorOpen.value = false; highlightOpen.value = false; headingOpen.value = false; knowledgeMenuOpen.value = false; moreOpen.value = false }
+function closeToolbarMenus() { insertOpen.value = false; tablePickerOpen.value = false; textColorOpen.value = false; highlightOpen.value = false; headingOpen.value = false; moreOpen.value = false }
 function toggleInsertMenu() { closeToolbarMenus(); insertOpen.value = !insertOpen.value }
 function selectTableCell(row, col) { tableRows.value = row; tableCols.value = col }
 function insertTable(rows = tableRows.value, cols = tableCols.value) {
@@ -1247,27 +1240,12 @@ async function editLink() {
   if (linkActive.value) chain.extendMarkRange('link').setLink({ href }).run()
   else chain.setLink({ href }).run()
 }
-async function addToKnowledge(knowledgeBaseId) {
-  if (!props.note || !knowledgeBaseId) return
-  if (!await flushLatestContent()) return
-  try { await library.addNoteReference(knowledgeBaseId, props.note); knowledgeMenuOpen.value = false } catch (error) { showToast(error?.message || '添加到知识库失败，请重试', { tone: 'error' }) }
-}
 async function saveNoteMetadata() {
   if (!props.note) return
   await flushLatestContent({ save: true })
   await store.save(props.note)
   persistedSignatures.set(props.note.id, noteContentSignature(props.note))
   noteLinks.value = (await store.listLinks(props.note.id).catch(() => [])) || []
-}
-async function togglePinned() {
-  if (!props.note) return
-  const updated = await store.setPinned(props.note.id, !props.note.pinned)
-  if (updated) Object.assign(props.note, updated)
-}
-async function createKnowledgeFromEditor() {
-  const name = await requestPrompt(t('newKnowledge'))
-  if (!name?.trim()) return
-  try { await library.create(name.trim(), 'personal'); if (library.activeId) await addToKnowledge(library.activeId) } catch (error) { showToast(error?.message || '创建知识库失败，请重试', { tone: 'error' }) }
 }
 async function importExternalSource() {
   try {
@@ -1352,31 +1330,19 @@ defineExpose({ saveLatestContent: () => flushLatestContent({ save: true }) })
         </template>
       </div>
       <div key="toolbar-mode-controls" class="toolbar-right-group">
-        <span v-if="!note.external" class="toolbar-menu-anchor knowledge-menu-anchor"><button :title="t('addToKnowledge')" @click="closeToolbarMenus(); knowledgeMenuOpen = !knowledgeMenuOpen"><PlusCircle :size="19" /></button><div v-if="knowledgeMenuOpen" class="toolbar-knowledge-menu" @click.stop>
-          <button class="knowledge-menu-create" @click="createKnowledgeFromEditor"><Plus :size="14" />{{ t('newKnowledge') }}</button>
-          <div class="note-context-divider"></div>
-          <template v-if="knowledgeGroups.length">
-            <template v-for="group in knowledgeGroups" :key="group.id">
-              <div class="toolbar-knowledge-group-label">{{ group.label }}</div>
-              <button v-for="base in group.items" :key="base.id" class="toolbar-knowledge-item" @click="addToKnowledge(base.id)"><BookOpen :size="14" />{{ base.name }}</button>
-            </template>
-          </template>
-          <span v-else class="toolbar-knowledge-empty">{{ t('noKnowledgeBases') }}</span>
-        </div></span>
         <button
           v-if="codeMode"
           type="button"
           class="markdown-preview-toggle"
           :class="{ pressed: markdownPreview }"
           :aria-pressed="markdownPreview"
+          :aria-label="markdownPreview ? '关闭实时预览' : '打开实时预览'"
           :title="markdownPreview ? '关闭实时预览' : '打开实时预览'"
           @click="toggleMarkdownPreview"
-        ><Columns2 :size="16" /><span>预览</span></button>
+        ><Columns2 :size="16" /></button>
         <span class="toolbar-menu-anchor mode-menu-anchor">
-          <button type="button" class="editor-mode-trigger" :aria-expanded="modeMenuOpen" aria-haspopup="menu" :title="`文章模式：${currentMode.label}（${modeShortcutLabel}）`" @click="toggleModeMenu" @keydown.esc.stop="modeMenuOpen = false">
+          <button type="button" class="editor-mode-trigger" :aria-label="`文章模式：${currentMode.label}`" :aria-expanded="modeMenuOpen" aria-haspopup="menu" :title="`文章模式：${currentMode.label}（${modeShortcutLabel}）`" @click="toggleModeMenu" @keydown.esc.stop="modeMenuOpen = false">
             <component :is="currentMode.icon" :size="16" />
-            <span class="editor-mode-label">{{ currentMode.label }}</span>
-            <FridayDropdownChevron />
           </button>
           <div v-if="modeMenuOpen" ref="modeMenuRef" class="editor-mode-menu" role="menu" aria-label="文章模式" @keydown="handleModeMenuKeydown" @click.stop>
             <button v-for="(mode, index) in editorModes" :key="mode.id" type="button" role="menuitemradio" :aria-checked="editorMode === mode.id" :tabindex="index === modeMenuIndex ? 0 : -1" @focus="modeMenuIndex = index" @click="changeEditorMode(mode.id)">
@@ -1389,16 +1355,12 @@ defineExpose({ saveLatestContent: () => flushLatestContent({ save: true }) })
         </span>
         <span v-if="exportStatusLabel" class="toolbar-export-status" role="status" aria-live="polite"><LoaderCircle :size="14" class="is-spinning" /> {{ exportStatusLabel }}</span>
         <span class="toolbar-menu-anchor more-menu-anchor">
-          <button ref="moreTriggerRef" type="button" :title="t('more')" aria-haspopup="menu" :aria-expanded="String(moreOpen)" aria-controls="note-more-menu" @click="toggleMoreMenu"><MoreHorizontal :size="20" /></button>
-          <div v-if="moreOpen" id="note-more-menu" ref="moreMenuRef" class="toolbar-more-menu" role="menu" :aria-label="t('moreActions')" @keydown="handleMoreMenuKeydown" @click.stop>
-            <button type="button" role="menuitem" @click="openRevisions"><RotateCcw :size="15" /> {{ t('aiVersionHistory') }}</button>
-            <div class="toolbar-more-divider" role="separator"></div>
+          <button ref="moreTriggerRef" type="button" class="toolbar-export-trigger" :title="t('exportAndPrint')" :aria-label="t('exportAndPrint')" aria-haspopup="menu" :aria-expanded="String(moreOpen)" aria-controls="note-more-menu" @click="toggleMoreMenu"><FileOutput :size="18" /></button>
+          <div v-if="moreOpen" id="note-more-menu" ref="moreMenuRef" class="toolbar-more-menu" role="menu" :aria-label="t('exportAndPrint')" @keydown="handleMoreMenuKeydown" @click.stop>
             <button type="button" role="menuitem" :disabled="Boolean(exportingFormat)" @click="exportMarkdown"><FileText :size="15" /> {{ t('exportMarkdown') }}</button>
             <button type="button" role="menuitem" :disabled="Boolean(exportingFormat)" @click="exportHtml"><FileCode2 :size="15" /> {{ t('exportHtml') }}</button>
             <button type="button" role="menuitem" :disabled="Boolean(exportingFormat)" @click="exportPdf"><Download :size="15" /> {{ t('exportPdf') }}</button>
             <button type="button" role="menuitem" :disabled="Boolean(exportingFormat)" @click="printNote"><Printer :size="15" /> {{ t('printArticle') }}</button>
-            <div v-if="!note.external" class="toolbar-more-divider" role="separator"></div>
-            <button v-if="!note.external" type="button" role="menuitem" class="danger" @click="emit('deleted', note.id); moreOpen = false"><Trash2 :size="15" /> {{ t('deleteNote') }}</button>
           </div>
         </span>
         <button v-if="assistantTriggerVisible" class="ai-button" @click="toggleAssistant"><Layers :size="17" /> Tiny Note 助理</button>
@@ -1408,9 +1370,8 @@ defineExpose({ saveLatestContent: () => flushLatestContent({ save: true }) })
       <div class="external-note-message"><FileText :size="16" aria-hidden="true" /><span><strong>外部文件</strong><small>{{ externalFileName }} · 修改会保存到源文件，不会出现在笔记列表</small></span></div>
       <button type="button" class="external-note-import" @click="importExternalSource">导入到笔记</button>
     </div>
-    <div class="note-metadata">
-      <div v-if="noteLinks.length" class="note-links" aria-label="关联笔记"><span>关联笔记</span><button v-for="link in noteLinks" :key="link.sourceNoteId + '-' + link.targetNoteId" type="button" @click="store.activeId = link.sourceNoteId === note.id ? link.targetNoteId : link.sourceNoteId">{{ link.targetTitle }}</button></div>
-      <div class="editor-meta"><button v-if="!note.external" type="button" class="note-pin-button" :class="{ active: note.pinned }" :aria-pressed="note.pinned" :aria-label="note.pinned ? '取消置顶' : '置顶笔记'" :title="note.pinned ? '取消置顶' : '置顶笔记'" @click="togglePinned"><Pin :size="14" /></button><span :class="{ saving: store.saving }">{{ store.saving ? t('saving') : t('save') }}</span></div>
+    <div v-if="noteLinks.length" class="note-metadata">
+      <div class="note-links" aria-label="关联笔记"><span>关联笔记</span><button v-for="link in noteLinks" :key="link.sourceNoteId + '-' + link.targetNoteId" type="button" @click="store.activeId = link.sourceNoteId === note.id ? link.targetNoteId : link.sourceNoteId">{{ link.targetTitle }}</button></div>
     </div>
     <button class="toc-btn" :class="{ 'is-open': tocVisible }" title="目录" aria-label="目录" @click="emit('toggle-toc')"><span class="toc-char">目</span><span class="toc-char">录</span></button>
     <div ref="splitWorkspace" class="editor-workspace" :class="[`mode-${editorMode}`, { 'is-previewing': splitMode, 'is-vertical': splitVertical }]">
@@ -1496,7 +1457,6 @@ defineExpose({ saveLatestContent: () => flushLatestContent({ save: true }) })
         <div class="editor-dialog-footer"><button class="secondary-button" @click="imageDialogOpen = false">取消</button><button class="primary-button" :disabled="!normalizeImageUrl(imageUrl)" @click="confirmImage">插入图片</button></div>
       </div>
     </div>
-    <div v-if="revisionsOpen" class="editor-dialog-overlay" @click.self="revisionsOpen = false"><div class="editor-dialog revision-dialog" role="dialog" aria-modal="true" aria-label="AI 版本历史"><div class="editor-dialog-header"><strong>AI 版本历史</strong><button class="editor-dialog-close" title="关闭" @click="revisionsOpen = false">×</button></div><div class="revision-list"><p v-if="revisionsBusy">正在读取…</p><p v-else-if="!revisions.length">还没有 AI 修改前的版本</p><button v-for="revision in revisions" :key="revision.id" type="button" @click="restoreRevision(revision)"><span><strong>{{ revision.title || '未命名笔记' }}</strong><small>{{ formatRevisionTime(revision.createdAt) }} · {{ revision.reason === 'ai_edit' ? 'AI 修改前' : '恢复前' }}</small></span><RotateCcw :size="14" /></button></div></div></div>
     </section>
     <Transition name="tiny-note-assistant-slide">
       <NoteAssistantSidebar v-if="assistantOpen" :note="note" :selection="assistantSelection" :messages="assistantMessages" :busy="assistantBusy" :streaming-text="assistantStreamingText" @close="closeAssistant" @send="sendAssistantMessage" @stop="stopAssistant" @copy="copyAssistantMessage" />

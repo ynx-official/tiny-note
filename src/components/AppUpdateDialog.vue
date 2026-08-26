@@ -1,7 +1,7 @@
 <script setup>
 import { nextTick, onMounted, onUnmounted, ref } from 'vue'
 import { Download, RefreshCw, Sparkles, X } from 'lucide-vue-next'
-import { appUpdater } from '../services/appUpdater'
+import { appUpdater, UPDATE_CHECK_INTERVAL_MS, UPDATE_RETRY_INTERVAL_MS } from '../services/appUpdater'
 
 const visible = ref(false)
 const checking = ref(false)
@@ -28,11 +28,26 @@ async function checkForUpdates({ force = true, openWhenAvailable = true } = {}) 
       await nextTick()
       dialogRef.value?.focus()
     }
+    return result
   } catch (reason) {
     error.value = reason?.message || (isChinese() ? '检查更新失败，请稍后重试。' : 'Unable to check for updates.')
+    return { failed: true }
   } finally {
     checking.value = false
   }
+}
+
+function scheduleAutomaticCheck(delay) {
+  window.clearTimeout(autoCheckTimer)
+  autoCheckTimer = window.setTimeout(runAutomaticCheck, Math.max(1000, delay))
+}
+
+async function runAutomaticCheck() {
+  const result = await checkForUpdates({ force: false })
+  const nextDelay = result?.failed
+    ? UPDATE_RETRY_INTERVAL_MS
+    : (result?.retryAfterMs ?? UPDATE_CHECK_INTERVAL_MS)
+  scheduleAutomaticCheck(nextDelay)
 }
 
 async function install() {
@@ -56,7 +71,7 @@ function onKeydown(event) {
 
 onMounted(() => {
   document.addEventListener('keydown', onKeydown)
-  autoCheckTimer = window.setTimeout(() => checkForUpdates({ force: false }), 2200)
+  scheduleAutomaticCheck(2200)
 })
 onUnmounted(() => {
   document.removeEventListener('keydown', onKeydown)

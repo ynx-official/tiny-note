@@ -95,15 +95,10 @@ fn select_asset(assets: &[ManifestAsset]) -> Option<ManifestAsset> {
     assets
         .iter()
         .find(|asset| {
-            asset.name.to_ascii_lowercase().ends_with(extension) && arch_matches(&asset.name)
+            let name = asset.name.to_ascii_lowercase();
+            name.ends_with(extension) && (arch_matches(&name) || name.contains("universal"))
         })
         .cloned()
-        .or_else(|| {
-            assets
-                .iter()
-                .find(|asset| asset.name.to_ascii_lowercase().ends_with(extension))
-                .cloned()
-        })
 }
 
 async fn fetch_manifest() -> Result<UpdateManifest, crate::AppError> {
@@ -226,7 +221,7 @@ pub async fn app_update_download(
 
 #[cfg(test)]
 mod tests {
-    use super::{verify_digest, UpdateManifest};
+    use super::{select_asset, verify_digest, ManifestAsset, UpdateManifest};
 
     #[test]
     fn accepts_matching_sha256_digest() {
@@ -250,6 +245,49 @@ mod tests {
             assets: Vec::new(),
         };
         assert!(super::validate_manifest(&manifest).is_err());
+    }
+
+    #[test]
+    fn rejects_an_installer_for_a_different_architecture() {
+        let extension = if cfg!(target_os = "windows") {
+            ".exe"
+        } else if cfg!(target_os = "macos") {
+            ".dmg"
+        } else {
+            ".appimage"
+        };
+        let wrong_arch = if std::env::consts::ARCH == "aarch64" {
+            "x64"
+        } else {
+            "aarch64"
+        };
+        let asset = ManifestAsset {
+            name: format!("Tiny Note_0.2.0_{wrong_arch}{extension}"),
+            url: "https://github.com/example/update".into(),
+            size: 1,
+            digest: format!("sha256:{}", "0".repeat(64)),
+        };
+
+        assert!(select_asset(&[asset]).is_none());
+    }
+
+    #[test]
+    fn accepts_an_explicitly_universal_installer() {
+        let extension = if cfg!(target_os = "windows") {
+            ".exe"
+        } else if cfg!(target_os = "macos") {
+            ".dmg"
+        } else {
+            ".appimage"
+        };
+        let asset = ManifestAsset {
+            name: format!("Tiny Note_0.2.0_universal{extension}"),
+            url: "https://github.com/example/update".into(),
+            size: 1,
+            digest: format!("sha256:{}", "0".repeat(64)),
+        };
+
+        assert!(select_asset(&[asset]).is_some());
     }
 
     fn hex_for(bytes: &[u8]) -> String {

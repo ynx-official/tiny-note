@@ -17,6 +17,16 @@ describe('app updater', () => {
     expect(invoke).not.toHaveBeenCalled()
   })
 
+  it('clears a synchronously completed check before the next environment check', async () => {
+    const isDesktop = vi.fn().mockReturnValueOnce(false).mockReturnValue(true)
+    const invoke = vi.fn(async () => ({ available: false, supported: true, version: '0.1.10', notes: '' }))
+    const client = createAppUpdater({ isDesktop, invoke })
+
+    await expect(client.check()).resolves.toMatchObject({ supported: false })
+    await expect(client.check()).resolves.toMatchObject({ supported: true, version: '0.1.10' })
+    expect(invoke).toHaveBeenCalledOnce()
+  })
+
   it('keeps a checked update for a later user-approved install', async () => {
     const invoke = vi.fn(async () => {})
     const client = createAppUpdater({
@@ -88,5 +98,18 @@ describe('app updater', () => {
 
     await client.check({ force: false })
     expect(invoke).toHaveBeenCalledOnce()
+  })
+
+  it('does not start the six-hour cooldown when checking fails', async () => {
+    const storage = { getItem: vi.fn(() => '0'), setItem: vi.fn() }
+    const invoke = vi.fn()
+      .mockRejectedValueOnce(new Error('offline'))
+      .mockResolvedValueOnce({ available: false, supported: true, version: '0.1.10', notes: '' })
+    const client = createAppUpdater({ isDesktop: () => true, invoke, storage })
+
+    await expect(client.check({ force: false })).rejects.toThrow('offline')
+    expect(storage.setItem).not.toHaveBeenCalled()
+    await expect(client.check({ force: false })).resolves.toMatchObject({ available: false })
+    expect(invoke).toHaveBeenCalledTimes(2)
   })
 })
