@@ -21,17 +21,22 @@ import AppExportSuccessDialog from './AppExportSuccessDialog.vue'
 afterEach(() => vi.clearAllMocks())
 
 describe('AppExportSuccessDialog', () => {
-  it('offers all three post-export actions and focuses open file', async () => {
+  it('orders folder, file, and dismiss actions and focuses open file', async () => {
     const wrapper = mount(AppExportSuccessDialog, {
       attachTo: window.document.body,
       global: { plugins: [createI18n({ legacy: false, locale: 'zh-CN', messages })], stubs: { Transition: false } }
     })
     await flushPromises()
 
-    expect(wrapper.get('[role="dialog"]').text()).toContain('导出成功')
+    expect(wrapper.get('[role="dialog"]').text()).toContain('保存成功')
     expect(wrapper.get('[data-testid="reveal-exported-file"]').text()).toContain('打开所在文件夹')
     expect(wrapper.get('[data-testid="open-exported-file"]').text()).toContain('打开文件')
     expect(wrapper.get('[data-testid="dismiss-export-success"]').text()).toContain('以后再说')
+    expect(wrapper.findAll('.app-export-success-dialog > footer > button').map(button => button.attributes('data-testid'))).toEqual([
+      'reveal-exported-file',
+      'open-exported-file',
+      'dismiss-export-success'
+    ])
     expect(window.document.activeElement).toBe(wrapper.get('[data-testid="open-exported-file"]').element)
 
     await wrapper.get('[data-testid="reveal-exported-file"]').trigger('click')

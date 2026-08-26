@@ -22,7 +22,7 @@ export async function pickNativeExportDirectory(defaultPath = '') {
     directory: true,
     multiple: false,
     defaultPath: defaultPath || undefined,
-    title: '选择文章导出文件夹'
+    title: '选择文件保存文件夹'
   })
   return typeof selected === 'string' ? selected : ''
 }

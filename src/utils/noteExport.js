@@ -151,23 +151,28 @@ const NOTE_EXPORT_ARTICLE_CSS = `
   overflow: hidden;
 }
 .tiny-note-export-mermaid svg { display: block; width: 100%; max-width: 100%; height: auto; margin: 0 auto; }
-.tiny-note-export-mermaid-expand {
+.tiny-note-export-mermaid-actions {
   position: absolute;
   z-index: 1;
   top: 10px;
   right: 10px;
-  min-width: 40px;
-  height: 40px;
-  padding: 0 12px;
+  display: flex;
+  gap: 6px;
+}
+.tiny-note-export-mermaid-actions button {
+  min-width: 32px;
+  height: 32px;
+  padding: 0 9px;
   border: 1px solid #c8c4be;
-  border-radius: 8px;
+  border-radius: 6px;
   background: rgba(255, 255, 255, 0.96);
   color: #37352f;
-  font: 500 13px/1 "Notion Sans", Inter, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  font: 500 12px/1 "Notion Sans", Inter, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
   cursor: pointer;
 }
-.tiny-note-export-mermaid-expand:hover { background: #f0eeec; }
-.tiny-note-export-mermaid-expand:focus-visible { outline: 2px solid #5645d4; outline-offset: 2px; }
+.tiny-note-export-mermaid-actions button:hover { background: #f0eeec; }
+.tiny-note-export-mermaid-actions button:focus-visible { outline: 2px solid #5645d4; outline-offset: 2px; }
+.tiny-note-export-mermaid-actions button:disabled { color: #787671; cursor: wait; }
 .tiny-note-export-mermaid-dialog {
   position: fixed;
   z-index: 2147483647;
@@ -317,12 +322,67 @@ const NOTE_EXPORT_PRINT_CSS = `
   .tiny-note-export-title { font-size: 30px; }
   .tiny-note-export-body { font-size: 11pt; line-height: 1.65; }
   .tiny-note-export-body a { color: #1a1a1a; text-decoration: underline; }
-  .tiny-note-export-mermaid-expand,
+  .tiny-note-export-mermaid-actions,
   .tiny-note-export-mermaid-dialog { display: none !important; }
 }
 `
 
 export const NOTE_EXPORT_CSS = `${NOTE_EXPORT_PAGE_CSS}${NOTE_EXPORT_ARTICLE_CSS}${NOTE_EXPORT_RESPONSIVE_CSS}${NOTE_EXPORT_PRINT_CSS}`
+
+export async function exportMermaidPng(svg, {
+  documentRef = globalThis.document,
+  windowRef = globalThis.window,
+  urlRef = windowRef.URL
+} = {}) {
+  const clone = svg.cloneNode(true)
+  if (!clone.getAttribute('xmlns')) clone.setAttribute('xmlns', 'http://www.w3.org/2000/svg')
+  const viewBox = (clone.getAttribute('viewBox') || '').trim().split(/[\s,]+/).map(Number)
+  let naturalWidth = viewBox.length === 4 && Number.isFinite(viewBox[2]) && viewBox[2] > 0
+    ? viewBox[2]
+    : Number.parseFloat(clone.getAttribute('width'))
+  let naturalHeight = viewBox.length === 4 && Number.isFinite(viewBox[3]) && viewBox[3] > 0
+    ? viewBox[3]
+    : Number.parseFloat(clone.getAttribute('height'))
+  if (!Number.isFinite(naturalWidth) || naturalWidth <= 0) naturalWidth = 1200
+  if (!Number.isFinite(naturalHeight) || naturalHeight <= 0) naturalHeight = naturalWidth * 0.5625
+
+  const scale = Math.min(
+    4,
+    8192 / naturalWidth,
+    8192 / naturalHeight,
+    Math.sqrt(32_000_000 / (naturalWidth * naturalHeight))
+  )
+  const targetWidth = Math.max(1, Math.round(naturalWidth * scale))
+  const targetHeight = Math.max(1, Math.round(naturalHeight * scale))
+  clone.setAttribute('width', String(naturalWidth))
+  clone.setAttribute('height', String(naturalHeight))
+
+  const source = new windowRef.XMLSerializer().serializeToString(clone)
+  const sourceBlob = new windowRef.Blob([source], { type: 'image/svg+xml;charset=utf-8' })
+  const sourceUrl = urlRef.createObjectURL(sourceBlob)
+  try {
+    const image = new windowRef.Image()
+    image.decoding = 'async'
+    await new Promise((resolve, reject) => {
+      image.onload = resolve
+      image.onerror = () => reject(new Error('无法载入流程图'))
+      image.src = sourceUrl
+    })
+    const canvas = documentRef.createElement('canvas')
+    canvas.width = targetWidth
+    canvas.height = targetHeight
+    const context = canvas.getContext('2d')
+    if (!context) throw new Error('当前浏览器无法生成图片')
+    context.fillStyle = '#ffffff'
+    context.fillRect(0, 0, targetWidth, targetHeight)
+    context.drawImage(image, 0, 0, targetWidth, targetHeight)
+    return await new Promise((resolve, reject) => {
+      canvas.toBlob(blob => blob ? resolve(blob) : reject(new Error('图片生成失败')), 'image/png')
+    })
+  } finally {
+    urlRef.revokeObjectURL(sourceUrl)
+  }
+}
 
 function escapeHtml(value = '') {
   return String(value)
@@ -339,19 +399,54 @@ function normalizeSnapshot(note = {}) {
   return { title, contentHtml }
 }
 
-export function initializeExportMermaidViewers(documentRef, viewportKernel) {
+export function initializeExportMermaidViewers(documentRef, viewportKernel, pngExporter) {
   const MINIMUM_ZOOM = 10
   const MAXIMUM_ZOOM = 250
   const BUTTON_STEP = 25
   const WHEEL_STEP = 15
   const roots = [...documentRef.querySelectorAll('[data-mermaid-viewer]')]
 
-  roots.forEach(root => {
+  roots.forEach((root, index) => {
     if (root.dataset.mermaidInitialized === 'true') return
     const expandButton = root.querySelector('[data-mermaid-action="expand"]')
+    const downloadButton = root.querySelector('[data-mermaid-action="download-png"]')
     const previewSvg = root.querySelector('[data-mermaid-preview] > svg')
     if (!expandButton || !previewSvg) return
     root.dataset.mermaidInitialized = 'true'
+
+    downloadButton?.addEventListener('click', async () => {
+      if (downloadButton.disabled || typeof pngExporter !== 'function') return
+      const windowRef = documentRef.defaultView
+      downloadButton.disabled = true
+      downloadButton.setAttribute('aria-busy', 'true')
+      downloadButton.textContent = '生成中…'
+      try {
+        const blob = await pngExporter(previewSvg, { documentRef, windowRef })
+        const rawTitle = documentRef.title || '流程图'
+        const safeTitle = rawTitle
+          .replace(/[<>:"/\\|?*\u0000-\u001f]/g, '_')
+          .replace(/[. ]+$/g, '')
+          .slice(0, 80) || '流程图'
+        const url = windowRef.URL.createObjectURL(blob)
+        const anchor = documentRef.createElement('a')
+        anchor.href = url
+        anchor.download = `${safeTitle}-流程图-${index + 1}.png`
+        anchor.style.display = 'none'
+        documentRef.body.appendChild(anchor)
+        anchor.click()
+        anchor.remove()
+        windowRef.setTimeout(() => windowRef.URL.revokeObjectURL(url), 0)
+        downloadButton.textContent = '已下载'
+      } catch {
+        downloadButton.textContent = '下载失败'
+      } finally {
+        downloadButton.removeAttribute('aria-busy')
+        windowRef.setTimeout(() => {
+          downloadButton.disabled = false
+          downloadButton.textContent = '↓ 下载高清图'
+        }, 1200)
+      }
+    })
 
     expandButton.addEventListener('click', () => {
       if (documentRef.querySelector('[data-mermaid-dialog]')) return
@@ -589,7 +684,10 @@ async function renderSnapshotMermaid(note, {
       figure.setAttribute('aria-label', 'Mermaid 图表')
       if (interactive) {
         figure.setAttribute('data-mermaid-viewer', '')
-        figure.innerHTML = `<button type="button" class="tiny-note-export-mermaid-expand" data-mermaid-action="expand" title="放大查看图表" aria-label="放大查看 Mermaid 图表">⛶ 放大查看</button>
+        figure.innerHTML = `<div class="tiny-note-export-mermaid-actions">
+<button type="button" data-mermaid-action="download-png" title="下载四倍高清 PNG" aria-label="下载 Mermaid 高清图片">↓ 下载高清图</button>
+<button type="button" data-mermaid-action="expand" title="放大查看图表" aria-label="放大查看 Mermaid 图表">⛶ 放大查看</button>
+</div>
 <div data-mermaid-preview>${result.svg}</div>`
       } else {
         figure.innerHTML = result.svg
@@ -618,7 +716,7 @@ function articleMarkup(note = {}) {
 function buildPreparedNoteExportHtml(snapshot, lang) {
   const safeLang = /^[a-z]{2,3}(?:-[a-z\d]{2,8})*$/i.test(lang) ? lang : 'zh-CN'
   const interactiveRuntime = snapshot.contentHtml.includes('data-mermaid-viewer')
-    ? `<script>(${initializeExportMermaidViewers.toString()})(document, (${createMermaidViewportKernel.toString()})());<\/script>`
+    ? `<script>(${initializeExportMermaidViewers.toString()})(document, (${createMermaidViewportKernel.toString()})(), (${exportMermaidPng.toString()}));<\/script>`
     : ''
   return `<!doctype html>
 <html lang="${safeLang}">

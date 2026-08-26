@@ -64,6 +64,9 @@ const persistedSignatures = new Map()
 const exportingFormat = ref('')
 const exportStatusLabel = computed(() => ({ html: t('exportingHtml'), pdf: t('exportingPdf'), print: t('preparingPrint') })[exportingFormat.value] || '')
 const externalFileName = computed(() => String(props.note?.externalPath || '').split(/[\\/]/).pop() || props.note?.title || 'Markdown 文件')
+const EXTERNAL_NOTICE_DISMISSED_PREFIX = 'tiny-note:external-file-notice-dismissed:'
+const externalNoticeDismissed = ref(false)
+const showExternalNoteBanner = computed(() => props.note?.external === true && !externalNoticeDismissed.value)
 let applyingEditorContent = false
 let markdownParseTimer
 let markdownPasteTimer
@@ -72,6 +75,31 @@ let splitDragState
 let scrollSyncFrame
 let scrollSyncSource = ''
 let modeShortcutSwitching = false
+function externalNoticeStorageKey(noteId) {
+  return noteId ? `${EXTERNAL_NOTICE_DISMISSED_PREFIX}${String(noteId)}` : ''
+}
+function readExternalNoticeDismissed(activeNote) {
+  const key = externalNoticeStorageKey(activeNote?.id)
+  if (!activeNote?.external || !key || typeof window === 'undefined') return false
+  try {
+    return window.localStorage.getItem(key) === '1'
+  } catch {
+    return false
+  }
+}
+function dismissExternalNoteBanner() {
+  const key = externalNoticeStorageKey(props.note?.id)
+  if (!props.note?.external || !key) return
+  externalNoticeDismissed.value = true
+  try {
+    window.localStorage.setItem(key, '1')
+  } catch {
+    // The current session still respects dismissal when storage is unavailable.
+  }
+}
+watch(() => [props.note?.id, props.note?.external], () => {
+  externalNoticeDismissed.value = readExternalNoticeDismissed(props.note)
+}, { immediate: true })
 const currentMode = computed(() => editorModes.find(mode => mode.id === editorMode.value) || editorModes[0])
 const modeShortcutParts = computed(() => shortcutDisplayParts(appStore.editorModeShortcut))
 const modeShortcutLabel = computed(() => modeShortcutParts.value.join(' + '))
@@ -697,7 +725,7 @@ async function runAi(action = aiAction.value, requestText = null, instruction = 
   }
   const selection = savedSelection ? { ...savedSelection, text: editor.value?.state.doc.textBetween(savedSelection.from, savedSelection.to, '\n') || requestText } : null
   try {
-    const task = await tasksStore.enqueue({ kind: 'note_ai', title: `${props.note.title || '未命名笔记'} · ${actionLabel}`, targetNoteId: props.note.id, payload: { previewOutput: `(${action})\n${instruction ? `${instruction}\n` : ''}${requestText.slice(0, 140)}`, request: { action, mode: action === 'interpret' ? 'chat' : 'edit', text: requestText, instruction, targetNoteId: props.note.id, selection, autoRetrieve: !selection, modelProfileId: null, thinkingMode: 'disabled', source: 'note_ai' } } }, { preparedFlight: taskFlight })
+    const task = await tasksStore.enqueue({ kind: 'note_ai', title: `${props.note.title || '未命名笔记'} · ${actionLabel}`, targetNoteId: props.note.id, payload: { previewOutput: `(${action})\n${instruction ? `${instruction}\n` : ''}${requestText.slice(0, 140)}`, request: { action, mode: action === 'interpret' ? 'chat' : 'edit', text: requestText, instruction, targetNoteId: props.note.id, selection, modelProfileId: null, thinkingMode: 'disabled', source: 'note_ai' } } }, { preparedFlight: taskFlight })
     aiRequestId.value = task.id
   } catch { aiText.value = 'AI 请求失败，请检查模型设置。'; aiBusy.value = false }
 }
@@ -762,7 +790,7 @@ async function sendAssistantMessage(prompt, sourceElement = null, preparedFlight
   assistantResponseProposal.value = null
   const context = assistantContext()
   try {
-    const task = await tasksStore.enqueue({ kind: 'note_ai', title: `${props.note.title || '未命名笔记'} · 助手`, targetNoteId: props.note.id, payload: { previewOutput: `我已参考当前文章${assistantSelection.value?.text ? '和你选中的文字' : ''}。\n\n你的问题：${message}`, request: { action: 'custom', mode: assistantEditIntent(message) ? 'edit' : 'chat', text: context, instruction: message, targetNoteId: props.note.id, selection: assistantSelection.value, autoRetrieve: true, modelProfileId: null, source: 'note_ai' } } }, { preparedFlight: taskFlight })
+    const task = await tasksStore.enqueue({ kind: 'note_ai', title: `${props.note.title || '未命名笔记'} · 助手`, targetNoteId: props.note.id, payload: { previewOutput: `我已参考当前文章${assistantSelection.value?.text ? '和你选中的文字' : ''}。\n\n你的问题：${message}`, request: { action: 'custom', mode: assistantEditIntent(message) ? 'edit' : 'chat', text: context, instruction: message, targetNoteId: props.note.id, selection: assistantSelection.value, modelProfileId: null, source: 'note_ai' } } }, { preparedFlight: taskFlight })
     assistantRequestId.value = task.id
   } catch {
     pushAssistantResponse('AI 请求失败，请检查模型设置。')
@@ -1366,9 +1394,12 @@ defineExpose({ saveLatestContent: () => flushLatestContent({ save: true }) })
         <button v-if="assistantTriggerVisible" class="ai-button" @click="toggleAssistant"><Layers :size="17" /> Tiny Note 助理</button>
       </div>
     </div>
-    <div v-if="note.external" class="external-note-banner" role="status" :title="note.externalPath">
+    <div v-if="showExternalNoteBanner" class="external-note-banner" role="status" :title="note.externalPath">
       <div class="external-note-message"><FileText :size="16" aria-hidden="true" /><span><strong>外部文件</strong><small>{{ externalFileName }} · 修改会保存到源文件，不会出现在笔记列表</small></span></div>
-      <button type="button" class="external-note-import" @click="importExternalSource">导入到笔记</button>
+      <div class="external-note-actions">
+        <button type="button" class="external-note-import" @click="importExternalSource">导入到笔记</button>
+        <button type="button" class="external-note-dismiss" aria-label="关闭外部文件提示" title="不再提示此文章" @click="dismissExternalNoteBanner"><X :size="15" aria-hidden="true" /></button>
+      </div>
     </div>
     <div v-if="noteLinks.length" class="note-metadata">
       <div class="note-links" aria-label="关联笔记"><span>关联笔记</span><button v-for="link in noteLinks" :key="link.sourceNoteId + '-' + link.targetNoteId" type="button" @click="store.activeId = link.sourceNoteId === note.id ? link.targetNoteId : link.sourceNoteId">{{ link.targetTitle }}</button></div>

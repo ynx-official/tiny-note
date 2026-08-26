@@ -100,7 +100,7 @@ describe('notes store', () => {
     expect(reopened.id).toBe(external.id)
     expect(store.activeId).toBe(external.id)
     expect(reopened.contentMarkdown).toBe(quotedMetadata)
-    expect(reopened.contentHtml.match(/<br>/g)).toHaveLength(2)
+    expect(reopened.contentHtml).toBe('<blockquote><p>旧的合并预览</p></blockquote>')
 
     await store.clearExternalSources()
     expect(store.externalSources).toEqual([])

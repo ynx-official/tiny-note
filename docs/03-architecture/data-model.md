@@ -6,11 +6,11 @@ SQLite 核心表：`notebooks`、`notes`、`tags`、`note_tags`、`knowledge_bas
 
 `note_revisions` 同样保存 `content_markdown`、`content_html` 和 `content_text`，因此 AI 应用前快照与版本恢复不会丢失源码。复制、导入、Agent 创建笔记及 AI 应用必须在一次逻辑操作中同步三种表示。旧记录保持可读，Markdown 在首次实际源码编辑或保存时延迟回填。
 
-`external_markdown_sources` 以 `note_id` 一对一关联从系统打开的 Markdown，保存规范化绝对路径和上次同步内容的 SHA-256；路径唯一，避免同一源文件产生多个临时记录。存在该关联的 `notes` 行只服务于当前设备上的“外部来源”历史、打开、编辑和源文件同步，不属于用户笔记集合，所有普通笔记列表、标签、双向链接、检索索引和工作区备份必须排除。清空历史级联删除这些临时行，但绝不删除路径指向的源文件。用户导入时新建无此关联的普通 `notes` 副本，不能把外部记录原地转为笔记。保存外部记录时先比较当前磁盘哈希，匹配后以同目录临时文件原子替换并更新哈希；冲突、文件丢失、非 UTF-8 或超过 10 MB 时不得更新持久状态或覆盖磁盘。
+`external_markdown_sources` 以 `note_id` 一对一关联从系统打开的 Markdown，保存规范化绝对路径和上次同步内容的 MD5（沿用 `content_hash` 列名）；路径唯一，避免同一源文件产生多个临时记录。再次打开时 MD5 相同直接读取关联 `notes` 缓存，MD5 不同才用磁盘正文刷新三种内容表示；历史 SHA-256 值在比较时兼容，并在下一次打开或保存后迁移为 MD5。存在该关联的 `notes` 行只服务于当前设备上的“外部来源”历史、打开、编辑和源文件同步，不属于用户笔记集合，所有普通笔记列表、Agent 列表/搜索、标签、双向链接和工作区备份必须排除。清空历史级联删除这些临时行，但绝不删除路径指向的源文件。用户导入时新建无此关联的普通 `notes` 副本，不能把外部记录原地转为笔记。保存外部记录时先比较当前磁盘哈希，匹配后以同目录临时文件原子替换并更新哈希；冲突、文件丢失、非 UTF-8 或超过 10 MB 时不得更新持久状态或覆盖磁盘。
 
 知识库文件保存在 app data 下的 `knowledge/<category>/<id>/`，隐藏 `.tiny-note.json` 记录稳定 ID 和类别。
 
-AI 与检索表：`search_documents`、`search_chunks`、`search_chunks_fts`、`ai_edit_proposals`、`note_revisions`。FTS5 使用 trigram tokenizer；检索块用于匹配，`parent_content` 用于回填完整上下文。提案记录生成时的笔记时间戳和正文 SHA-256，应用时必须同时匹配；应用前在同一事务写入 `note_revisions`。
+AI 编辑只保留 `ai_edit_proposals` 与 `note_revisions`。升级时删除遗留的 `search_documents`、`search_chunks`、`search_chunks_fts` 及相关触发器和工具策略，保留笔记、版本、提案与聊天数据。Agent 笔记列表/搜索直接查询 `notes`，不创建派生索引。提案记录生成时的笔记时间戳和正文 SHA-256，应用时必须同时匹配；应用前在同一事务写入 `note_revisions`。
 
 `chat_messages.references_json` 保存用户明确选择的引用，`sources_json` 保存本轮实际使用的来源元数据和内容哈希，均不重复保存完整文件正文；`proposal_id` 可关联待审阅的文章修改。
 
@@ -24,6 +24,6 @@ MCP 服务配置保存在应用数据目录的 `agent/mcp.json`，包含直接�
 
 模板保存在 `note_templates`，内置模板使用 `builtin=1` 并禁止删除，自定义模板可导入/导出。笔记间的 `[[笔记标题]]` 引用解析为 `note_links`，保存出链和入链，笔记正文或标题变化后同步重算。
 
-工作区备份是版本化 JSON。v3 保存笔记本父子关系、标签实体和笔记标签关联，以及笔记、知识库元数据、Base64 知识库文件、模板、链接和界面设置；导入继续接受 v1/v2，并把旧笔记的 `tags` 数组转换为 v3 关系。模型 API Key、Agent 凭据和运行时缓存明确排除在备份之外。恢复是用户确认后的全量替换，并在完成后重建搜索索引。
+工作区备份是版本化 JSON。v3 保存笔记本父子关系、标签实体和笔记标签关联，以及笔记、知识库元数据、Base64 知识库文件、模板、链接和界面设置；导入继续接受 v1/v2，并把旧笔记的 `tags` 数组转换为 v3 关系。模型 API Key、Agent 凭据和运行时缓存明确排除在备份之外。恢复是用户确认后的全量替换，不触发任何索引重建。
 
 模型服务采用一对多结构：`model_providers` 保存连接名称、厂商、Base URL、API Key 与端点协议，`model_profiles.provider_id` 关联其下的多个模型。端点协议白名单为 `openaiChat`、`openaiResponses`、`anthropicMessages`。旧的扁平模型记录会按“厂商 + Base URL + Key + 端点协议”无损归并，同一连接只保留一份凭据；旧配置默认 `openaiChat`，避免改变请求行为。模型列表 DTO 为兼容调用方返回展开后的连接元数据以及 `providerId`、`connectionName`、`apiKeyConfigured`，但不会返回明文 Key；Rust 请求层通过关联表直接读取。

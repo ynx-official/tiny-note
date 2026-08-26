@@ -33,9 +33,9 @@ watch(() => exportSuccessState.visible, async visible => {
         </div>
         <p v-if="exportSuccessState.error" class="app-export-success-error" role="alert">{{ exportSuccessState.error }}</p>
         <footer>
-          <button data-testid="dismiss-export-success" type="button" class="app-export-success-later" :disabled="exportSuccessState.busy" @click="dismissExportSuccess">{{ t('maybeLater') }}</button>
           <button data-testid="reveal-exported-file" type="button" class="app-export-success-secondary" :disabled="exportSuccessState.busy" @click="revealExportedFile"><FolderOpen :size="15" />{{ t('openContainingFolder') }}</button>
           <button ref="openButton" data-testid="open-exported-file" type="button" class="app-export-success-primary" :disabled="exportSuccessState.busy" @click="openExportedFile"><LoaderCircle v-if="exportSuccessState.busy" class="spinning" :size="15" /><ExternalLink v-else :size="15" />{{ t('openExportedFile') }}</button>
+          <button data-testid="dismiss-export-success" type="button" class="app-export-success-later" :disabled="exportSuccessState.busy" @click="dismissExportSuccess">{{ t('maybeLater') }}</button>
         </footer>
       </section>
     </div>

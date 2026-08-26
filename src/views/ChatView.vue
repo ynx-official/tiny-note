@@ -355,7 +355,7 @@ async function sendMessage(value, messageReferences = references.value) {
         return
       }
       const channel = createResponseChannel()
-      await invoke('note_ai_stream', { request: { requestId: requestId.value, action: 'custom', mode: editMode ? 'edit' : 'chat', text: assistantContext(), instruction: message, references: contextAllowed ? messageReferenceCopies : [], autoRetrieve: contextAllowed, targetNoteId: targetNotes.length === 1 ? targetNotes[0].noteId : null, modelProfileId: selectedModel.value?.id || null, thinkingMode: thinkingMode.value, source: 'chat', conversationId: conversationId.value }, onEvent: channel })
+      await invoke('note_ai_stream', { request: { requestId: requestId.value, action: 'custom', mode: editMode ? 'edit' : 'chat', text: assistantContext(), instruction: message, references: contextAllowed ? messageReferenceCopies : [], targetNoteId: targetNotes.length === 1 ? targetNotes[0].noteId : null, modelProfileId: selectedModel.value?.id || null, thinkingMode: thinkingMode.value, source: 'chat', conversationId: conversationId.value }, onEvent: channel })
     }
   } catch (cause) {
     const message = cause?.message || cause?.code || (typeof cause === 'string' ? cause : '') || '模型请求失败'
@@ -376,7 +376,7 @@ async function summarizeConversation(event) {
       payload: {
         fallbackTitle: `${conversationTitle.value === '新对话' ? '对话总结' : conversationTitle.value} · 总结`,
         snapshot,
-        request: { action: 'custom', mode: 'chat', text: snapshot, instruction: '请把以下对话整理为一篇结构清晰的 Markdown 笔记：提炼主题、关键结论、重要细节和待办事项；不要添加对话中没有的信息。', references: [], autoRetrieve: false, modelProfileId: selectedModel.value?.id || null, thinkingMode: thinkingMode.value, source: 'conversation_summary', conversationId: conversationId.value }
+        request: { action: 'custom', mode: 'chat', text: snapshot, instruction: '请把以下对话整理为一篇结构清晰的 Markdown 笔记：提炼主题、关键结论、重要细节和待办事项；不要添加对话中没有的信息。', references: [], modelProfileId: selectedModel.value?.id || null, thinkingMode: thinkingMode.value, source: 'conversation_summary', conversationId: conversationId.value }
       }
     }, { sourceElement: event?.currentTarget })
   } catch (cause) { error.value = cause?.message || '总结任务创建失败' }
@@ -568,7 +568,7 @@ async function selectMode(mode) {
 }
 
 function toolLabel(name) {
-  return ({ create_knowledge_base: '创建知识库', list_knowledge_bases: '读取知识库目录', update_knowledge_base: '更新知识库', delete_knowledge_base: '删除知识库', retrieve_knowledge: '检索知识库', search_notes: '搜索笔记', get_note: '读取笔记', get_current_time: '获取当前时间', create_note: '创建笔记', update_note: '生成修改提案', delete_note: '删除笔记', update_memory: '更新记忆', list_agent_files: '浏览工作区', read_agent_file: '读取工作区文件', write_agent_file: '写入工作区文件', read_skill: '读取技能', write_skill: '更新技能', list_mcp_tools: '查找 MCP 工具', call_mcp_tool: '调用 MCP 工具', delegate_task: '委派子 Agent', run_sandbox_script: '运行隔离脚本' })[name] || name || '调用工具'
+  return ({ create_knowledge_base: '创建知识库', list_knowledge_bases: '读取知识库目录', update_knowledge_base: '更新知识库', delete_knowledge_base: '删除知识库', list_notes: '列出笔记', search_notes: '搜索笔记', get_note: '读取笔记', list_notebooks: '列出笔记本', create_notebook: '创建笔记本', update_notebook: '更新笔记本', move_notebook: '移动笔记本', delete_notebook: '删除笔记本', get_current_time: '获取当前时间', create_note: '创建笔记', update_note: '生成修改提案', delete_note: '删除笔记', update_memory: '更新记忆', list_agent_files: '浏览工作区', read_agent_file: '读取工作区文件', write_agent_file: '写入工作区文件', read_skill: '读取技能', write_skill: '更新技能', list_mcp_tools: '查找 MCP 工具', call_mcp_tool: '调用 MCP 工具', delegate_task: '委派子 Agent', run_sandbox_script: '运行隔离脚本' })[name] || name || '调用工具'
 }
 function toolEventLabel(segment) {
   if (segment.toolName !== 'call_mcp_tool') return toolLabel(segment.toolName)

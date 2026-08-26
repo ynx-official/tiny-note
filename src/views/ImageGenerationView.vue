@@ -5,14 +5,18 @@ import { useRoute, useRouter } from 'vue-router'
 import { storeToRefs } from 'pinia'
 import { AlertCircle, Brush, Check, Clipboard, Copy, Download, ImagePlus, Images, LoaderCircle, MoreHorizontal, Pencil, RefreshCw, Settings, Sparkles, Trash2, Undo2, Upload, X } from 'lucide-vue-next'
 import { useImagesStore } from '../stores/images'
+import { useAppStore } from '../stores/app'
 import { useNotesStore } from '../stores/notes'
 import { useTasksStore } from '../stores/tasks'
+import { saveExportBlob } from '../services/exportLocation'
+import { showExportSuccess } from '../services/exportSuccess'
 import { invoke } from '../services/tauri'
 import { sanitizeEditorHtml } from '../utils/noteMarkdown'
 import { requestConfirmation, showToast } from '../services/appFeedback'
 
 const route = useRoute()
 const router = useRouter()
+const appStore = useAppStore()
 const images = useImagesStore()
 const notes = useNotesStore()
 const tasks = useTasksStore()
@@ -42,6 +46,7 @@ const previousPrompt = ref('')
 const historyPickerOpen = ref(false)
 const historyPickerLoading = ref(false)
 const previewItem = ref(null)
+const savingAssetIds = ref(new Set())
 
 const modeOptions = [
   { value: 'generate', label: '文字生图', description: '只根据描述创建新图片', icon: Sparkles },
@@ -268,7 +273,7 @@ async function optimizePrompt() {
         if (event.type === 'error') rejectOnce(new Error(event.message || '提示词优化失败'))
         if (event.type === 'cancelled') rejectOnce(new Error('提示词优化已取消'))
       }
-      invoke('note_ai_stream', { request: { requestId, action: 'custom', mode: 'chat', text: value, instruction: imageOptimizationInstruction(value), references: [], autoRetrieve: false, modelProfileId: null, thinkingMode: 'fast', source: 'image_prompt' }, onEvent: channel }).catch(rejectOnce)
+      invoke('note_ai_stream', { request: { requestId, action: 'custom', mode: 'chat', text: value, instruction: imageOptimizationInstruction(value), references: [], modelProfileId: null, thinkingMode: 'fast', source: 'image_prompt' }, onEvent: channel }).catch(rejectOnce)
     })
     const next = compactOptimizedPrompt(optimized)
     if (!next) throw new Error('模型没有返回可用的优化结果')
@@ -365,13 +370,46 @@ function regenerate(generation) {
 async function copyPrompt(generation) {
   try { await navigator.clipboard.writeText(generation.prompt); showToast('描述已复制') } catch { showToast('复制失败，请手动选择描述', { tone: 'error' }) }
 }
-async function download(asset, generation) {
-  const item = await images.readAsset(asset.id)
-  if (!item?.dataUri) return
-  const link = document.createElement('a')
-  link.href = item.dataUri
-  link.download = `tiny-note-${generation.id.slice(0, 8)}-${asset.id.slice(0, 6)}.${item.mimeType?.split('/')[1] || 'png'}`
-  link.click()
+function imageFileName(asset, generation, mimeType) {
+  const extension = mimeType?.split('/')[1]?.replace('jpeg', 'jpg') || 'png'
+  return `tiny-note-${generation.id.slice(0, 8)}-${asset.id.slice(0, 6)}.${extension}`
+}
+function dataUriToBlob(dataUri, fallbackMimeType = 'image/png') {
+  const separator = String(dataUri || '').indexOf(',')
+  if (separator < 0) throw new Error('图片内容格式无效')
+  const metadata = dataUri.slice(0, separator)
+  const mimeType = metadata.match(/^data:([^;,]+)/)?.[1] || fallbackMimeType
+  const payload = dataUri.slice(separator + 1)
+  if (!metadata.includes(';base64')) return new Blob([decodeURIComponent(payload)], { type: mimeType })
+  const binary = globalThis.atob(payload)
+  const bytes = new Uint8Array(binary.length)
+  for (let index = 0; index < binary.length; index += 1) bytes[index] = binary.charCodeAt(index)
+  return new Blob([bytes], { type: mimeType })
+}
+function isSavingAsset(assetId) { return savingAssetIds.value.has(assetId) }
+function imageSaveTitle(assetId) {
+  if (isSavingAsset(assetId)) return '正在保存图片'
+  const directory = String(appStore.settings.exportDirectory || '').trim()
+  return directory ? `保存图片到 ${directory}` : '保存图片'
+}
+async function saveImage(asset, generation) {
+  if (!asset?.id || isSavingAsset(asset.id)) return
+  savingAssetIds.value = new Set([...savingAssetIds.value, asset.id])
+  try {
+    const item = await images.readAsset(asset.id)
+    if (!item?.dataUri) throw new Error('图片内容无法读取')
+    const blob = dataUriToBlob(item.dataUri, item.mimeType)
+    const result = await saveExportBlob(blob, imageFileName(asset, generation, blob.type || item.mimeType), { appStore })
+    if (result?.cancelled) return
+    if (result?.path) showExportSuccess(result)
+    else if (result?.browserDownload) showToast('图片已下载')
+  } catch (error) {
+    showToast(error?.message || '图片保存失败，请重试', { tone: 'error' })
+  } finally {
+    const next = new Set(savingAssetIds.value)
+    next.delete(asset.id)
+    savingAssetIds.value = next
+  }
 }
 function escapeHtml(value) {
   return String(value || '').replaceAll('&', '&amp;').replaceAll('<', '&lt;').replaceAll('>', '&gt;').replaceAll('"', '&quot;').replaceAll("'", '&#39;')
@@ -475,7 +513,7 @@ onUnmounted(() => { window.removeEventListener('tiny-note-task-updated', handleT
       <div v-if="!generations.length" class="image-empty"><div class="image-empty-icon"><ImagePlus :size="26" /></div><strong>从一句描述开始</strong><span>生成结果会自动保存在本地附件中，也可以随时插入笔记。</span></div>
       <div v-else class="image-history-grid">
         <article v-for="generation in generations" :key="generation.id" :data-generation-id="generation.id" class="image-history-card" :class="generationClass(generation)">
-          <div class="image-card-grid" :class="`is-${generation.size || 'square'}`"><div v-for="asset in generation.assets" :key="asset.id" class="image-result-tile"><button v-if="generationAssetUrl(asset)" type="button" class="image-preview-trigger" title="点击查看大图" @click="openImagePreview(asset, generation)"><img :src="generationAssetUrl(asset)" :alt="generation.prompt" /></button><span v-else><LoaderCircle class="spinning" :size="18" /></span><div v-if="generationAssetUrl(asset)" class="image-tile-actions"><button type="button" title="编辑图片" @click="useAssetAsInput(asset, generation, 'edit')"><Pencil :size="14" /></button><button type="button" title="插入笔记" @click="openInsert(asset, generation)"><Check :size="14" /></button><button type="button" title="下载图片" @click="download(asset, generation)"><Download :size="14" /></button></div></div></div>
+          <div class="image-card-grid" :class="`is-${generation.size || 'square'}`"><div v-for="asset in generation.assets" :key="asset.id" class="image-result-tile"><button v-if="generationAssetUrl(asset)" type="button" class="image-preview-trigger" title="点击查看大图" @click="openImagePreview(asset, generation)"><img :src="generationAssetUrl(asset)" :alt="generation.prompt" /></button><span v-else><LoaderCircle class="spinning" :size="18" /></span><div v-if="generationAssetUrl(asset)" class="image-tile-actions"><button type="button" title="编辑图片" @click="useAssetAsInput(asset, generation, 'edit')"><Pencil :size="14" /></button><button type="button" title="插入笔记" @click="openInsert(asset, generation)"><Check :size="14" /></button><button type="button" class="image-save-button" :disabled="isSavingAsset(asset.id)" :aria-busy="isSavingAsset(asset.id)" :title="imageSaveTitle(asset.id)" @click="saveImage(asset, generation)"><LoaderCircle v-if="isSavingAsset(asset.id)" class="spinning" :size="14" /><Download v-else :size="14" /><span>{{ isSavingAsset(asset.id) ? '保存中' : '保存' }}</span></button></div></div></div>
           <div class="image-card-body"><div class="image-card-meta"><span>{{ generationModeLabel(generation.mode) }} · {{ generation.size === 'landscape' ? '横向' : generation.size === 'portrait' ? '纵向' : '1:1' }} · {{ generation.count }} 张</span><span>{{ new Date(generation.createdAt).toLocaleString('zh-CN', { month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' }) }}</span></div><p>{{ generation.prompt }}</p><div class="image-card-footer"><button type="button" @click="openInsert(generation.assets[0], generation)" :disabled="!generation.assets?.length"><Check :size="14" />插入笔记</button><button type="button" title="复制描述" @click="copyPrompt(generation)"><Clipboard :size="14" /></button><button type="button" title="重新生成" @click="regenerate(generation)"><RefreshCw :size="14" /></button><button type="button" title="更多操作" @click="menuGenerationId = menuGenerationId === generation.id ? '' : generation.id"><MoreHorizontal :size="14" /></button></div></div>
           <div v-if="menuGenerationId === generation.id" class="image-card-menu"><button type="button" @click="useAssetAsInput(generation.assets[0], generation, 'reference')"><Images :size="13" />作为参考图</button><button type="button" @click="useAssetAsInput(generation.assets[0], generation, 'edit')"><Pencil :size="13" />编辑这张图</button><button type="button" @click="useAssetAsInput(generation.assets[0], generation, 'inpaint')"><Brush :size="13" />局部重绘</button><button type="button" @click="copyPrompt(generation); menuGenerationId = ''"><Copy :size="13" />复制描述</button><button type="button" class="is-danger" @click="removeGeneration(generation); menuGenerationId = ''"><Trash2 :size="13" />删除记录</button></div>
         </article>
@@ -484,6 +522,6 @@ onUnmounted(() => { window.removeEventListener('tiny-note-task-updated', handleT
 
     <div v-if="pickerOpen" class="image-picker-backdrop" @click.self="pickerOpen = false"><section class="image-picker-modal" role="dialog" aria-modal="true"><header><div><strong>插入到笔记</strong><span>选择目标笔记，图片会追加到正文末尾</span></div><button type="button" aria-label="关闭" @click="pickerOpen = false"><X :size="18" /></button></header><div class="image-picker-search"><input v-model="pickerSearch" type="search" placeholder="搜索笔记" /><span>{{ visibleNotes.length }} 条</span></div><div class="image-picker-list"><button v-for="note in visibleNotes" :key="note.id" type="button" :class="{ active: selectedNoteId === note.id }" @click="selectedNoteId = note.id"><span class="image-picker-radio"><Check v-if="selectedNoteId === note.id" :size="12" /></span><span><strong>{{ note.title || '未命名笔记' }}</strong><small>{{ note.contentText || '暂无正文' }}</small></span></button><div v-if="!visibleNotes.length" class="image-picker-empty">没有匹配的笔记</div></div><footer><button type="button" class="image-picker-cancel" @click="pickerOpen = false">取消</button><button type="button" class="image-picker-confirm" :disabled="!selectedNoteId" @click="insertIntoNote">插入图片</button></footer></section></div>
     <div v-if="historyPickerOpen" class="image-picker-backdrop" @click.self="historyPickerOpen = false"><section class="image-history-picker-modal" role="dialog" aria-modal="true" aria-label="选择最近生成的图片"><header><div><strong>选择生成结果</strong><span>{{ mode === 'reference' ? '选择一张加入参考图，可重复打开继续添加' : mode === 'edit' ? '选择一张作为整图编辑的原图' : '选择一张作为局部重绘的原图' }}</span></div><button type="button" aria-label="关闭生成结果选择" @click="historyPickerOpen = false"><X :size="18" /></button></header><div v-if="historyPickerLoading" class="image-history-picker-state"><LoaderCircle class="spinning" :size="18" />正在读取图片…</div><div v-else-if="!reusableHistoryAssets.length" class="image-history-picker-state"><ImagePlus :size="22" />还没有可引用的生成结果</div><div v-else class="image-history-picker-grid"><button v-for="entry in reusableHistoryAssets" :key="entry.asset.id" type="button" :disabled="!generationAssetUrl(entry.asset)" @click="selectHistoryAsset(entry.asset, entry.generation)"><span class="image-history-picker-thumb"><img v-if="generationAssetUrl(entry.asset)" :src="generationAssetUrl(entry.asset)" :alt="entry.generation.prompt" /><LoaderCircle v-else class="spinning" :size="16" /></span><span class="image-history-picker-copy"><strong>{{ entry.generation.prompt }}</strong><small>{{ generationModeLabel(entry.generation.mode) }} · {{ entry.generation.size === 'landscape' ? '横向' : entry.generation.size === 'portrait' ? '纵向' : '1:1' }}</small></span></button></div></section></div>
-    <div v-if="previewItem" class="image-preview-backdrop" @click.self="closeImagePreview"><section class="image-preview-modal" role="dialog" aria-modal="true" aria-label="图片大图预览"><header><div><strong>图片预览</strong><span>{{ generationModeLabel(previewItem.generation.mode) }} · {{ previewItem.generation.size === 'landscape' ? '横向' : previewItem.generation.size === 'portrait' ? '纵向' : '1:1' }}</span></div><div><button type="button" title="下载图片" @click="download(previewItem.asset, previewItem.generation)"><Download :size="16" /></button><button type="button" aria-label="关闭图片预览" @click="closeImagePreview"><X :size="18" /></button></div></header><div class="image-preview-stage"><img :src="previewItem.asset.dataUri" :alt="previewItem.generation.prompt" /></div><footer>{{ previewItem.generation.prompt }}</footer></section></div>
+    <div v-if="previewItem" class="image-preview-backdrop" @click.self="closeImagePreview"><section class="image-preview-modal" role="dialog" aria-modal="true" aria-label="图片大图预览"><header><div><strong>图片预览</strong><span>{{ generationModeLabel(previewItem.generation.mode) }} · {{ previewItem.generation.size === 'landscape' ? '横向' : previewItem.generation.size === 'portrait' ? '纵向' : '1:1' }}</span></div><div><button type="button" class="image-preview-save-button" :disabled="isSavingAsset(previewItem.asset.id)" :aria-busy="isSavingAsset(previewItem.asset.id)" :title="imageSaveTitle(previewItem.asset.id)" @click="saveImage(previewItem.asset, previewItem.generation)"><LoaderCircle v-if="isSavingAsset(previewItem.asset.id)" class="spinning" :size="15" /><Download v-else :size="15" /><span>{{ isSavingAsset(previewItem.asset.id) ? '保存中…' : '保存图片' }}</span></button><button type="button" aria-label="关闭图片预览" @click="closeImagePreview"><X :size="18" /></button></div></header><div class="image-preview-stage"><img :src="previewItem.asset.dataUri" :alt="previewItem.generation.prompt" /></div><footer>{{ previewItem.generation.prompt }}</footer></section></div>
   </section>
 </template>

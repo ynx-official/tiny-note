@@ -10,6 +10,7 @@ import NoteEditor from '../components/NoteEditor.vue'
 import NotebookTreeItem from '../components/NotebookTreeItem.vue'
 import { requestPrompt } from '../services/promptDialog'
 import { requestConfirmation, showToast } from '../services/appFeedback'
+import { useWorkspaceSidebar } from '../utils/workspaceSidebar'
 
 const store = useNotesStore()
 const library = useLibraryStore()
@@ -21,8 +22,7 @@ const showDeleted = ref(false)
 const searchMode = ref(false)
 const query = ref('')
 const sidebarCollapsed = ref(false)
-const sidebarWidth = ref(260)
-const isResizing = ref(false)
+const { sidebarWidth, isResizing, onResizeStart } = useWorkspaceSidebar()
 const newNoteMenu = ref(false)
 const folderItemMenu = ref(null)
 const folderItemMenuStyle = ref({})
@@ -439,24 +439,6 @@ function scrollToHeading(index) {
   const nextTop = targetRect.top - containerRect.top + activeScroller.scrollTop - activeScroller.clientHeight / 3
   activeScroller.scrollTo({ top: Math.max(0, nextTop), behavior: 'smooth' })
 }
-function onResizeStart(event) {
-  event.preventDefault()
-  isResizing.value = true
-  const startX = event.clientX
-  const startWidth = sidebarWidth.value
-  const onMove = moveEvent => { sidebarWidth.value = Math.min(280, Math.max(200, startWidth + moveEvent.clientX - startX)) }
-  const onEnd = () => {
-    isResizing.value = false
-    document.removeEventListener('mousemove', onMove)
-    document.removeEventListener('mouseup', onEnd)
-    document.body.style.cursor = ''
-    document.body.style.userSelect = ''
-  }
-  document.body.style.cursor = 'col-resize'
-  document.body.style.userSelect = 'none'
-  document.addEventListener('mousemove', onMove)
-  document.addEventListener('mouseup', onEnd)
-}
 onBeforeUnmount(() => {
   document.body.style.cursor = ''
   document.body.style.userSelect = ''
@@ -512,9 +494,10 @@ onBeforeUnmount(() => {
           <div v-if="!notebookTree.length" class="note-list-empty">{{ query ? '没有匹配的笔记' : t('emptyNotes') }}</div>
           <div class="tree-row tree-external-row" :class="{ active: store.selectedTreeNode.type === 'external' }">
             <button type="button" class="tree-row-main" :aria-expanded="externalSourcesOpen" @click="toggleExternalSources">
-              <FileClock :size="16" :stroke-width="1.9" /><span class="tree-label">外部来源</span><small>{{ store.externalSources.length }}</small>
+              <FileClock :size="16" :stroke-width="1.9" /><span class="tree-label">外部来源</span>
             </button>
             <button v-if="store.externalSources.length" type="button" class="external-sources-clear" title="清空外部来源记录" aria-label="清空外部来源记录" @click.stop="clearExternalSources"><Trash2 :size="13" /></button>
+            <small class="tree-external-count">{{ store.externalSources.length }}</small>
           </div>
           <div v-if="externalSourcesOpen" class="external-source-tree" role="group" aria-label="外部来源记录">
             <button v-for="source in store.externalSources" :key="source.id" type="button" class="tree-row tree-external-source" :class="{ active: store.selectedTreeNode.type === 'external-note' && store.selectedTreeNode.id === source.id, unavailable: !source.available }" :title="source.path" @click="openExternalSource(source)">

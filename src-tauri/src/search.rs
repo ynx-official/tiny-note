@@ -4,7 +4,6 @@ use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::{collections::HashSet, fs, path::Path};
 use uuid::Uuid;
-use walkdir::WalkDir;
 
 const MAX_FILE_BYTES: u64 = 5 * 1024 * 1024;
 const MAX_CONTEXT_CHARS: usize = 12_000;
@@ -27,15 +26,6 @@ pub struct ContextReference {
     pub relative_path: Option<String>,
     #[serde(default)]
     pub name: Option<String>,
-}
-
-#[derive(Debug, Clone, Default, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct ContextScope {
-    #[serde(default)]
-    pub knowledge_base_ids: Vec<String>,
-    #[serde(default)]
-    pub note_ids: Vec<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -61,16 +51,6 @@ pub struct ContextBundle {
     pub sources: Vec<ContextSource>,
     pub total_characters: usize,
     pub truncated: bool,
-}
-
-#[derive(Debug, Serialize)]
-#[serde(rename_all = "camelCase")]
-pub struct IndexStatusDto {
-    pub documents: i64,
-    pub chunks: i64,
-    pub indexed: i64,
-    pub failed: i64,
-    pub unsupported: i64,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -110,32 +90,12 @@ pub fn content_hash(content: &str) -> String {
 
 pub fn init_schema(conn: &Connection) -> Result<(), AppError> {
     conn.execute_batch(
-        "CREATE TABLE IF NOT EXISTS search_documents (
-          id TEXT PRIMARY KEY, source_type TEXT NOT NULL, source_id TEXT NOT NULL,
-          knowledge_base_id TEXT, relative_path TEXT, title TEXT NOT NULL,
-          content_hash TEXT NOT NULL DEFAULT '', updated_at TEXT NOT NULL,
-          status TEXT NOT NULL DEFAULT 'indexed', error TEXT NOT NULL DEFAULT ''
-        );
-        CREATE UNIQUE INDEX IF NOT EXISTS idx_search_documents_source ON search_documents(source_type,source_id);
-        CREATE TABLE IF NOT EXISTS search_chunks (
-          id INTEGER PRIMARY KEY AUTOINCREMENT, document_id TEXT NOT NULL REFERENCES search_documents(id) ON DELETE CASCADE,
-          chunk_index INTEGER NOT NULL, title TEXT NOT NULL, path TEXT NOT NULL,
-          content TEXT NOT NULL, parent_content TEXT NOT NULL
-        );
-        CREATE INDEX IF NOT EXISTS idx_search_chunks_document ON search_chunks(document_id);
-        CREATE VIRTUAL TABLE IF NOT EXISTS search_chunks_fts USING fts5(
-          title, path, content, content='search_chunks', content_rowid='id', tokenize='trigram'
-        );
-        CREATE TRIGGER IF NOT EXISTS search_chunks_ai AFTER INSERT ON search_chunks BEGIN
-          INSERT INTO search_chunks_fts(rowid,title,path,content) VALUES (new.id,new.title,new.path,new.content);
-        END;
-        CREATE TRIGGER IF NOT EXISTS search_chunks_ad AFTER DELETE ON search_chunks BEGIN
-          INSERT INTO search_chunks_fts(search_chunks_fts,rowid,title,path,content) VALUES('delete',old.id,old.title,old.path,old.content);
-        END;
-        CREATE TRIGGER IF NOT EXISTS search_chunks_au AFTER UPDATE ON search_chunks BEGIN
-          INSERT INTO search_chunks_fts(search_chunks_fts,rowid,title,path,content) VALUES('delete',old.id,old.title,old.path,old.content);
-          INSERT INTO search_chunks_fts(rowid,title,path,content) VALUES (new.id,new.title,new.path,new.content);
-        END;
+        "DROP TRIGGER IF EXISTS search_chunks_ai;
+        DROP TRIGGER IF EXISTS search_chunks_ad;
+        DROP TRIGGER IF EXISTS search_chunks_au;
+        DROP TABLE IF EXISTS search_chunks_fts;
+        DROP TABLE IF EXISTS search_chunks;
+        DROP TABLE IF EXISTS search_documents;
         CREATE TABLE IF NOT EXISTS ai_edit_proposals (
           id TEXT PRIMARY KEY, note_id TEXT NOT NULL REFERENCES notes(id) ON DELETE CASCADE,
           action TEXT NOT NULL, original_text TEXT NOT NULL, replacement_markdown TEXT NOT NULL,
@@ -153,119 +113,6 @@ pub fn init_schema(conn: &Connection) -> Result<(), AppError> {
         CREATE INDEX IF NOT EXISTS idx_note_revisions_note ON note_revisions(note_id,created_at DESC);",
     )
     .map_err(AppError::db)
-}
-
-fn char_slice(value: &str, start: usize, end: usize) -> String {
-    value
-        .chars()
-        .skip(start)
-        .take(end.saturating_sub(start))
-        .collect()
-}
-
-fn split_windows(value: &str, size: usize, overlap: usize) -> Vec<String> {
-    let len = value.chars().count();
-    if len == 0 {
-        return Vec::new();
-    }
-    let mut result = Vec::new();
-    let mut start = 0;
-    while start < len {
-        let end = (start + size).min(len);
-        result.push(char_slice(value, start, end));
-        if end == len {
-            break;
-        }
-        start = end.saturating_sub(overlap);
-    }
-    result
-}
-
-struct IndexedDocument<'a> {
-    document_id: &'a str,
-    source_type: &'a str,
-    source_id: &'a str,
-    knowledge_base_id: Option<&'a str>,
-    relative_path: Option<&'a str>,
-    title: &'a str,
-    content: &'a str,
-    updated_at: &'a str,
-}
-
-fn replace_document(conn: &Connection, document: IndexedDocument<'_>) -> Result<(), AppError> {
-    let IndexedDocument {
-        document_id,
-        source_type,
-        source_id,
-        knowledge_base_id,
-        relative_path,
-        title,
-        content,
-        updated_at,
-    } = document;
-    conn.execute(
-        "DELETE FROM search_documents WHERE id=?1",
-        params![document_id],
-    )
-    .map_err(AppError::db)?;
-    conn.execute(
-        "INSERT INTO search_documents(id,source_type,source_id,knowledge_base_id,relative_path,title,content_hash,updated_at,status,error) VALUES(?1,?2,?3,?4,?5,?6,?7,?8,'indexed','')",
-        params![document_id, source_type, source_id, knowledge_base_id, relative_path, title, content_hash(content), updated_at],
-    ).map_err(AppError::db)?;
-    let parents = split_windows(content, 2_000, 200);
-    let mut chunk_index = 0_i64;
-    for parent in parents {
-        for child in split_windows(&parent, 400, 50) {
-            conn.execute(
-                "INSERT INTO search_chunks(document_id,chunk_index,title,path,content,parent_content) VALUES(?1,?2,?3,?4,?5,?6)",
-                params![document_id, chunk_index, title, relative_path.unwrap_or_default(), child, parent],
-            ).map_err(AppError::db)?;
-            chunk_index += 1;
-        }
-    }
-    Ok(())
-}
-
-pub fn index_note(conn: &Connection, note_id: &str) -> Result<(), AppError> {
-    let note = conn
-        .query_row(
-            "SELECT title,content_text,deleted_at,updated_at,knowledge_base_id FROM notes WHERE id=?1 AND NOT EXISTS(SELECT 1 FROM external_markdown_sources source WHERE source.note_id=notes.id)",
-            params![note_id],
-            |row| {
-                Ok((
-                    row.get::<_, String>(0)?,
-                    row.get::<_, String>(1)?,
-                    row.get::<_, Option<String>>(2)?,
-                    row.get::<_, String>(3)?,
-                    row.get::<_, Option<String>>(4)?,
-                ))
-            },
-        )
-        .optional()
-        .map_err(AppError::db)?;
-    let document_id = format!("note:{note_id}");
-    match note {
-        Some((title, content, None, updated_at, knowledge_base_id)) => replace_document(
-            conn,
-            IndexedDocument {
-                document_id: &document_id,
-                source_type: "note",
-                source_id: note_id,
-                knowledge_base_id: knowledge_base_id.as_deref(),
-                relative_path: None,
-                title: &title,
-                content: &content,
-                updated_at: &updated_at,
-            },
-        ),
-        _ => conn
-            .execute(
-                "DELETE FROM search_documents WHERE id=?1",
-                params![document_id],
-            )
-            .map(|_| ())
-            .map_err(AppError::db),
-    }
 }
 
 fn supported_extension(path: &Path) -> Option<String> {
@@ -290,7 +137,7 @@ fn strip_html(content: &str) -> String {
     out
 }
 
-fn read_indexable_content(
+fn read_reference_content(
     conn: &Connection,
     path: &Path,
     ext: &str,
@@ -321,199 +168,6 @@ fn read_indexable_content(
         raw
     };
     Ok((content, None))
-}
-
-fn index_library_file_conn(
-    conn: &Connection,
-    kb_id: &str,
-    root: &Path,
-    path: &Path,
-) -> Result<(), AppError> {
-    let relative = path
-        .strip_prefix(root)
-        .unwrap_or(path)
-        .to_string_lossy()
-        .replace('\\', "/");
-    if relative == ".tiny-note.json" || path.is_dir() {
-        return Ok(());
-    }
-    if path.extension().and_then(|value| value.to_str()) == Some("note") {
-        if let Ok(raw) = fs::read_to_string(path) {
-            if serde_json::from_str::<serde_json::Value>(&raw)
-                .ok()
-                .and_then(|value| {
-                    value
-                        .get("format")
-                        .and_then(|format| format.as_str())
-                        .map(|format| format == "tiny-note-reference")
-                })
-                == Some(true)
-            {
-                return Ok(());
-            }
-        }
-    }
-    let document_id = format!("file:{kb_id}:{relative}");
-    let title = path
-        .file_name()
-        .and_then(|v| v.to_str())
-        .unwrap_or(&relative)
-        .to_string();
-    let Some(ext) = supported_extension(path) else {
-        conn.execute(
-            "DELETE FROM search_documents WHERE id=?1",
-            params![document_id],
-        )
-        .map_err(AppError::db)?;
-        conn.execute("INSERT INTO search_documents(id,source_type,source_id,knowledge_base_id,relative_path,title,updated_at,status,error) VALUES(?1,'file',?2,?3,?4,?5,?6,'unsupported','unsupported_file_type')",
-            params![document_id, format!("{kb_id}:{relative}"), kb_id, relative, title, crate::now()]).map_err(AppError::db)?;
-        return Ok(());
-    };
-    match read_indexable_content(conn, path, &ext) {
-        Ok((content, resolved_title)) => {
-            let source_id = format!("{kb_id}:{relative}");
-            let updated_at = crate::now();
-            replace_document(
-                conn,
-                IndexedDocument {
-                    document_id: &document_id,
-                    source_type: "file",
-                    source_id: &source_id,
-                    knowledge_base_id: Some(kb_id),
-                    relative_path: Some(&relative),
-                    title: resolved_title.as_deref().unwrap_or(&title),
-                    content: &content,
-                    updated_at: &updated_at,
-                },
-            )
-        }
-        Err(error) => {
-            conn.execute(
-                "DELETE FROM search_documents WHERE id=?1",
-                params![document_id],
-            )
-            .map_err(AppError::db)?;
-            conn.execute("INSERT INTO search_documents(id,source_type,source_id,knowledge_base_id,relative_path,title,updated_at,status,error) VALUES(?1,'file',?2,?3,?4,?5,?6,'failed',?7)",
-                params![document_id, format!("{kb_id}:{relative}"), kb_id, relative, title, crate::now(), error]).map_err(AppError::db)?;
-            Ok(())
-        }
-    }
-}
-
-pub fn index_library_file(
-    state: &AppState,
-    kb_id: &str,
-    root: &Path,
-    path: &Path,
-) -> Result<(), AppError> {
-    let conn = state
-        .db
-        .lock()
-        .map_err(|_| AppError::db("database lock poisoned"))?;
-    index_library_file_conn(&conn, kb_id, root, path)
-}
-
-pub fn reindex_library_path(
-    state: &AppState,
-    kb_id: &str,
-    root: &Path,
-    relative_path: &str,
-) -> Result<(), AppError> {
-    let relative_path = relative_path.replace('\\', "/");
-    let conn = state
-        .db
-        .lock()
-        .map_err(|_| AppError::db("database lock poisoned"))?;
-    let prefix = format!("file:{kb_id}:{relative_path}");
-    conn.execute(
-        "DELETE FROM search_documents WHERE id=?1 OR id LIKE ?2",
-        params![prefix, format!("{prefix}/%")],
-    )
-    .map_err(AppError::db)?;
-    let path = root.join(relative_path);
-    if path.is_dir() {
-        for entry in WalkDir::new(&path)
-            .follow_links(false)
-            .into_iter()
-            .filter_map(Result::ok)
-        {
-            if entry.file_type().is_file() {
-                index_library_file_conn(&conn, kb_id, root, entry.path())?;
-            }
-        }
-    } else if path.is_file() {
-        index_library_file_conn(&conn, kb_id, root, &path)?;
-    }
-    Ok(())
-}
-
-pub fn rebuild_all(state: &AppState) -> Result<IndexStatusDto, AppError> {
-    let conn = state
-        .db
-        .lock()
-        .map_err(|_| AppError::db("database lock poisoned"))?;
-    conn.execute("DELETE FROM search_documents", [])
-        .map_err(AppError::db)?;
-    let note_ids = conn
-        .prepare("SELECT id FROM notes WHERE deleted_at IS NULL AND NOT EXISTS(SELECT 1 FROM external_markdown_sources source WHERE source.note_id=notes.id)")
-        .map_err(AppError::db)?
-        .query_map([], |row| row.get::<_, String>(0))
-        .map_err(AppError::db)?
-        .collect::<Result<Vec<_>, _>>()
-        .map_err(AppError::db)?;
-    for note_id in note_ids {
-        index_note(&conn, &note_id)?;
-    }
-    let bases = conn
-        .prepare("SELECT id,root_path FROM knowledge_bases")
-        .map_err(AppError::db)?
-        .query_map([], |row| {
-            Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
-        })
-        .map_err(AppError::db)?
-        .collect::<Result<Vec<_>, _>>()
-        .map_err(AppError::db)?;
-    for (kb_id, root_path) in bases {
-        let root = std::path::PathBuf::from(root_path);
-        for entry in WalkDir::new(&root)
-            .follow_links(false)
-            .into_iter()
-            .filter_map(Result::ok)
-        {
-            if entry.file_type().is_file() {
-                index_library_file_conn(&conn, &kb_id, &root, entry.path())?;
-            }
-        }
-    }
-    index_status_conn(&conn)
-}
-
-fn index_status_conn(conn: &Connection) -> Result<IndexStatusDto, AppError> {
-    let count = |condition: &str| {
-        conn.query_row(
-            &format!("SELECT COUNT(*) FROM search_documents {condition}"),
-            [],
-            |row| row.get::<_, i64>(0),
-        )
-        .map_err(AppError::db)
-    };
-    Ok(IndexStatusDto {
-        documents: count("")?,
-        chunks: conn
-            .query_row("SELECT COUNT(*) FROM search_chunks", [], |row| row.get(0))
-            .map_err(AppError::db)?,
-        indexed: count("WHERE status='indexed'")?,
-        failed: count("WHERE status='failed'")?,
-        unsupported: count("WHERE status='unsupported'")?,
-    })
-}
-
-pub fn index_status(state: &AppState) -> Result<IndexStatusDto, AppError> {
-    let conn = state
-        .db
-        .lock()
-        .map_err(|_| AppError::db("database lock poisoned"))?;
-    index_status_conn(&conn)
 }
 
 fn truncate_chars(value: &str, max: usize) -> (String, bool) {
@@ -579,7 +233,7 @@ fn explicit_source(
         .db
         .lock()
         .map_err(|_| AppError::db("database lock poisoned"))?;
-    let (raw, resolved_title) = read_indexable_content(&conn, &path, &ext)
+    let (raw, resolved_title) = read_reference_content(&conn, &path, &ext)
         .map_err(|code| AppError::invalid(&code, "Reference could not be read"))?;
     let (content, truncated) = truncate_chars(&raw, MAX_REFERENCE_CHARS);
     Ok(ContextSource {
@@ -600,125 +254,9 @@ fn explicit_source(
     })
 }
 
-fn search_sources(
+pub fn resolve_explicit_context(
     state: &AppState,
-    query: &str,
-    scope: &ContextScope,
-) -> Result<Vec<ContextSource>, AppError> {
-    if query.trim().is_empty() {
-        return Ok(Vec::new());
-    }
-    let conn = state
-        .db
-        .lock()
-        .map_err(|_| AppError::db("database lock poisoned"))?;
-    let mut terms = Vec::new();
-    for token in query.split(|ch: char| !ch.is_alphanumeric()) {
-        let chars = token.chars().collect::<Vec<_>>();
-        if chars.len() < 3 {
-            continue;
-        }
-        if token.is_ascii() {
-            terms.push(token.to_lowercase());
-        } else {
-            for window in chars.windows(3) {
-                terms.push(window.iter().collect::<String>());
-                if terms.len() >= 12 {
-                    break;
-                }
-            }
-        }
-        if terms.len() >= 12 {
-            break;
-        }
-    }
-    terms.sort();
-    terms.dedup();
-    let (sql, search_parameter) = if terms.is_empty() {
-        (
-            "SELECT d.id,d.source_type,d.title,d.source_id,d.knowledge_base_id,d.relative_path,c.parent_content,0.0
-             FROM search_chunks c JOIN search_documents d ON d.id=c.document_id
-             WHERE (c.content LIKE ?1 OR c.title LIKE ?1 OR c.path LIKE ?1) AND d.status='indexed' LIMIT 24",
-            format!("%{}%", query.trim()),
-        )
-    } else {
-        (
-            "SELECT d.id,d.source_type,d.title,d.source_id,d.knowledge_base_id,d.relative_path,c.parent_content,bm25(search_chunks_fts,8.0,5.0,1.0)
-             FROM search_chunks_fts JOIN search_chunks c ON c.id=search_chunks_fts.rowid JOIN search_documents d ON d.id=c.document_id
-             WHERE search_chunks_fts MATCH ?1 AND d.status='indexed' ORDER BY 8 LIMIT 24",
-            terms
-                .into_iter()
-                .map(|term| format!("\"{}\"", term.replace('"', "\"\"")))
-                .collect::<Vec<_>>()
-                .join(" OR "),
-        )
-    };
-    let mut statement = conn.prepare(sql).map_err(AppError::db)?;
-    let rows = statement
-        .query_map(params![search_parameter], |row| {
-            Ok((
-                row.get::<_, String>(0)?,
-                row.get::<_, String>(1)?,
-                row.get::<_, String>(2)?,
-                row.get::<_, String>(3)?,
-                row.get::<_, Option<String>>(4)?,
-                row.get::<_, Option<String>>(5)?,
-                row.get::<_, String>(6)?,
-                row.get::<_, f64>(7)?,
-            ))
-        })
-        .map_err(AppError::db)?
-        .collect::<Result<Vec<_>, _>>()
-        .map_err(AppError::db)?;
-    let mut seen = HashSet::new();
-    let mut sources = Vec::new();
-    for (id, source_type, title, source_id, kb_id, path, content, rank) in rows {
-        if !scope.knowledge_base_ids.is_empty()
-            && kb_id
-                .as_ref()
-                .is_some_and(|id| !scope.knowledge_base_ids.contains(id))
-        {
-            continue;
-        }
-        let note_id = (source_type == "note").then_some(source_id.clone());
-        if !scope.note_ids.is_empty()
-            && note_id
-                .as_ref()
-                .is_some_and(|id| !scope.note_ids.contains(id))
-        {
-            continue;
-        }
-        if !seen.insert(id.clone()) {
-            continue;
-        }
-        let (content, truncated) = truncate_chars(&content, 2_000);
-        sources.push(ContextSource {
-            id,
-            source_type,
-            title,
-            note_id,
-            knowledge_base_id: kb_id,
-            relative_path: path,
-            snippet: content.chars().take(160).collect(),
-            content_hash: content_hash(&content),
-            content,
-            score: -rank,
-            explicit: false,
-            truncated,
-        });
-        if sources.len() == MAX_SOURCES {
-            break;
-        }
-    }
-    Ok(sources)
-}
-
-pub fn resolve_context(
-    state: &AppState,
-    query: &str,
     references: &[ContextReference],
-    scope: &ContextScope,
-    auto_retrieve: bool,
 ) -> Result<ContextBundle, AppError> {
     let mut sources = Vec::new();
     let mut seen = HashSet::new();
@@ -729,16 +267,6 @@ pub fn resolve_context(
         }
         if sources.len() == MAX_SOURCES {
             break;
-        }
-    }
-    if auto_retrieve {
-        for source in search_sources(state, query, scope)? {
-            if seen.insert(source.id.clone()) {
-                sources.push(source);
-            }
-            if sources.len() == MAX_SOURCES {
-                break;
-            }
         }
     }
     let mut used = 0;

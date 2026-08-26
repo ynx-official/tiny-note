@@ -8,7 +8,7 @@ use tauri::State;
 
 const MAX_SKILL_CHARS: usize = 200_000;
 const LEGACY_KNOWLEDGE_RESEARCH_SKILL: &str = "---\nname: knowledge-research\ndescription: 检索并汇总 Tiny Note 本地知识，保留来源和不确定性。\n---\n\n# 知识调研\n\n当任务需要本地事实时：\n\n1. 先用 `retrieve_knowledge` 做宽检索。\n2. 必要时用 `search_notes` 和 `get_note` 补充完整上下文。\n3. 只引用工具实际返回的来源。\n4. 区分资料事实、合理推断和未知信息。\n";
-const PREVIOUS_BUILTIN_SKILLS: [(&str, &str); 4] = [
+const PREVIOUS_BUILTIN_SKILLS: [(&str, &str); 6] = [
     (
         "knowledge-research",
         "---\nname: knowledge-research\ndescription: 在 Tiny Note 的笔记与已建立索引的知识库中搜索并汇总信息，保留可追溯来源、冲突和不确定性。\n---\n\n# 知识调研\n\n当任务需要查找本地事实、项目资料、知识库文档或已有笔记时，使用本技能。\n\n## 检索流程\n\n1. 先提取主题、专有名词、别名和限定条件；不要把无关背景词全部塞进查询。\n2. 优先调用 `retrieve_knowledge` 做宽检索。它会搜索 Tiny Note 笔记和已建立索引的知识库文件，并返回相关片段与来源。\n3. 需要精确核对某篇笔记时，再用 `search_notes` 找到候选，使用 `get_note` 读取完整正文。\n4. 如果用户指定了某个知识库或引用文件，优先使用工具返回的 `knowledgeBaseId`、`relativePath` 和 `id` 判断来源，不要把相似标题当成同一文件。\n5. 首轮结果不足时，尝试术语变体、缩写、中文/英文名称或更具体的错误信息；不要凭常识补写私有资料。\n\n## 来源与答案规则\n\n- 只引用工具实际返回的来源，并在答案中保留标题、来源类型以及可用的笔记 ID、知识库 ID、相对路径。\n- 区分“资料明确说明”“基于资料的推断”和“没有找到证据”。\n- 来源冲突时，指出冲突并优先采用更新、更正式或更直接的来源，同时说明判断依据。\n- 搜索结果为空时，明确说明已搜索的范围；这通常意味着知识库尚未索引、术语不同或资料不存在。\n- 不输出密码、Token、私钥或不必要的个人敏感信息。\n\n## 输出结构\n\n除非用户指定其他格式，按以下顺序回答：\n\n1. 直接结论；\n2. 按主题归纳的关键证据；\n3. 冲突、时效性和信息缺口；\n4. 来源列表。\n",
@@ -19,6 +19,8 @@ const PREVIOUS_BUILTIN_SKILLS: [(&str, &str); 4] = [
     ),
     ("knowledge-research", PREVIOUS_KNOWLEDGE_RESEARCH_SKILL_V2),
     ("note-organizer", PREVIOUS_NOTE_ORGANIZER_SKILL_V2),
+    ("knowledge-research", PREVIOUS_KNOWLEDGE_RESEARCH_SKILL_V3),
+    ("note-organizer", PREVIOUS_NOTE_ORGANIZER_SKILL_V3),
 ];
 const PREVIOUS_KNOWLEDGE_RESEARCH_SKILL_V2: &str = r#"---
 name: knowledge-research
@@ -96,7 +98,7 @@ description: 使用 Tiny Note 工具创建、查找、读取、修改或删除�
 - 任一项失败时，分别报告成功与失败项目，不把部分成功描述成全部完成。
 - 是否需要暂停审批由用户的 Agent 工具设置决定，技能本身不得绕过工具执行层。
 "#;
-const KNOWLEDGE_RESEARCH_SKILL: &str = r#"---
+const PREVIOUS_KNOWLEDGE_RESEARCH_SKILL_V3: &str = r#"---
 name: knowledge-research
 description: 检索和管理 Tiny Note 知识库，并在知识库中新建或移动笔记引用。
 ---
@@ -131,7 +133,7 @@ description: 检索和管理 Tiny Note 知识库，并在知识库中新建或�
 - 首轮不足时尝试术语变体；搜索为空时说明检索范围。
 - 不输出密码、Token、私钥或不必要的个人敏感信息。
 "#;
-const NOTE_ORGANIZER_SKILL: &str = r#"---
+const PREVIOUS_NOTE_ORGANIZER_SKILL_V3: &str = r#"---
 name: note-organizer
 description: 创建、查找、读取、修改、移动或删除 Tiny Note 笔记，并保持归类清晰。
 ---
@@ -161,9 +163,78 @@ description: 创建、查找、读取、修改、移动或删除 Tiny Note 笔�
 5. 移动知识库引用前确认来源库、目标库和唯一笔记 ID。
 6. 只有工具返回成功后才能报告完成；批量操作分别报告成功与失败项。
 "#;
-const BUILTIN_SKILLS: [(&str, &str); 2] = [
+const KNOWLEDGE_RESEARCH_SKILL: &str = r#"---
+name: knowledge-research
+description: 管理 Tiny Note 知识库元数据，并在知识库中新建或移动笔记引用。
+---
+
+# 知识库管理
+
+知识库保存文件和 `.note` 引用；笔记本负责普通笔记归类。当前版本不提供知识库正文检索或自动 RAG。
+
+| 用户意图 | 工具 | 规则 |
+| --- | --- | --- |
+| 查看知识库 | `list_knowledge_bases` | 返回 ID、分类、名称和说明 |
+| 新建知识库 | `create_knowledge_base` | 分类只能是 `personal` 或 `local` |
+| 修改知识库 | `update_knowledge_base` | 先确认唯一 ID |
+| 删除知识库 | `delete_knowledge_base` | 受管目录移入系统回收站 |
+| 在知识库新建笔记 | `create_note_in_knowledge_base` | 同时创建笔记和引用 |
+| 移动知识库引用 | `move_note_to_knowledge_base` | 不改变笔记正文或笔记本归属 |
+
+不要声称检索了知识库正文。只有用户在对话中手动选择的文件才会作为本轮参考内容传入。
+"#;
+
+const NOTE_ORGANIZER_SKILL: &str = r#"---
+name: note-organizer
+description: 列出、搜索、读取、创建、修改或删除 Tiny Note 普通笔记，并保持 Markdown 内容完整。
+---
+
+# 笔记管理与整理
+
+## 工具选择
+
+| 用户意图 | 工具 | 规则 |
+| --- | --- | --- |
+| “我有哪些笔记” | `list_notes` | 不要用空关键词或“笔记”调用搜索 |
+| 查找具体主题或标题 | `search_notes` | 使用 1–3 个有辨识度的短关键词 |
+| 读取正文 | `get_note` | 使用精确 ID，并读取 `contentMarkdown` |
+| 新建笔记 | `create_note` | 标题不超过 50 字，正文使用完整 Markdown |
+| 修改笔记 | `update_note` | 基于完整 Markdown 生成待审阅提案 |
+| 删除笔记 | `delete_note` | 移入最近删除，不是永久清除 |
+
+## 操作规则
+
+1. 搜索无结果时缩短关键词或换用标题中的专有名词重试；不能据此断言用户没有任何笔记。
+2. 多个候选必须展示标题、笔记本名称和 ID，请用户确认目标。
+3. 修改时保留用户未要求改变的 Markdown 结构；成功后说明仍需审阅应用。
+4. 需要创建、查询或调整笔记本时读取 `notebook-manager`，不要混用笔记本 ID 与知识库 ID。
+5. 批量操作分别报告成功和失败项，只有工具成功后才能报告完成。
+"#;
+
+const NOTEBOOK_MANAGER_SKILL: &str = r#"---
+name: notebook-manager
+description: 创建、列出、修改、移动或删除 Tiny Note 笔记本，并安全维护层级关系。
+---
+
+# 笔记本管理
+
+笔记本用于组织普通笔记；知识库用于管理文件和引用，两者不是同一实体。
+
+| 用户意图 | 工具 | 规则 |
+| --- | --- | --- |
+| 查看笔记本 | `list_notebooks` | 返回层级、直属笔记数和子笔记本数 |
+| 新建笔记本 | `create_notebook` | `parentId` 为空时创建在根级 |
+| 修改名称或说明 | `update_notebook` | 不隐式改变父级 |
+| 移动层级 | `move_notebook` | `parentId: null` 表示根级；禁止自身或后代循环 |
+| 删除笔记本 | `delete_notebook` | 直属笔记移到“未分类”，子笔记本提升到当前父级 |
+
+“未分类”是系统笔记本，不能修改、移动或删除。写操作前使用 `list_notebooks` 确认唯一 ID；名称不唯一时必须让用户确认。
+"#;
+
+const BUILTIN_SKILLS: [(&str, &str); 3] = [
     ("knowledge-research", KNOWLEDGE_RESEARCH_SKILL),
     ("note-organizer", NOTE_ORGANIZER_SKILL),
+    ("notebook-manager", NOTEBOOK_MANAGER_SKILL),
 ];
 
 #[derive(Debug, Clone, Serialize)]
@@ -441,7 +512,7 @@ mod tests {
     fn seeds_and_reads_builtin_skills() {
         let state = state();
         let skills = list_skills(&state, false).unwrap();
-        assert_eq!(skills.len(), 2);
+        assert_eq!(skills.len(), 3);
         assert!(skills.iter().all(|skill| skill.builtin));
         let knowledge = read_skill(&state, "knowledge-research")
             .unwrap()
@@ -452,7 +523,6 @@ mod tests {
             "create_note_in_knowledge_base",
             "move_note_to_knowledge_base",
             "list_knowledge_bases",
-            "retrieve_knowledge",
             "update_knowledge_base",
             "delete_knowledge_base",
         ] {
@@ -464,8 +534,7 @@ mod tests {
             .unwrap();
         for tool in [
             "create_note",
-            "create_note_in_knowledge_base",
-            "move_note_to_knowledge_base",
+            "list_notes",
             "search_notes",
             "get_note",
             "update_note",
@@ -473,6 +542,20 @@ mod tests {
         ] {
             assert!(notes.contains(tool), "note skill missing {tool}");
         }
+        let notebooks = read_skill(&state, "notebook-manager")
+            .unwrap()
+            .content
+            .unwrap();
+        for tool in [
+            "list_notebooks",
+            "create_notebook",
+            "update_notebook",
+            "move_notebook",
+            "delete_notebook",
+        ] {
+            assert!(notebooks.contains(tool), "notebook skill missing {tool}");
+        }
+        assert!(!knowledge.contains("retrieve_knowledge"));
     }
 
     #[test]

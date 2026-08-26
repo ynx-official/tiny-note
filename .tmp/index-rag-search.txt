@@ -1,0 +1,590 @@
+src-tauri/src\search.rs:68:pub struct IndexStatusDto {
+src-tauri/src\search.rs:71:    pub indexed: i64,
+src-tauri/src\search.rs:113:        "CREATE TABLE IF NOT EXISTS search_documents (
+src-tauri/src\search.rs:117:          status TEXT NOT NULL DEFAULT 'indexed', error TEXT NOT NULL DEFAULT ''
+src-tauri/src\search.rs:119:        CREATE UNIQUE INDEX IF NOT EXISTS idx_search_documents_source ON search_documents(source_type,source_id);
+src-tauri/src\search.rs:120:        CREATE TABLE IF NOT EXISTS search_chunks (
+src-tauri/src\search.rs:121:          id INTEGER PRIMARY KEY AUTOINCREMENT, document_id TEXT NOT NULL REFERENCES search_documents(id) ON DELETE CASCADE,
+src-tauri/src\search.rs:122:          chunk_index INTEGER NOT NULL, title TEXT NOT NULL, path TEXT NOT NULL,
+src-tauri/src\search.rs:125:        CREATE INDEX IF NOT EXISTS idx_search_chunks_document ON search_chunks(document_id);
+src-tauri/src\search.rs:126:        CREATE VIRTUAL TABLE IF NOT EXISTS search_chunks_fts USING fts5(
+src-tauri/src\search.rs:127:          title, path, content, content='search_chunks', content_rowid='id', tokenize='trigram'
+src-tauri/src\search.rs:129:        CREATE TRIGGER IF NOT EXISTS search_chunks_ai AFTER INSERT ON search_chunks BEGIN
+src-tauri/src\search.rs:130:          INSERT INTO search_chunks_fts(rowid,title,path,content) VALUES (new.id,new.title,new.path,new.content);
+src-tauri/src\search.rs:132:        CREATE TRIGGER IF NOT EXISTS search_chunks_ad AFTER DELETE ON search_chunks BEGIN
+src-tauri/src\search.rs:133:          INSERT INTO search_chunks_fts(search_chunks_fts,rowid,title,path,content) VALUES('delete',old.id,old.title,old.path,old.content);
+src-tauri/src\search.rs:135:        CREATE TRIGGER IF NOT EXISTS search_chunks_au AFTER UPDATE ON search_chunks BEGIN
+src-tauri/src\search.rs:136:          INSERT INTO search_chunks_fts(search_chunks_fts,rowid,title,path,content) VALUES('delete',old.id,old.title,old.path,old.content);
+src-tauri/src\search.rs:137:          INSERT INTO search_chunks_fts(rowid,title,path,content) VALUES (new.id,new.title,new.path,new.content);
+src-tauri/src\search.rs:146:        CREATE INDEX IF NOT EXISTS idx_ai_edit_proposals_note ON ai_edit_proposals(note_id,created_at DESC);
+src-tauri/src\search.rs:153:        CREATE INDEX IF NOT EXISTS idx_note_revisions_note ON note_revisions(note_id,created_at DESC);",
+src-tauri/src\search.rs:184:struct IndexedDocument<'a> {
+src-tauri/src\search.rs:195:fn replace_document(conn: &Connection, document: IndexedDocument<'_>) -> Result<(), AppError> {
+src-tauri/src\search.rs:196:    let IndexedDocument {
+src-tauri/src\search.rs:207:        "DELETE FROM search_documents WHERE id=?1",
+src-tauri/src\search.rs:212:        "INSERT INTO search_documents(id,source_type,source_id,knowledge_base_id,relative_path,title,content_hash,updated_at,status,error) VALUES(?1,?2,?3,?4,?5,?6,?7,?8,'indexed','')",
+src-tauri/src\search.rs:216:    let mut chunk_index = 0_i64;
+src-tauri/src\search.rs:220:                "INSERT INTO search_chunks(document_id,chunk_index,title,path,content,parent_content) VALUES(?1,?2,?3,?4,?5,?6)",
+src-tauri/src\search.rs:221:                params![document_id, chunk_index, title, relative_path.unwrap_or_default(), child, parent],
+src-tauri/src\search.rs:223:            chunk_index += 1;
+src-tauri/src\search.rs:229:pub fn index_note(conn: &Connection, note_id: &str) -> Result<(), AppError> {
+src-tauri/src\search.rs:250:            IndexedDocument {
+src-tauri/src\search.rs:263:                "DELETE FROM search_documents WHERE id=?1",
+src-tauri/src\search.rs:293:fn read_indexable_content(
+src-tauri/src\search.rs:326:fn index_library_file_conn(
+src-tauri/src\search.rs:364:            "DELETE FROM search_documents WHERE id=?1",
+src-tauri/src\search.rs:368:        conn.execute("INSERT INTO search_documents(id,source_type,source_id,knowledge_base_id,relative_path,title,updated_at,status,error) VALUES(?1,'file',?2,?3,?4,?5,?6,'unsupported','unsupported_file_type')",
+src-tauri/src\search.rs:372:    match read_indexable_content(conn, path, &ext) {
+src-tauri/src\search.rs:378:                IndexedDocument {
+src-tauri/src\search.rs:392:                "DELETE FROM search_documents WHERE id=?1",
+src-tauri/src\search.rs:396:            conn.execute("INSERT INTO search_documents(id,source_type,source_id,knowledge_base_id,relative_path,title,updated_at,status,error) VALUES(?1,'file',?2,?3,?4,?5,?6,'failed',?7)",
+src-tauri/src\search.rs:403:pub fn index_library_file(
+src-tauri/src\search.rs:413:    index_library_file_conn(&conn, kb_id, root, path)
+src-tauri/src\search.rs:416:pub fn reindex_library_path(
+src-tauri/src\search.rs:429:        "DELETE FROM search_documents WHERE id=?1 OR id LIKE ?2",
+src-tauri/src\search.rs:441:                index_library_file_conn(&conn, kb_id, root, entry.path())?;
+src-tauri/src\search.rs:445:        index_library_file_conn(&conn, kb_id, root, &path)?;
+src-tauri/src\search.rs:450:pub fn rebuild_all(state: &AppState) -> Result<IndexStatusDto, AppError> {
+src-tauri/src\search.rs:455:    conn.execute("DELETE FROM search_documents", [])
+src-tauri/src\search.rs:465:        index_note(&conn, &note_id)?;
+src-tauri/src\search.rs:484:                index_library_file_conn(&conn, &kb_id, &root, entry.path())?;
+src-tauri/src\search.rs:488:    index_status_conn(&conn)
+src-tauri/src\search.rs:491:fn index_status_conn(conn: &Connection) -> Result<IndexStatusDto, AppError> {
+src-tauri/src\search.rs:494:            &format!("SELECT COUNT(*) FROM search_documents {condition}"),
+src-tauri/src\search.rs:500:    Ok(IndexStatusDto {
+src-tauri/src\search.rs:503:            .query_row("SELECT COUNT(*) FROM search_chunks", [], |row| row.get(0))
+src-tauri/src\search.rs:505:        indexed: count("WHERE status='indexed'")?,
+src-tauri/src\search.rs:511:pub fn index_status(state: &AppState) -> Result<IndexStatusDto, AppError> {
+src-tauri/src\search.rs:516:    index_status_conn(&conn)
+src-tauri/src\search.rs:582:    let (raw, resolved_title) = read_indexable_content(&conn, &path, &ext)
+src-tauri/src\search.rs:640:             FROM search_chunks c JOIN search_documents d ON d.id=c.document_id
+src-tauri/src\search.rs:641:             WHERE (c.content LIKE ?1 OR c.title LIKE ?1 OR c.path LIKE ?1) AND d.status='indexed' LIMIT 24",
+src-tauri/src\search.rs:646:            "SELECT d.id,d.source_type,d.title,d.source_id,d.knowledge_base_id,d.relative_path,c.parent_content,bm25(search_chunks_fts,8.0,5.0,1.0)
+src-tauri/src\search.rs:647:             FROM search_chunks_fts JOIN search_chunks c ON c.id=search_chunks_fts.rowid JOIN search_documents d ON d.id=c.document_id
+src-tauri/src\search.rs:648:             WHERE search_chunks_fts MATCH ?1 AND d.status='indexed' ORDER BY 8 LIMIT 24",
+docs\00-project\project-charter.md:5:Tiny Note 面向单用户桌面场景，提供本地笔记、笔记本和个人/本地知识库文件管理，并以 Rust 负责数据、文件和 AI 请求边界。首版不读取 Friday 数据，也不实现 RAG 和通用 Agent。
+docs\04-quality\test-plan.md:6:- Rust：`tags_json` 到 `tags/note_tags` 的去重迁移、空归属到“未分类”、扁平笔记本到 `parent_id`、多级移动与循环拒绝、中间节点删除事务、标签增删改/批量关联/级联清理、备份 v3 往返和 v1/v2 兼容；另覆盖置顶、模板和 `[[双向链接]]` 同步、Base64 二进制导入、URL 导入限制、单文件增量索引及重命名/删除后的旧索引清理。
+docs\04-quality\test-plan.md:8:- Mermaid：流程图与原生 `swimlane-beta` 围栏往返、渲染前外部资源拦截、严格安全配置与泳道标题兼容的 SVG 二次清洗、内部主题样式与 `url(#fragment)` 保留、节点/分组不回落为默认黑色、解析错误、竞态丢弃、亮暗主题、原始比例、首次渲染与源码变化默认适宽、适宽状态下容器变化自动重算、手动缩放退出自动适宽、行内不显示重复适宽按钮、行内 75%–250% 手动缩放、大图 10%–250% 独立缩放、原生屏幕全屏与应用窗口铺满回退、两级 Esc 退出、左键 Pointer Capture 拖动画布、滚轮鼠标锚点缩放、四向滚动边界、复制源码及非持久化 SVG。
+docs\README.md:1:# 文档索引
+docs\06-delivery\milestones.md:3:已完成的主线：工程与安全边界、桌面壳、SQLite 笔记/笔记本、编辑器与删除恢复、知识库文件流、文本/二进制/URL 导入、预览/FTS 搜索、模型与 AI、标签/置顶/模板/双向链接、增量文件索引、工作区备份恢复和 Agent 审批入口。
+docs\06-delivery\milestones.md:7:1. 稳定性：补充真实 Tauri 集成测试、恢复失败保护、索引队列和大库性能基准。
+docs\03-architecture\threat-model.md:11:- Mermaid 源码按不可信输入处理。进入 Mermaid 解析/渲染前先拒绝图片节点、Markdown 图片、外部 URL、CSS `url()`/`@import` 和资源标签，防止生成 SVG 之前发生网络请求；渲染器使用 `securityLevel: strict`、关闭用户 HTML 标签与自动启动、锁定安全/主题/布局配置，并限制文本和边数量。返回 SVG 继续移除脚本、事件属性、链接、图片、外部 URL 和危险 CSS；只保留 Mermaid 生成的内部主题 `<style>` 及指向同一 SVG 定义的 `url(#fragment)`，避免节点和分组回落为浏览器默认黑色。仅为 Mermaid 原生泳道标题保留经二次清洗的 `foreignObject` 及 `div/span/p/br` 最小 XHTML 白名单。该白名单只存在于图表专用渲染器，不加入通用编辑器 HTML 白名单；SVG 只存在于瞬时 NodeView，禁止写入数据库。
+src-tauri/src\agent_skills.rs:10:const LEGACY_KNOWLEDGE_RESEARCH_SKILL: &str = "---\nname: knowledge-research\ndescription: 检索并汇总 Tiny Note 本地知识，保留来源和不确定性。\n---\n\n# 知识调研\n\n当任务需要本地事实时：\n\n1. 先用 `retrieve_knowledge` 做宽检索。\n2. 必要时用 `search_notes` 和 `get_note` 补充完整上下文。\n3. 只引用工具实际返回的来源。\n4. 区分资料事实、合理推断和未知信息。\n";
+src-tauri/src\agent_skills.rs:14:        "---\nname: knowledge-research\ndescription: 在 Tiny Note 的笔记与已建立索引的知识库中搜索并汇总信息，保留可追溯来源、冲突和不确定性。\n---\n\n# 知识调研\n\n当任务需要查找本地事实、项目资料、知识库文档或已有笔记时，使用本技能。\n\n## 检索流程\n\n1. 先提取主题、专有名词、别名和限定条件；不要把无关背景词全部塞进查询。\n2. 优先调用 `retrieve_knowledge` 做宽检索。它会搜索 Tiny Note 笔记和已建立索引的知识库文件，并返回相关片段与来源。\n3. 需要精确核对某篇笔记时，再用 `search_notes` 找到候选，使用 `get_note` 读取完整正文。\n4. 如果用户指定了某个知识库或引用文件，优先使用工具返回的 `knowledgeBaseId`、`relativePath` 和 `id` 判断来源，不要把相似标题当成同一文件。\n5. 首轮结果不足时，尝试术语变体、缩写、中文/英文名称或更具体的错误信息；不要凭常识补写私有资料。\n\n## 来源与答案规则\n\n- 只引用工具实际返回的来源，并在答案中保留标题、来源类型以及可用的笔记 ID、知识库 ID、相对路径。\n- 区分“资料明确说明”“基于资料的推断”和“没有找到证据”。\n- 来源冲突时，指出冲突并优先采用更新、更正式或更直接的来源，同时说明判断依据。\n- 搜索结果为空时，明确说明已搜索的范围；这通常意味着知识库尚未索引、术语不同或资料不存在。\n- 不输出密码、Token、私钥或不必要的个人敏感信息。\n\n## 输出结构\n\n除非用户指定其他格式，按以下顺序回答：\n\n1. 直接结论；\n2. 按主题归纳的关键证据；\n3. 冲突、时效性和信息缺口；\n4. 来源列表。\n",
+src-tauri/src\agent_skills.rs:25:description: 检索、创建、更新或删除 Tiny Note 知识库，并基于已索引资料生成可追溯答案。
+src-tauri/src\agent_skills.rs:37:| 查看有哪些知识库 | `list_knowledge_bases` | 返回知识库 ID、分类、说明和索引状态；不要用正文检索代替目录查询 |
+src-tauri/src\agent_skills.rs:38:| 检索知识库内容 | `retrieve_knowledge` | 使用精炼关键词检索已索引内容，保留 `knowledgeBaseId`、`relativePath` 和来源 |
+src-tauri/src\agent_skills.rs:40:| 删除知识库 | `delete_knowledge_base` | 先用 `list_knowledge_bases` 核对唯一 ID；工具会删除记录和索引，并把受管目录移入系统回收站 |
+src-tauri/src\agent_skills.rs:53:1. 提取主题、专有名词、别名和限定条件，再调用 `retrieve_knowledge`；首轮不足时尝试术语变体或更具体的错误信息。
+src-tauri/src\agent_skills.rs:54:2. `retrieve_knowledge` 可能同时返回笔记和知识库文件。需要完整核对某篇笔记时，交给 `note-organizer` 技能并使用 `search_notes`、`get_note`。
+src-tauri/src\agent_skills.rs:57:5. 搜索为空时说明已搜索范围；可能原因包括尚未索引、术语不同或资料不存在。
+src-tauri/src\agent_skills.rs:116:| 检索知识库内容 | `retrieve_knowledge` | 使用精炼关键词，保留来源 ID 和相对路径 |
+src-tauri/src\agent_skills.rs:118:| 删除知识库 | `delete_knowledge_base` | 删除记录和索引，并把受管目录移入系统回收站 |
+src-tauri/src\agent_skills.rs:324:pub fn skill_index_for_prompt(state: &AppState) -> Result<String, AppError> {
+src-tauri/src\agent_skills.rs:455:            "retrieve_knowledge",
+docs\03-architecture\data-model.md:9:`external_markdown_sources` 以 `note_id` 一对一关联从系统打开的 Markdown，保存规范化绝对路径和上次同步内容的 SHA-256；路径唯一，避免同一源文件产生多个临时记录。存在该关联的 `notes` 行只服务于当前设备上的“外部来源”历史、打开、编辑和源文件同步，不属于用户笔记集合，所有普通笔记列表、标签、双向链接、检索索引和工作区备份必须排除。清空历史级联删除这些临时行，但绝不删除路径指向的源文件。用户导入时新建无此关联的普通 `notes` 副本，不能把外部记录原地转为笔记。保存外部记录时先比较当前磁盘哈希，匹配后以同目录临时文件原子替换并更新哈希；冲突、文件丢失、非 UTF-8 或超过 10 MB 时不得更新持久状态或覆盖磁盘。
+docs\03-architecture\data-model.md:13:AI 与检索表：`search_documents`、`search_chunks`、`search_chunks_fts`、`ai_edit_proposals`、`note_revisions`。FTS5 使用 trigram tokenizer；检索块用于匹配，`parent_content` 用于回填完整上下文。提案记录生成时的笔记时间戳和正文 SHA-256，应用时必须同时匹配；应用前在同一事务写入 `note_revisions`。
+docs\03-architecture\data-model.md:27:工作区备份是版本化 JSON。v3 保存笔记本父子关系、标签实体和笔记标签关联，以及笔记、知识库元数据、Base64 知识库文件、模板、链接和界面设置；导入继续接受 v1/v2，并把旧笔记的 `tags` 数组转换为 v3 关系。模型 API Key、Agent 凭据和运行时缓存明确排除在备份之外。恢复是用户确认后的全量替换，并在完成后重建搜索索引。
+docs\03-architecture\api-contracts.md:7:命令组：`note_*`、`notebook_*`、`knowledge_base_*`、`library_*`、`model_*`、`settings_*`、`note_ai_stream/cancel`、`note_fim_stream/cancel`。路径命令只接受 `knowledgeBaseId + relativePath`。文件导入区分文本与二进制：`library_write_file_bytes` 接收字节数组，图片返回安全的 data URI 预览，PDF/EPUB 保存但明确标记为暂不支持预览/全文索引；`library_import_url` 只允许 HTTP/HTTPS，响应体上限 5MB。系统文件打开由 Rust 暂存启动参数或 macOS URL，`app_take_pending_markdown_files` 一次性返回经过规范化的 `{ path, fileName, content, error }` 并把该路径加入单次授权；`note_open_external_markdown` 只接受此次授权路径及与磁盘一致的 Markdown/安全 HTML/纯文本，将其创建或刷新为绑定源文件的临时文档。同一路径只绑定一条临时记录。`external_markdown_list` 返回独立历史，`external_markdown_read` 按记录重新读取磁盘并生成一次打开授权，`external_markdown_clear` 删除临时记录但不接触源文件。`note_list`、标签列表、搜索索引、双向链接和工作区导出均排除带外部源绑定的记录；前端显式“导入到笔记”通过 `note_create` 创建独立副本并切换路由。后续对临时文档执行 `note_update`、AI 应用和版本恢复时，写入前校验源文件哈希，冲突返回 `external_file_changed`，不覆盖磁盘内容。
+docs\03-architecture\api-contracts.md:13:Agent 命令：`agent_invoke`、`agent_resume`、`agent_respond_input`、`agent_cancel`、`agent_get_run`、`agent_get_pending_run`、`agent_list_tools`、`agent_tool_policy_update`。`request_user_input` 接受标题、问题、2–4 个带稳定语义 ID 的互斥选项、至多一个推荐项和 `allowOther`；它不进入危险操作审批，而是把运行置为 `awaiting_input` 并发出 `inputRequired`。`agent_respond_input` 使用 `runId`、`toolCallId` 与内容哈希绑定当前请求，接受 `answered`、`skipped` 或 `cancelled`，防止旧卡片重复或错位提交。工具调用预算以 12 个模型回合为一批；一批耗尽后运行进入可恢复的 `awaiting_input`，展示“继续执行”和“终止任务”。继续会保留上下文并追加 12 个工具回合，终止、跳过或取消选择会结束当前运行；该选择与普通输入请求一样持久化，应用重启后仍可回答。`agent_list_tools` 是设置页“工具与权限”和对话页能力摘要的权威来源，返回技术名称、说明、`defaultRequireApproval` 和当前生效的 `requireApproval`。`agent_tool_policy_update` 接受 `toolNames` 与 `requireApproval`：布尔值用于单个或按业务分类批量覆盖，`null` 删除覆盖并恢复系统默认；未知工具会使整批请求失败。笔记工具覆盖 `create_note`、`create_note_in_knowledge_base`、`move_note_to_knowledge_base`、`search_notes`、`get_note`、`update_note` 和 `delete_note`。`create_note` 未指定笔记本时归入“未分类”；`create_note_in_knowledge_base` 同时创建笔记和 `.note` 引用；`move_note_to_knowledge_base` 只移动唯一引用，不改变正文或笔记本归属；更新只生成待审阅提案，删除只移入最近删除。知识库工具另覆盖 `create_knowledge_base`、`list_knowledge_bases`、`retrieve_knowledge`、`update_knowledge_base` 和 `delete_knowledge_base`；删除会移除数据库记录与索引，并将 Tiny Note 受管目录移入系统回收站。`list_knowledge_bases` 返回名称、分类、描述以及 indexed/failed/unsupported 文件统计。流事件包括 `started`、`textDelta`、`reasoningDelta`、`toolCall`、`approvalRequired`、`inputRequired`、`toolResult`、`sources`、`editProposal`、`completed`、`cancelled` 和 `error`。
+docs\03-architecture\api-contracts.md:21:上下文与索引：`context_search`、`search_index_status/rebuild/retry_failed`。AI 请求可携带 `mode`、结构化 `references`、`scope`、`targetNoteId`、`selection` 和 `autoRetrieve`；流事件增加 `sources` 与 `editProposal`，旧事件保持兼容。
+docs\03-architecture\api-contracts.md:29:工作区命令：`workspace_export` 返回 `format=tiny-note-workspace`、`version=3` 的可迁移备份，包含 `tags`、`noteTags` 和笔记本 `parentId`；`workspace_import` 接受 v1/v2/v3 备份和 `replaceExisting=true`，旧版本的笔记标签数组会规范化迁移。只在明确确认后执行全量替换，并重建知识库文件索引。备份不包含模型 API Key。
+docs\05-operations\build.md:44:3. 本地运行 `npm run release:check`，确认版本详情、日期和索引全部一致。
+src\views\HomeView.vue:82:  sessionStorage.setItem('tiny-note-chat-pending', JSON.stringify({ message, references: references.value, modelProfileId: selectedModel.value?.id || null, thinkingMode: thinkingMode.value, mode: chatMode.value }))
+src\views\HomeView.vue:160:    const text = sessionStorage.getItem('tiny-note-assistant-draft')
+src\views\HomeView.vue:162:    sessionStorage.removeItem('tiny-note-assistant-draft')
+src\views\HomeView.vue:265:        <button v-for="([label, description, icon, path], index) in copy.features" :key="label" class="home-feature" type="button" @click="open(path)">
+src\views\HomeView.vue:266:          <span class="home-feature-icon" :class="`home-feature-color-${index + 1}`"><component :is="icon" :size="24" :stroke-width="1.7" /></span>
+src-tauri/src\agent.rs:305:        CREATE INDEX IF NOT EXISTS idx_agent_runs_conversation ON agent_runs(conversation_id,started_at DESC);
+src-tauri/src\agent.rs:320:        CREATE INDEX IF NOT EXISTS idx_agent_steps_run ON agent_steps(run_id,sequence);
+src-tauri/src\agent.rs:351:        .query_row("PRAGMA foreign_keys", [], |row| row.get(0))
+src-tauri/src\agent.rs:354:        conn.execute_batch("PRAGMA foreign_keys=OFF;")
+src-tauri/src\agent.rs:375:         CREATE INDEX idx_agent_runs_conversation ON agent_runs(conversation_id,started_at DESC);
+src-tauri/src\agent.rs:379:        let _ = conn.execute_batch("PRAGMA foreign_keys=ON;");
+src-tauri/src\agent.rs:391:        .prepare(&format!("PRAGMA table_info({table})"))
+src-tauri/src\agent.rs:655:                "description": "删除指定知识库的记录和索引，并将其受管目录移入系统回收站。",
+src-tauri/src\agent.rs:668:                "description": "列出 Tiny Note 中现有的全部知识库，返回名称、分类、描述和文件索引状态。用户询问有哪些知识库、知识库目录或资料库概况时使用。",
+src-tauri/src\agent.rs:708:                "name": "retrieve_knowledge",
+src-tauri/src\agent.rs:845:            description: "列出现有知识库及索引概况",
+src-tauri/src\agent.rs:862:            name: "retrieve_knowledge",
+src-tauri/src\agent.rs:2235:            let index = value
+src-tauri/src\agent.rs:2236:                .get("output_index")
+src-tauri/src\agent.rs:2242:                let call = calls.entry(index).or_default();
+src-tauri/src\agent.rs:2255:                    .entry(index)
+src-tauri/src\agent.rs:2262:            let index = value.get("index").and_then(Value::as_u64).unwrap_or(0) as usize;
+src-tauri/src\agent.rs:2266:                let call = calls.entry(index).or_default();
+src-tauri/src\agent.rs:2280:                calls.entry(index).or_default().arguments.push_str(
+src-tauri/src\agent.rs:2346:            let index = item.get("index").and_then(Value::as_u64).unwrap_or(0) as usize;
+src-tauri/src\agent.rs:2347:            let call = calls.entry(index).or_default();
+src-tauri/src\agent.rs:2348:            if let Some(fragment) = item.get("id").and_then(Value::as_str) {
+src-tauri/src\agent.rs:2349:                call.id.push_str(fragment);
+src-tauri/src\agent.rs:2351:            if let Some(fragment) = item.pointer("/function/name").and_then(Value::as_str) {
+src-tauri/src\agent.rs:2352:                call.name.push_str(fragment);
+src-tauri/src\agent.rs:2354:            if let Some(fragment) = item.pointer("/function/arguments").and_then(Value::as_str) {
+src-tauri/src\agent.rs:2355:                call.arguments.push_str(fragment);
+src-tauri/src\agent.rs:2409:                            COALESCE(SUM(CASE WHEN d.status='indexed' THEN 1 ELSE 0 END),0),
+src-tauri/src\agent.rs:2413:                     LEFT JOIN search_documents d ON d.source_type='file' AND d.knowledge_base_id=k.id
+src-tauri/src\agent.rs:2426:                        "indexedFiles": row.get::<_, i64>(5)?,
+src-tauri/src\agent.rs:2507:            transaction.execute("DELETE FROM search_documents WHERE knowledge_base_id=?1", params![id]).map_err(|_| "删除知识库索引失败".to_string())?;
+src-tauri/src\agent.rs:2552:        "retrieve_knowledge" => {
+src-tauri/src\agent.rs:2563:                "sources": bundle.sources.iter().enumerate().map(|(index, source)| json!({
+src-tauri/src\agent.rs:2564:                    "citation": index + 1,
+src-tauri/src\agent.rs:2691:            search::index_note(&conn, &id).map_err(|_| "笔记已移入最近删除，但更新搜索索引失败".to_string())?;
+src-tauri/src\agent.rs:2745:                TagEnd::Paragraph
+src-tauri/src\agent.rs:2799:    if search::index_note(&conn, &id).is_err() {
+src-tauri/src\agent.rs:2801:        return Err("创建笔记失败：建立搜索索引失败".into());
+src-tauri/src\agent.rs:2810:        let _ = search::index_note(&conn, id);
+src-tauri/src\agent.rs:3133:    let skills = agent_skills::skill_index_for_prompt(state)?;
+src-tauri/src\agent.rs:3137:         3. 用户询问有哪些知识库、知识库目录或资料库概况时，先调用 list_knowledge_bases；需要资料正文时调用 retrieve_knowledge。\n4. 管理笔记或知识库时读取对应技能，严格按工具与实体 ID 的对应关系执行；名称不唯一时不要猜测目标。\n5. 清楚区分检索事实与自己的推断。\n6. 工具是否暂停等待审批由用户的工具权限设置决定；无论是否审批，只有工具返回成功后才能声称操作完成。\n\
+src-tauri/src\agent.rs:3138:         7. 当任务存在会显著影响结果且无法从上下文可靠推断的 2-4 个互斥选项时，使用 request_user_input；选项使用稳定语义 ID、简短标签和必要的取舍说明，最多标记一个推荐项。能安全采用合理默认值时不要打断用户，也不要再用普通文本模拟 A/B 选择。\n8. create_note 未指定笔记本时默认归入“未分类”，并显示在“全部笔记”中。create_note_in_knowledge_base 会额外建立知识库引用；move_note_to_knowledge_base 只移动引用，不改变笔记正文或笔记本归属。\n9. update_note 只生成待审阅提案，不代表修改已经应用；delete_note 只移入最近删除。\n10. 删除知识库会删除数据库记录和索引，并把受管目录移入系统回收站；不要描述成仍可在 Tiny Note 内直接恢复。\n11. 除受管的 .note 引用外，所有生成文件只能写入 SANDBOX。\n12. 发现与任务相关的技能时，先用 read_skill 读取完整指令并遵循；不要为无关任务读取技能。\n13. 需要外部能力时先用 list_mcp_tools 查找；调用 call_mcp_tool 是否审批遵循用户工具设置。\n14. 仅当任务可被清晰隔离且提供了足够上下文时使用 delegate_task；它不拥有工具。\n15. 需要可靠的纯计算或数据转换时可使用 run_sandbox_script；它没有系统 I/O 权限。\n16. 用简体中文回答。\n17. 工具没有结果时直接说明。\n\n## 可用技能\n{skills}\n\n## 用户管理的记忆文件\n\n{memories}"
+src-tauri/src\agent.rs:3523:    fn parses_fragmented_tool_calls() {
+src-tauri/src\agent.rs:3527:        parse_stream_line("data: {\"choices\":[{\"delta\":{\"tool_calls\":[{\"index\":0,\"id\":\"call_1\",\"function\":{\"name\":\"search_notes\",\"arguments\":\"{\\\"query\\\":\\\"\"}}]}}]}", &mut content, &mut calls, &mut usage, None, "req");
+src-tauri/src\agent.rs:3528:        parse_stream_line("data: {\"choices\":[{\"delta\":{\"tool_calls\":[{\"index\":0,\"function\":{\"arguments\":\"项目\\\"}\"}}]}}]}", &mut content, &mut calls, &mut usage, None, "req");
+src-tauri/src\agent.rs:3592:        parse_endpoint_stream_line(model_endpoint::EndpointType::OpenAiResponses, "data: {\"type\":\"response.output_item.added\",\"output_index\":0,\"item\":{\"type\":\"function_call\",\"call_id\":\"call-r\",\"name\":\"get_note\"}}", &mut content, &mut calls, &mut usage, None, "req");
+src-tauri/src\agent.rs:3593:        parse_endpoint_stream_line(model_endpoint::EndpointType::OpenAiResponses, "data: {\"type\":\"response.function_call_arguments.delta\",\"output_index\":0,\"delta\":\"{\\\"id\\\":\\\"n1\\\"}\"}", &mut content, &mut calls, &mut usage, None, "req");
+src-tauri/src\agent.rs:3598:        parse_endpoint_stream_line(model_endpoint::EndpointType::AnthropicMessages, "data: {\"type\":\"content_block_start\",\"index\":1,\"content_block\":{\"type\":\"tool_use\",\"id\":\"call-a\",\"name\":\"search_notes\"}}", &mut content, &mut calls, &mut usage, None, "req");
+src-tauri/src\agent.rs:3599:        parse_endpoint_stream_line(model_endpoint::EndpointType::AnthropicMessages, "data: {\"type\":\"content_block_delta\",\"index\":1,\"delta\":{\"type\":\"input_json_delta\",\"partial_json\":\"{\\\"query\\\":\\\"项目\\\"}\"}}", &mut content, &mut calls, &mut usage, None, "req");
+src-tauri/src\agent.rs:3657:                "INSERT INTO search_documents(id,source_type,source_id,knowledge_base_id,relative_path,title,updated_at,status,error) VALUES('file:kb-1:guide.md','file','kb-1:guide.md','kb-1','guide.md','guide.md',?1,'indexed','')",
+src-tauri/src\agent.rs:3674:        assert_eq!(output["knowledgeBases"][0]["indexedFiles"], 1);
+src-tauri/src\agent.rs:3920:    fn approved_create_note_writes_safe_content_and_index() {
+src-tauri/src\agent.rs:3942:        let (notebook_id, html, text, markdown, indexed): (Option<String>, String, String, String, i64) = conn.query_row("SELECT n.notebook_id,n.content_html,n.content_text,n.content_markdown,(SELECT COUNT(*) FROM search_documents d WHERE d.source_id=n.id) FROM notes n WHERE n.id=?1", params![id], |row| Ok((row.get(0)?,row.get(1)?,row.get(2)?,row.get(3)?,row.get(4)?))).unwrap();
+src-tauri/src\agent.rs:3955:        assert_eq!(indexed, 1);
+src-tauri/src\agent.rs:4090:            "retrieve_knowledge",
+src-tauri/src\lib.rs:402:    pub index_status: Option<String>,
+src-tauri/src\lib.rs:856:    conn.execute_batch("PRAGMA foreign_keys = ON;
+src-tauri/src\lib.rs:859:      CREATE INDEX IF NOT EXISTS idx_notes_deleted_updated ON notes(deleted_at, updated_at);
+src-tauri/src\lib.rs:864:      CREATE INDEX IF NOT EXISTS idx_usage_records_ts ON usage_records(ts);
+src-tauri/src\lib.rs:866:      CREATE INDEX IF NOT EXISTS idx_chat_conversations_updated ON chat_conversations(updated_at DESC);
+src-tauri/src\lib.rs:868:      CREATE INDEX IF NOT EXISTS idx_chat_messages_conversation ON chat_messages(conversation_id, created_at);
+src-tauri/src\lib.rs:873:            .prepare("PRAGMA table_info(chat_conversations)")
+src-tauri/src\lib.rs:894:            .prepare("PRAGMA table_info(model_profiles)")
+src-tauri/src\lib.rs:951:            .prepare("PRAGMA table_info(model_profiles)")
+src-tauri/src\lib.rs:980:            .prepare("PRAGMA table_info(usage_records)")
+src-tauri/src\lib.rs:999:            .prepare("PRAGMA table_info(chat_messages)")
+src-tauri/src\lib.rs:1010:            .prepare("PRAGMA table_info(notes)")
+src-tauri/src\lib.rs:1021:            .prepare("PRAGMA table_info(notebooks)")
+src-tauri/src\lib.rs:1069:         CREATE INDEX IF NOT EXISTS idx_note_tags_tag ON note_tags(tag_id, note_id);",
+src-tauri/src\lib.rs:1120:        "CREATE INDEX IF NOT EXISTS idx_notes_pinned_updated ON notes(is_pinned, updated_at DESC);
+src-tauri/src\lib.rs:1132:         CREATE INDEX IF NOT EXISTS idx_note_links_target ON note_links(target_note_id);
+src-tauri/src\lib.rs:1181:        "CREATE INDEX IF NOT EXISTS idx_notes_knowledge_base ON notes(knowledge_base_id, deleted_at, updated_at)",
+src-tauri/src\lib.rs:1204:                .prepare(&format!("PRAGMA table_info({table})"))
+src-tauri/src\lib.rs:2688:        search::index_note(&conn, &note_id)?;
+src-tauri/src\lib.rs:2792:        search::index_note(&conn, &id)?;
+src-tauri/src\lib.rs:2818:        search::index_note(&conn, &id)?;
+src-tauri/src\lib.rs:2843:            search::index_note(&conn, &id)?;
+src-tauri/src\lib.rs:2869:        search::index_note(&conn, &new_id)?;
+src-tauri/src\lib.rs:2954:        search::index_note(&conn, &id)?;
+src-tauri/src\lib.rs:2966:            conn.execute("DELETE FROM search_documents WHERE source_type='note' AND source_id NOT IN (SELECT id FROM notes)", []).map_err(AppError::db)?;
+src-tauri/src\lib.rs:2980:            "DELETE FROM search_documents WHERE id=?1",
+src-tauri/src\lib.rs:3574:            "DELETE FROM search_documents WHERE knowledge_base_id=?1",
+src-tauri/src\lib.rs:3629:            let index_status = if meta.is_file() {
+src-tauri/src\lib.rs:3635:                    "SELECT status FROM search_documents WHERE id=?1",
+src-tauri/src\lib.rs:3652:                index_status,
+src-tauri/src\lib.rs:3705:        let mut index = 2;
+src-tauri/src\lib.rs:3707:            let candidate = parent.join(format!("{stem} ({index}){ext}"));
+src-tauri/src\lib.rs:3711:            index += 1;
+src-tauri/src\lib.rs:3728:        search::index_library_file(state, knowledge_base_id, &root, &final_path)?;
+src-tauri/src\lib.rs:3747:            index_status: Some("pending".into()),
+src-tauri/src\lib.rs:3855:        search::reindex_library_path(&state, &knowledge_base_id, &root, &relative_path)?;
+src-tauri/src\lib.rs:3861:        search::reindex_library_path(&state, &knowledge_base_id, &root, &new_relative)?;
+src-tauri/src\lib.rs:3874:        search::reindex_library_path(&state, &knowledge_base_id, &root, &relative_path)?;
+src-tauri/src\lib.rs:3924:                content: "该文件已保存，但当前版本暂不提供预览和全文索引。".into(),
+src-tauri/src\lib.rs:4011:    pub fn search_index_status(
+src-tauri/src\lib.rs:4013:    ) -> Result<search::IndexStatusDto, AppError> {
+src-tauri/src\lib.rs:4014:        search::index_status(&state)
+src-tauri/src\lib.rs:4018:    pub fn search_index_rebuild(
+src-tauri/src\lib.rs:4020:    ) -> Result<search::IndexStatusDto, AppError> {
+src-tauri/src\lib.rs:4025:    pub fn search_index_retry_failed(
+src-tauri/src\lib.rs:4027:    ) -> Result<search::IndexStatusDto, AppError> {
+src-tauri/src\lib.rs:4130:        search::index_note(&conn, &proposal.note_id)?;
+src-tauri/src\lib.rs:4196:        search::index_note(&conn, &revision.note_id)?;
+src-tauri/src\lib.rs:5277:            .map(|(index, source)| format!("[{}] {}\n{}", index + 1, source.title, source.content))
+src-tauri/src\lib.rs:5799:            commands::search_index_status,
+src-tauri/src\lib.rs:5800:            commands::search_index_rebuild,
+src-tauri/src\lib.rs:5801:            commands::search_index_retry_failed,
+src-tauri/src\lib.rs:5979:        search::index_note(&conn, "local-note").unwrap();
+src-tauri/src\lib.rs:5980:        search::index_note(&conn, "external-note").unwrap();
+src-tauri/src\lib.rs:5987:                "SELECT COUNT(*) FROM search_documents WHERE source_id='external-note'",
+src-tauri/src\lib.rs:6185:                        "SELECT COUNT(*) FROM pragma_table_info('{table}') WHERE name='content_markdown'"
+src-tauri/src\lib.rs:6195:                "SELECT COUNT(*) FROM pragma_table_info('notes') WHERE name='is_pinned'",
+src-tauri/src\lib.rs:6203:                "SELECT COUNT(*) FROM pragma_table_info('notes') WHERE name='tags_json'",
+src-tauri/src\lib.rs:6265:                "SELECT COUNT(*) FROM pragma_table_info('notes') WHERE name='tags_json'",
+src-tauri/src\lib.rs:6381:                "SELECT COUNT(*) FROM pragma_table_info('usage_records') WHERE name='conversation_id'",
+src-tauri/src\lib.rs:6402:                "SELECT COUNT(*) FROM pragma_table_info('chat_conversations') WHERE name='mode'",
+src-tauri/src\lib.rs:6409:                "SELECT COUNT(*) FROM pragma_table_info('chat_messages') WHERE name='agent_run_id'",
+src-tauri/src\lib.rs:6527:    fn search_index_matches_chinese_content() {
+src-tauri/src\lib.rs:6532:        search::index_note(&conn, "n1").unwrap();
+src-tauri/src\lib.rs:6567:            "search_documents",
+src-tauri/src\lib.rs:6568:            "search_chunks",
+src-tauri/src\agent_mcp.rs:335:    let index = servers
+src-tauri/src\agent_mcp.rs:339:    match discover(&servers[index]) {
+src-tauri/src\agent_mcp.rs:341:            servers[index].cached_tools = tools;
+src-tauri/src\agent_mcp.rs:342:            servers[index].last_error = None;
+src-tauri/src\agent_mcp.rs:345:            servers[index].last_error = Some(message.clone());
+src-tauri/src\agent_mcp.rs:350:    servers[index].updated_at = now();
+src-tauri/src\agent_mcp.rs:351:    let result = servers[index].clone();
+src-tauri/src\image_generation.rs:365:         CREATE INDEX IF NOT EXISTS idx_image_generations_created ON image_generations(created_at DESC);
+src-tauri/src\image_generation.rs:376:         CREATE INDEX IF NOT EXISTS idx_image_assets_generation ON image_assets(generation_id);
+src-tauri/src\image_generation.rs:381:        .prepare("PRAGMA table_info(image_generations)")
+src-tauri/src\image_generation.rs:1135:            .prepare("PRAGMA table_info(image_generations)")
+src-tauri/src\background_tasks.rs:109:         CREATE INDEX IF NOT EXISTS idx_background_tasks_status_created ON background_tasks(status,created_at DESC);
+src-tauri/src\background_tasks.rs:110:         CREATE INDEX IF NOT EXISTS idx_background_tasks_resource ON background_tasks(resource_key,status);
+src-tauri/src\background_tasks.rs:111:         CREATE INDEX IF NOT EXISTS idx_background_tasks_conversation ON background_tasks(conversation_id,created_at DESC);",
+src-tauri/src\background_tasks.rs:152:         DROP INDEX IF EXISTS idx_background_tasks_status_created;
+src-tauri/src\background_tasks.rs:153:         DROP INDEX IF EXISTS idx_background_tasks_resource;
+src-tauri/src\background_tasks.rs:154:         DROP INDEX IF EXISTS idx_background_tasks_conversation;
+src-tauri/src\background_tasks.rs:180:         CREATE INDEX IF NOT EXISTS idx_background_tasks_status_created ON background_tasks(status,created_at DESC);
+src-tauri/src\background_tasks.rs:181:         CREATE INDEX IF NOT EXISTS idx_background_tasks_resource ON background_tasks(resource_key,status);
+src-tauri/src\background_tasks.rs:182:         CREATE INDEX IF NOT EXISTS idx_background_tasks_conversation ON background_tasks(conversation_id,created_at DESC);
+src-tauri/src\background_tasks.rs:533:        conn.execute_batch("PRAGMA foreign_keys=ON;").unwrap();
+src-tauri/src\background_tasks.rs:553:             CREATE INDEX idx_background_tasks_status_created ON background_tasks(status,created_at DESC);
+src-tauri/src\background_tasks.rs:554:             CREATE INDEX idx_background_tasks_resource ON background_tasks(resource_key,status);
+src-tauri/src\background_tasks.rs:555:             CREATE INDEX idx_background_tasks_conversation ON background_tasks(conversation_id,created_at DESC);
+src\views\TagsView.vue:94:.tags-sidebar{flex:0 0 auto;min-width:0;padding:12px;border-right:1px solid var(--border-color,#e6e6e6);background:var(--bg-primary,#fff);overflow:auto;transition:width .25s cubic-bezier(.4,0,.2,1)}.tags-sidebar.is-resizing{transition:none}.tags-search{height:32px;display:flex;align-items:center;gap:8px;padding:0 10px;border:1px solid var(--border-color,#dde1e6);border-radius:6px;background:var(--bg-secondary,#fff)}.tags-search input{min-width:0;flex:1;border:0;outline:0;background:transparent;color:var(--text-primary);font:inherit}.tags-heading{display:flex;align-items:center;justify-content:space-between;margin:16px 8px 8px}.tags-heading strong{font-size:13px}.tags-heading button,.tag-actions button{border:0;background:transparent;display:inline-flex;align-items:center;gap:5px;height:28px;padding:0 8px;border-radius:4px}.tags-heading button:hover,.tag-actions button:hover{background:var(--bg-hover,#eceef1)}.tag-row{width:100%;height:32px;border:0;background:transparent;display:flex;align-items:center;gap:8px;padding:0 9px;border-radius:4px;text-align:left}.tag-row:hover{background:var(--bg-hover,#f0f1f3)}.tag-row.active{background:var(--accent-light,#e9edff);color:var(--accent-color,#315efb)}.tag-row span{flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.tag-row small{color:var(--text-secondary,#858b94)}.tags-main{min-width:0;flex:1;overflow:auto;padding:44px 42px}.tags-main-header{display:flex;align-items:flex-end;justify-content:space-between;padding-bottom:20px;border-bottom:1px solid var(--border-color,#ececec)}.eyebrow{font-size:12px;color:var(--text-secondary,#7d838c)}.tags-main h1{font-size:28px;margin:5px 0 0}.tag-actions{display:flex;gap:6px}.tag-actions .danger{color:#c73c3c}.tagged-note-row{width:100%;border:0;border-bottom:1px solid var(--border-color,#efefef);background:transparent;display:flex;align-items:center;gap:12px;padding:14px 8px;text-align:left}.tagged-note-row:hover{background:var(--bg-hover,#fafafa)}.tagged-note-copy{min-width:0;flex:1;display:grid;gap:4px}.tagged-note-copy strong{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.tagged-note-copy small,.tagged-note-row time{font-size:12px;color:var(--text-secondary,#818792)}.remove-link{opacity:0;color:#bc3a3a}.tagged-note-row:hover .remove-link{opacity:1}.tags-empty{display:grid;place-items:center;gap:7px;color:var(--text-tertiary,#9ba1aa);padding:100px 20px}.tags-empty p{margin:4px 0 0;color:var(--text-secondary,#5f6670)}.tag-picker-backdrop{position:fixed;inset:0;z-index:200;background:rgba(25,28,34,.28);display:grid;place-items:center}.tag-picker{width:min(520px,calc(100vw - 40px));max-height:70vh;background:var(--bg-primary,#fff);border:1px solid var(--border-color,#ddd);border-radius:8px;box-shadow:0 18px 50px rgba(0,0,0,.16);display:grid;grid-template-rows:auto auto minmax(0,1fr) auto;gap:14px;padding:18px}.tag-picker header,.tag-picker footer{display:flex;align-items:center;justify-content:space-between}.tag-picker h2{margin:0 0 3px;font-size:18px}.tag-picker header button{border:0;background:transparent;font-size:22px}.tag-picker-list{overflow:auto;border-block:1px solid var(--border-color,#eee)}.tag-picker-list label{display:flex;gap:10px;padding:11px 5px;border-bottom:1px solid var(--border-color,#f1f1f1)}.tag-picker-list label span{display:grid;gap:3px}.tag-picker-list small{color:var(--text-secondary,#858b94)}.tag-picker footer{justify-content:flex-end;gap:8px}.tag-picker footer button{height:32px;padding:0 14px;border:1px solid var(--border-color,#d9d9d9);background:var(--bg-primary,#fff)}.tag-picker footer .primary{background:var(--accent-color,#315efb);color:#fff;border-color:var(--accent-color,#315efb)}.tag-picker footer .primary:disabled{opacity:.45}@media(max-width:760px){.tags-sidebar{width:280px!important}.tags-main{padding:28px 20px}}
+src\views\LibraryView.vue:136:    <section class="library-main kb-main" :class="{ 'is-drop-target': dropActive }" @dragover.prevent="dropActive = true" @dragleave.prevent="dropActive = false" @drop.prevent="handleDrop">
+src\views\LibraryView.vue:170:        <article v-for="note in knowledgeNotes" :key="`note:${note.id}`" class="file-card note-file-card" tabindex="0" @dblclick="openNote(note)" @keydown.enter="openNote(note)">
+src\views\LibraryView.vue:175:        <article v-for="entry in entries" :key="entry.relativePath" class="file-card" tabindex="0" @dblclick="openEntry(entry)" @keydown.enter="openEntry(entry)">
+src\views\LibraryView.vue:177:          <div class="file-info"><strong>{{ entry.name }}</strong><small>{{ entry.kind === 'folder' ? '文件夹' : `${Math.max(1, Math.round(entry.size / 1024))} KB` }}<span v-if="entry.kind === 'file'" class="file-index-status" :class="`is-${entry.indexStatus || 'pending'}`"> · {{ ({ indexed: '已索引', failed: '索引失败', unsupported: '不支持', pending: '待索引' })[entry.indexStatus || 'pending'] }}</span></small><em v-if="query && entry.relativePath !== entry.name">{{ entry.relativePath }}</em></div>
+src\stores\tasks.js:23:function readTaskIds() { try { const value = JSON.parse(localStorage.getItem('tiny-note-read-tasks') || '[]'); return Array.isArray(value) ? value : [] } catch { return [] } }
+src\stores\tasks.js:41:      const index = this.tasks.findIndex(item => item.id === task.id)
+src\stores\tasks.js:42:      if (index >= 0) this.tasks[index] = { ...this.tasks[index], ...task }
+src\stores\tasks.js:201:      localStorage.setItem('tiny-note-read-tasks', JSON.stringify(this.readTaskIds))
+docs\01-requirements\story-map.md:15:日程、自动化、账号、云同步、分享、跨设备协作和 Friday 数据迁移。RAG、知识库问答和 Agent 已有本地实验入口，但仍不作为稳定版承诺能力。
+src\views\ChatView.vue:166:  if (localStorage.getItem(consentKey) === 'granted') return true
+src\views\ChatView.vue:168:  if (allowed) localStorage.setItem(consentKey, 'granted')
+src\views\ChatView.vue:182:async function refreshDataAfterAgent() {
+src\views\ChatView.vue:282:      if (currentMode.value === 'agent') await refreshDataAfterAgent()
+src\views\ChatView.vue:541:    pending = JSON.parse(sessionStorage.getItem('tiny-note-chat-pending') || 'null')
+src\views\ChatView.vue:542:    sessionStorage.removeItem('tiny-note-chat-pending')
+src\views\ChatView.vue:571:  return ({ create_knowledge_base: '创建知识库', list_knowledge_bases: '读取知识库目录', update_knowledge_base: '更新知识库', delete_knowledge_base: '删除知识库', retrieve_knowledge: '检索知识库', search_notes: '搜索笔记', get_note: '读取笔记', get_current_time: '获取当前时间', create_note: '创建笔记', update_note: '生成修改提案', delete_note: '删除笔记', update_memory: '更新记忆', list_agent_files: '浏览工作区', read_agent_file: '读取工作区文件', write_agent_file: '写入工作区文件', read_skill: '读取技能', write_skill: '更新技能', list_mcp_tools: '查找 MCP 工具', call_mcp_tool: '调用 MCP 工具', delegate_task: '委派子 Agent', run_sandbox_script: '运行隔离脚本' })[name] || name || '调用工具'
+src\views\ChatView.vue:605:      <article v-for="(message, index) in messages" :key="`${index}-${message.role}`" class="chat-page-message" :class="`is-${message.role}`">
+src\views\ChatView.vue:619:        <div v-if="message.sources?.length" class="chat-source-list"><span v-for="(source, sourceIndex) in message.sources" :key="source.id" class="chat-source-chip" :title="source.snippet">[{{ sourceIndex + 1 }}] {{ source.title }}<small v-if="source.truncated">已截取</small></span></div>
+src\stores\library.js:36:    breadcrumbs: s => s.path ? s.path.split('/').filter(Boolean).reduce((items, name, index, names) => {
+src\stores\library.js:37:      items.push({ name, path: names.slice(0, index + 1).join('/') })
+src\editor\noteExtensions.js:9:import Paragraph from '@tiptap/extension-paragraph'
+src\editor\noteExtensions.js:76:  if (node.type === 'paragraph') {
+src\editor\noteExtensions.js:81:  if (node.type === 'smallParagraph') {
+src\editor\noteExtensions.js:119:const MarkdownParagraph = Paragraph.extend({
+src\editor\noteExtensions.js:123:    return Paragraph.config.renderMarkdown(node, helpers, context)
+src\editor\noteExtensions.js:174:        const blockIndex = $from.index(0)
+src\editor\noteExtensions.js:175:        const nextBlock = blockIndex + 1 < doc.childCount ? doc.child(blockIndex + 1) : null
+src\editor\noteExtensions.js:176:        const canReuseEmptyParagraph = selection.empty
+src\editor\noteExtensions.js:178:          && nextBlock?.type.name === 'paragraph'
+src\editor\noteExtensions.js:181:        if (canReuseEmptyParagraph) {
+src\editor\noteExtensions.js:185:        return this.editor.chain().splitBlock().setNode('paragraph').run()
+src\editor\noteExtensions.js:193:const SmallParagraph = Node.create({
+src\editor\noteExtensions.js:194:  name: 'smallParagraph',
+src\editor\noteExtensions.js:249:      paragraph: false,
+src\editor\noteExtensions.js:253:    MarkdownParagraph,
+src\editor\noteExtensions.js:256:    SmallParagraph,
+src\editor\noteExtensions.js:272:    TextAlign.configure({ types: ['noteTitle', 'smallParagraph', 'heading', 'paragraph'] }),
+src\main.js:13:const i18n = createI18n({ legacy: false, locale: localStorage.getItem('tiny-note-language') || 'zh-CN', fallbackLocale: 'en', messages })
+src\main.js:21:  localStorage.setItem('tiny-note-language', appStore.settings.language)
+src\stores\notes.js:85:      const index = this.notes.findIndex(item => item.id === note.id)
+src\stores\notes.js:86:      if (index >= 0) this.notes[index] = note
+docs\01-requirements\prd.md:11:4. API Key 写入本地 SQLite，不写入前端 localStorage 或日志。
+docs\01-requirements\prd.md:16:9. 从 Windows“打开方式”或 macOS Finder 打开的 Markdown 默认进入源码编辑并明确标记为外部文件，只绑定并保存回原文件，不进入普通笔记树、搜索、标签、双向链接、知识库索引或工作区备份；左侧“外部来源”单独保留打开历史，用户可重新打开或清空记录，清空不删除磁盘源文件。用户点击“导入到笔记”后创建独立的普通笔记副本并立即切换到该副本。
+src\services\tauri.js:4:function browserState() { try { return JSON.parse(localStorage.getItem(key) || '{}') } catch { return {} } }
+src\services\tauri.js:5:function saveBrowserState(state) { localStorage.setItem(key, JSON.stringify(state)) }
+src\services\tauri.js:7:function parentPath(value = '') { const path = normalizeRelativePath(value); const index = path.lastIndexOf('/'); return index < 0 ? '' : path.slice(0, index) }
+src\services\tauri.js:16:  { name: 'knowledge-research', description: '检索和管理 Tiny Note 知识库，并在知识库中新建或移动笔记。', fileName: 'knowledge-research/SKILL.md', builtin: true, content: '---\nname: knowledge-research\ndescription: 检索和管理 Tiny Note 知识库，并在知识库中新建或移动笔记。\n---\n\n# 知识库管理与调研\n\n知识库保存文件，笔记通过 `knowledgeBaseId` 直接归属知识库。\n\n- 在知识库新建笔记：`create_note_in_knowledge_base`\n- 移动到其他知识库：`move_note_to_knowledge_base`\n- 查看目录：`list_knowledge_bases`\n- 检索正文：`retrieve_knowledge`\n\n先确认唯一的笔记 ID、来源知识库 ID 和目标知识库 ID。移动会更新笔记归属，不改变正文或笔记本归属。\n' },
+src\services\tauri.js:28:    '---\nname: knowledge-research\ndescription: 检索、创建、更新或删除 Tiny Note 知识库，并基于已索引资料生成可追溯答案。\n---\n\n# 知识库管理与调研\n\n## 工具对应关系\n\n- 新建：`create_knowledge_base`\n- 查看目录：`list_knowledge_bases`\n- 检索正文：`retrieve_knowledge`\n- 修改信息：`update_knowledge_base`\n- 删除：`delete_knowledge_base`\n\n更新或删除前先列出知识库并确认唯一 ID。删除成功表示记录和索引已删除，受管目录已移入系统回收站。当前 Agent 工具不直接修改知识库内的单个文件。\n'
+src\services\tauri.js:35:const browserAgentToolDefaults = [
+src\services\tauri.js:36:  ['list_knowledge_bases', '列出现有知识库及索引概况', false], ['get_current_time', '获取本机当前时间', false],
+src\services\tauri.js:40:  ['retrieve_knowledge', '检索笔记和文本知识库', false], ['list_agent_files', '浏览 Agent 工作区', false],
+src\services\tauri.js:47:function browserAgentTools(state) {
+src\services\tauri.js:49:  return browserAgentToolDefaults.map(([name, description, defaultRequireApproval]) => ({ name, description, defaultRequireApproval, requireApproval: Object.hasOwn(policies, name) ? policies[name] : defaultRequireApproval }))
+src\services\tauri.js:63:  return { name: entryName(file.relativePath), relativePath: file.relativePath, kind: file.kind, size: file.size || 0, modifiedAt: file.modifiedAt, extension: file.kind === 'file' ? (entryName(file.relativePath).split('.').pop() || '').toLowerCase() : null, indexStatus: file.kind === 'file' ? 'indexed' : null }
+src\services\tauri.js:115:  for (let index = 0; index < bytes.length; index += 1) binary += String.fromCharCode(bytes[index])
+src\services\tauri.js:293:      const dot = name.lastIndexOf('.')
+src\services\tauri.js:311:      const dot = name.lastIndexOf('.')
+src\services\tauri.js:354:    result = file ? extensionMime[extension] ? { title: entryName(target), kind: 'image', mimeType: extensionMime[extension], content: `data:${extensionMime[extension]};base64,${file.contentBase64 || ''}` } : ['pdf', 'epub'].includes(extension) ? { title: entryName(target), kind: 'unsupported', mimeType: 'application/octet-stream', content: '该文件已保存，但当前版本暂不提供预览和全文索引。' } : { title: entryName(target), kind, mimeType: kind === 'html' ? 'text/html' : 'text/plain', content: storedFileText(file) } : null
+src\services\tauri.js:362:  else if (command === 'search_index_status' || command === 'search_index_rebuild' || command === 'search_index_retry_failed') { const indexedNotes = state.notes.filter(note => !note.deletedAt && !note.externalPath); result = { documents: indexedNotes.length + state.libraryFiles.filter(file => file.kind === 'file').length, chunks: indexedNotes.length + state.libraryFiles.length, indexed: indexedNotes.length + state.libraryFiles.filter(file => file.kind === 'file').length, failed: 0, unsupported: 0 } }
+src\services\tauri.js:473:  else if (command === 'agent_list_tools') result = browserAgentTools(state)
+src\services\tauri.js:476:    const known = new Set(browserAgentToolDefaults.map(([name]) => name))
+src\services\tauri.js:482:    result = browserAgentTools(state)
+docs\01-requirements\business-rules.md:19:- 可搜索笔记标题/正文纯文本、知识库目录名/文件名和 `.note` 标题，不做全文语义索引。
+src\views\NotesView.vue:38:const contextKnowledgeOpen = ref(false)
+src\views\NotesView.vue:41:const contextKnowledgeAnchorRef = ref(null)
+src\views\NotesView.vue:42:const contextKnowledgeSubmenuRef = ref(null)
+src\views\NotesView.vue:43:const contextKnowledgeStyle = ref({ left: '0px', top: '0px' })
+src\views\NotesView.vue:45:let contextKnowledgeTimer = null
+src\views\NotesView.vue:263:  contextKnowledgeOpen.value = false
+src\views\NotesView.vue:266:  if (contextKnowledgeTimer) window.clearTimeout(contextKnowledgeTimer)
+src\views\NotesView.vue:268:  contextKnowledgeTimer = null
+src\views\NotesView.vue:274:  contextKnowledgeOpen.value = false
+src\views\NotesView.vue:324:  if (contextKnowledgeTimer) window.clearTimeout(contextKnowledgeTimer)
+src\views\NotesView.vue:325:  contextKnowledgeOpen.value = true
+src\views\NotesView.vue:330:  contextKnowledgeTimer = window.setTimeout(() => { contextKnowledgeOpen.value = false }, 180)
+src\views\NotesView.vue:333:  if (contextKnowledgeTimer) window.clearTimeout(contextKnowledgeTimer)
+src\views\NotesView.vue:334:  contextKnowledgeTimer = null
+src\views\NotesView.vue:337:  const anchor = contextKnowledgeAnchorRef.value
+src\views\NotesView.vue:338:  const submenu = contextKnowledgeSubmenuRef.value
+src\views\NotesView.vue:346:  contextKnowledgeStyle.value = { left: left + 'px', top: top + 'px' }
+src\views\NotesView.vue:348:async function addContextNoteToKnowledge(knowledgeBaseId) {
+src\views\NotesView.vue:363:    if (library.activeId) await addContextNoteToKnowledge(library.activeId)
+src\views\NotesView.vue:418:    .map((element, index) => ({ level: Number(element.tagName.slice(1)), text: element.textContent?.trim() || '', index }))
+src\views\NotesView.vue:425:function scrollToHeading(index) {
+src\views\NotesView.vue:435:  const target = headings[index]
+src\views\NotesView.vue:520:        <div ref="contextKnowledgeAnchorRef" class="note-context-submenu-anchor" @mouseenter="showKnowledgeSubmenu" @mouseleave="hideKnowledgeSubmenu">
+src\views\NotesView.vue:544:      <div v-if="contextKnowledgeOpen && contextMenu && contextNote" ref="contextKnowledgeSubmenuRef" class="note-context-submenu note-knowledge-submenu" :style="contextKnowledgeStyle" @mouseenter="cancelHideKnowledgeSubmenu" @mouseleave="hideKnowledgeSubmenu" @click.stop @contextmenu.prevent.stop>
+src\views\NotesView.vue:545:        <button class="note-context-create-item" @click="createKnowledgeBaseForContext"><Plus :size="14" />{{ t('newKnowledge') }}</button>
+src\views\NotesView.vue:550:            <button v-for="base in group.items" :key="base.id" @click="addContextNoteToKnowledge(base.id)"><BookOpen :size="14" />{{ base.name }}</button>
+src\views\NotesView.vue:553:        <span v-else class="note-context-empty">{{ t('noKnowledgeBases') }}</span>
+src\views\NotesView.vue:569:        <button v-for="heading in tocHeadings" :key="`${heading.index}-${heading.text}`" class="toc-item" :class="`toc-level-${heading.level}`" @click="scrollToHeading(heading.index)">
+src\views\SettingsView.vue:42:const indexStatus = ref(null)
+src\views\SettingsView.vue:43:const indexBusy = ref(false)
+src\views\SettingsView.vue:402:    for (const [index, option] of options.entries()) {
+src\views\SettingsView.vue:415:          isDefault: existing ? Boolean(existing.isDefault) : (editing ? false : models.value.length === 0 && index === 0),
+src\views\SettingsView.vue:474:    localStorage.removeItem(`tiny-note-context-consent:${model.id}`)
+src\views\SettingsView.vue:490:      localStorage.removeItem(`tiny-note-context-consent:${model.id}`)
+src\views\SettingsView.vue:561:async function refreshIndexStatus() { try { indexStatus.value = await invoke('search_index_status') } catch { indexStatus.value = null } }
+src\views\SettingsView.vue:562:async function rebuildSearchIndex() {
+src\views\SettingsView.vue:563:  indexBusy.value = true
+src\views\SettingsView.vue:564:  try { indexStatus.value = await invoke('search_index_rebuild') } finally { indexBusy.value = false }
+src\views\SettingsView.vue:605:  await refreshIndexStatus()
+src\views\SettingsView.vue:695:            <div class="settings-subheading">本地知识索引</div>
+src\views\SettingsView.vue:696:            <div class="settings-setting-row"><div class="settings-setting-copy"><strong>自动全文检索</strong><span>为笔记和文本类知识库文件建立本地索引，不需要 Embedding。</span></div><button type="button" class="settings-fetch-button" :disabled="indexBusy" @click="rebuildSearchIndex"><RefreshCw :size="14" :class="{ spinning: indexBusy }" />{{ indexBusy ? '重建中…' : '重建索引' }}</button></div>
+src\views\SettingsView.vue:697:            <p v-if="indexStatus" class="settings-inline-note">已索引 {{ indexStatus.indexed }} 个文档、{{ indexStatus.chunks }} 个片段；失败 {{ indexStatus.failed }}，不支持 {{ indexStatus.unsupported }}。</p>
+src\stores\app.js:5:  EDITOR_MODE_SHORTCUT_STORAGE_KEY,
+src\stores\app.js:15:    return normalizeShortcut(localStorage.getItem(EDITOR_MODE_SHORTCUT_STORAGE_KEY))
+src\stores\app.js:31:  localStorage.setItem('tiny-note-theme', resolved)
+src\stores\app.js:32:  localStorage.setItem('tiny-note-theme-setting', theme)
+src\stores\app.js:42:      localStorage.setItem('tiny-note-theme', next)
+src\stores\app.js:51:  const cached = localStorage.getItem('tiny-note-theme')
+src\stores\app.js:71:      try { localStorage.setItem(EDITOR_MODE_SHORTCUT_STORAGE_KEY, normalized) } catch { /* keep the in-memory preference */ }
+docs\01-requirements\acceptance\mvp.md:10:- Given 用户从系统打开 Markdown，When 编辑器显示该文件，Then 默认进入 Markdown 源码模式并显示“外部文件”提示、源文件名、“不会出现在笔记列表”说明和“导入到笔记”按钮；该文件只出现在独立的“外部来源”历史中，不出现在普通笔记树、搜索、标签、双向链接、知识库索引或工作区备份。
+src\utils\keyboardShortcut.js:2:export const EDITOR_MODE_SHORTCUT_STORAGE_KEY = 'tiny-note-editor-mode-shortcut'
+src\utils\keyboardShortcut.js:20:  const platform = globalThis.navigator.userAgentData?.platform || globalThis.navigator.platform || ''
+src\components\AgentInputCard.vue:12:const activeIndex = ref(0)
+src\components\AgentInputCard.vue:17:const shortcut = index => String.fromCharCode(65 + index)
+src\components\AgentInputCard.vue:48:  const shortcutIndex = key.charCodeAt(0) - 97
+src\components\AgentInputCard.vue:49:  if (key.length === 1 && shortcutIndex >= 0 && shortcutIndex < options.value.length) {
+src\components\AgentInputCard.vue:51:    answerOption(options.value[shortcutIndex])
+src\components\AgentInputCard.vue:56:    activeIndex.value = (activeIndex.value + 1) % options.value.length
+src\components\AgentInputCard.vue:59:    activeIndex.value = (activeIndex.value - 1 + options.value.length) % options.value.length
+src\components\AgentInputCard.vue:62:    answerOption(options.value[activeIndex.value])
+src\components\AgentInputCard.vue:87:    :tabindex="interactive ? 0 : undefined"
+src\components\AgentInputCard.vue:99:        v-for="(option, index) in options"
+src\components\AgentInputCard.vue:103:        :aria-checked="activeIndex === index"
+src\components\AgentInputCard.vue:104:        :class="{ 'is-active': activeIndex === index }"
+src\components\AgentInputCard.vue:106:        @focus="activeIndex = index"
+src\components\AgentInputCard.vue:107:        @mouseenter="activeIndex = index"
+src\components\AgentInputCard.vue:110:        <kbd>{{ shortcut(index) }}</kbd>
+src\styles.css:4:.window-shell { height:100vh; display:flex; flex-direction:column; background:var(--bg) }.topbar { height:48px; display:flex; align-items:center; border-bottom:1px solid var(--line); user-select:none; -webkit-app-region:drag }.brand,.window-actions,.tab-strip,.rail-item,.toolbar,.toolbar-actions,.filter-row,.notebooks-head,.setting-heading,.theme-options,.model-row,.model-form>div { display:flex; align-items:center }.brand { gap:9px; padding:0 18px; min-width:180px; font-size:13px; font-weight:650; letter-spacing:.01em }.brand-mark { width:24px; height:24px; border-radius:7px; display:grid; place-items:center; background:var(--text); color:var(--surface); font-size:10px; font-weight:800; letter-spacing:-.07em }.tab-strip { flex:1; height:100%; gap:3px; padding-top:5px; -webkit-app-region:no-drag }.tab { height:34px; padding:0 18px; color:var(--muted); border-radius:8px 8px 0 0; font-size:12px }.tab.active { background:var(--surface); color:var(--text); box-shadow:0 -1px var(--line) }.tab-plus { width:28px; height:28px; color:var(--muted); border-radius:7px }.tab-plus:hover,.window-actions button:hover { background:var(--surface-2) }.window-actions { gap:2px; padding:0 8px; -webkit-app-region:no-drag }.window-actions button { width:32px; height:30px; display:grid; place-items:center; border-radius:5px; color:var(--muted) }.window-actions .close:hover { color:#fff; background:#d75e4b }.app-body { flex:1; display:flex; min-height:0 }.rail { width:64px; display:flex; flex-direction:column; align-items:center; border-right:1px solid var(--line); padding:14px 8px; background:color-mix(in srgb,var(--surface) 54%,transparent) }.rail-add { display:grid; place-items:center; width:34px; height:34px; border-radius:10px; background:var(--accent); color:#fff; box-shadow:0 5px 14px #db704c40; margin-bottom:24px }.rail nav { display:flex; flex-direction:column; gap:7px; width:100% }.rail-item { position:relative; flex-direction:column; gap:4px; width:100%; padding:8px 2px; border-radius:9px; color:var(--muted); font-size:9px }.rail-item:hover { color:var(--text); background:var(--surface-2) }.rail-item.active { color:var(--accent); background:var(--accent-soft) }.content-wrap { flex:1; padding:16px; min-width:0; min-height:0 }.content-card { width:100%; height:100%; overflow:hidden; border:1px solid var(--line); border-radius:14px; background:var(--surface); box-shadow:var(--shadow) }
+src\styles.css:6:.secondary-button,.primary-button,.danger-button,.tool-button { display:inline-flex; align-items:center; gap:6px; border-radius:7px; padding:8px 12px; font-size:11px }.secondary-button,.tool-button { color:var(--text); background:var(--surface); border:1px solid var(--line) }.primary-button { color:#fff; background:var(--accent) }.danger-button { color:#b94c42; background:#fff0ef }.danger { color:#c4665b !important }.library-toolbar { height:67px; padding:0 25px; display:flex; align-items:center; justify-content:space-between; border-bottom:1px solid var(--line) }.breadcrumbs { font-size:13px; font-weight:650 }.breadcrumbs button { color:var(--text) }.breadcrumbs span { color:var(--muted); font-weight:450 }.toolbar-actions { gap:6px }.search-box.compact { width:170px; margin:0; height:30px }.tool-button { padding:6px 9px; color:var(--muted); font-size:10px }.file-grid { padding:26px; display:grid; grid-template-columns:repeat(auto-fill,minmax(165px,1fr)); gap:12px }.file-grid.list { display:flex; flex-direction:column; gap:3px }.file-card { position:relative; min-height:135px; display:flex; flex-direction:column; padding:16px; gap:12px; border:1px solid var(--line); border-radius:10px; background:var(--surface); transition:.16s ease }.file-card:hover { border-color:color-mix(in srgb,var(--accent) 50%,var(--line)); transform:translateY(-1px); box-shadow:0 5px 14px #0000000b }.list .file-card { min-height:58px; flex-direction:row; align-items:center; padding:10px 14px }.file-icon { width:39px; height:39px; display:grid; place-items:center; border-radius:10px; color:var(--blue); background:#edf4fb }.file-icon.folder { color:#d08c3c; background:#fff3de }.file-info { min-width:0; display:flex; flex-direction:column; gap:5px }.file-info strong { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; font-size:12px }.file-info small { color:var(--muted); font-size:10px }.file-menu,.file-trash { position:absolute; opacity:0; color:var(--muted); width:25px; height:25px; display:grid; place-items:center; border-radius:5px }.file-menu { right:10px; top:10px }.file-trash { right:10px; bottom:10px }.file-card:hover .file-menu,.file-card:hover .file-trash { opacity:1 }.file-menu:hover { color:var(--accent); background:var(--accent-soft) }.file-trash:hover { color:#c4665b; background:#fff0ef }.kb-section { padding:0 4px }.section-label { padding:12px 8px 6px; color:var(--muted); font-size:10px; font-weight:700; text-transform:uppercase; letter-spacing:.08em }.local-label { margin-top:10px }.kb-row { width:100%; display:flex; align-items:center; gap:9px; padding:10px; border-radius:7px; text-align:left; color:var(--muted); font-size:12px }.kb-row:hover,.kb-row.active { color:var(--text); background:var(--surface) }.kb-row.active { font-weight:650; box-shadow:0 1px 2px #00000006 }.kb-dot { width:8px; height:8px; border-radius:3px }.kb-dot.peach { background:#e9a383 }.kb-dot.blue { background:#91afd3 }.create-kb { margin:0 4px 12px; padding:10px; border:1px solid var(--line); border-radius:8px; background:var(--surface) }.create-kb input,.create-kb select { width:100%; padding:7px; margin-bottom:6px; border:1px solid var(--line); border-radius:5px; background:var(--surface-2); color:var(--text); font-size:11px }.create-kb div { display:flex; justify-content:flex-end; gap:5px }.preview-drawer { position:absolute; top:0; right:0; bottom:0; width:48%; min-width:370px; border-left:1px solid var(--line); background:var(--surface); box-shadow:-12px 0 30px #00000016; z-index:3; display:flex; flex-direction:column }.preview-head { display:flex; justify-content:space-between; align-items:center; padding:16px 20px; border-bottom:1px solid var(--line); font-size:13px }.preview-drawer pre { margin:0; padding:22px; white-space:pre-wrap; overflow:auto; font:12px/1.7 ui-monospace,monospace }.preview-drawer iframe { flex:1; border:0; background:#fff }
+src\styles.css:23:.ai-output-overlay { position:fixed; z-index:1100; inset:0; display:block; pointer-events:none; background:rgba(255,255,255,.015); }
+src\styles.css:133:.topbar-leading { width:56px; height:100%; flex:0 0 56px; display:flex; align-items:center; justify-content:center; -webkit-app-region:no-drag; }
+src\styles.css:282:.split-divider { position:relative; z-index:3; flex:0 0 7px; width:7px; cursor:col-resize; touch-action:none; background:var(--surface-2); border-left:1px solid var(--line); border-right:1px solid var(--line); }
+src\styles.css:289:.markdown-parse-error { position:absolute; z-index:8; right:14px; bottom:12px; max-width:calc(100% - 28px); padding:7px 10px; border:1px solid #e6a29b; border-radius:8px; background:#fff1ef; color:#a63c32; box-shadow:0 5px 16px rgba(115,35,29,.12); font-size:11px; }
+src\styles.css:291:.markdown-paste-notice { position:absolute; z-index:9; left:50%; bottom:18px; min-height:36px; display:flex; align-items:center; gap:8px; padding:6px 8px 6px 12px; border:1px solid var(--line); border-radius:8px; color:var(--text-secondary); background:var(--bg-primary); box-shadow:0 8px 24px rgba(0,0,0,.12); font-size:12px; transform:translateX(-50%); }
+src\styles.css:352:.note-sidebar .folder-dropdown { position:absolute; z-index:20; top:44px; left:12px; right:12px; padding:5px; border:1px solid var(--border-color); border-radius:8px; background:var(--bg-primary); box-shadow:0 8px 24px rgba(0,0,0,.12); }
+src\styles.css:384:.sidebar-expand-btn { position:absolute; z-index:4; top:12px; left:12px; width:32px; height:32px; border:1px solid var(--border-color); border-radius:8px; background:var(--bg-primary); color:var(--text-primary); box-shadow:0 2px 8px rgba(0,0,0,.08); font-size:22px; }
+src\styles.css:396:.rail-avatar::before { content:""; position:absolute; inset:-3px; z-index:1; pointer-events:none; border:1.5px solid var(--accent-color,var(--accent)); border-radius:50%; opacity:0; animation:rail-avatar-breathe 3.2s ease-in-out infinite; }
+src\styles.css:400:.rail-avatar .avatar-status { position:absolute; right:1px; bottom:1px; width:8px; height:8px; border-radius:50%; border:2px solid var(--bg-sidebar); background:#10b981; z-index:3; box-shadow:0 0 0 0 rgba(16,185,129,.6); animation:rail-avatar-status-pulse 2.4s ease-in-out infinite; }
+src\styles.css:413:.rail-avatar span { position:relative; z-index:2; display:block; width:30px; height:30px; font-size:0; background:center / contain no-repeat url("data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAEAAAABACAYAAACqaXHeAAAKf0lEQVR4AeyaTYwcxRXHa3djrE1kH0wwkUDCEoNpKfKByLcoeBZbMlESESm3HLCT3LBRlKAIKZE8M9xGOUWG3JKwPoRjwilYGO9MpOQQWfHBQpo1Y2mR+DYYaQ22wNjm/d7066npz+qZXYwFq/5PVb169eq9f72q7p7ZefcV//uagK94ArivM2CzM+Dw3kYTPL630T60t7HiQ2Q3DSaXdhswZrN9w/6mZADOW0A3nFsBMlnrpnNN8GDj7iaIGnc7A2360AOMESIgSAkR2aZcG0qABY7zBAMI8OknDzjwtz/93IGnn9wv7SzoA+j+9Id7LOCWVFpGhtQ39NoQAtKBW9CjYPbLKu9UhHoeNXa6xx7dE5N1wPlkCBFt5gu1VaU3X6VQ1Y8ztuKRpDSrxwpHEkTV2JB+7BgZMREt5oOIkPFVOjMRgBM4wyQbHTg204AISIiEaOljW7SlnOmamgCCl5nZn7KfD9RKcRk39QUJZBhEiJEWh62UU19TEyAzfuHBy5zJBRGQwEE7Cwm1CGC/M5msvsw78qV7/NSocgs+5daps4ozTfFpqu0QRIAFzn5nMmZlH7IC7H3atwKrw3f9aXU71CWikgCCt8AJmoDt9kYaRht02vuRhNaZn0UAkRyM8eJwOOoDVIidSgIIHkNMwuET3cKA8SMNSAD4xsLgZ6wDEZltEfclRSkBlk4YZZJk1Je4gp9kaexiJQmFBMTBt26n4OOg9Zbsk8A2tr50mUtAPEBvczCaHnQ7tNmqLB6+ytmgsVBPI5cA2fdNFM0A9dsRLF4UH45xRmfCyBAQK96WqZ+JTgSPTb5VimTyyhAg3ZousCf13OvFl845kNv5JRNGcteyTOYhLu3eBAHx6vuvn2l9bf/zX+fc4LX3tP5FffTPvl46FQsyGOb7xGJG8VaIz7fE1gQBIg1afdFz0QM7KTLA0UeOnnAL339G8cxf+xmdOgLGY+uRo8uOetFYFuVFWZiiftsK6QMxISB09W0Cew63tpX9s2sO0G63267zl760y1cP3SIwvtlsajd1yNVG6oMVHsijcVEWRLIVopwsSAgQe5WrLzqVqd/7/zjYXq/HELfvofu0vHr1mnvzjXXF8LUPXBr0Xbp0VXU34yMvC5SAuqufdu7mx1sduH5x+0QXBOx7aFciu/TBKLgddy66e+7d7hoP3JmA9uI3t6guxEAWDcZjh7rB5qI0WdGWtH7KKCcLlIA55/ahwGFBWQZ/Ihz49NV73LW1byuuv7fN/eDePe7hB3fLqu9yrV/tc6effTwxR5Dgf4O33I9+94KeEexv8McX/ut27FhUQMzi4ogMxmMHm+D3+3+WzMW8n8nc+OEC/9JZoATIwTDaZIFGTO36xW1WTco//OTH7uRTT7mXW0fdsV8qr0kfFQ4yDrS3P76DZgL2N0T0c0577Lx87KjafXj37mQMlRuSfTeubKUaBLIARYt5fpb0/8au993CzsvYm8D8tz5xC3etT8isQaDUz58/T5FB/+xaRoZg4a7LuXMx/4LMZbdlC5AxRYjkMKSPW6JmAI1Q2Om/KicuY5j8ju++6bYIGYA6xNC3kZiLScU+8wDqzF93HtsGjJuvs/8ZUAQcBEX9Jmc/Wz1dcuCR7ml5us08wJdzC/TbVi8rZRu0kgwYFDxFFRmwlCvqL5ITYB4JBM+BVzQuRG6pXaUbyd0AHSGgmRCAIAQ2uEqXBxYOvDw9SLj+n2PxXeKQ3CnA+G7hvL++HIpFh6Op2eL5dyjrqyrZAh2Uyh4j6U+jKuWa37tPnwLzSCAok/fl0Bth/ABlc/UleO4YZIc9TFmfX67G55EvC63XzgAMR/EpSr0IrDKOc+qzgmQEGNWXlRz6DAQ66jvh0BthWc3PujXUiPcxGG/3zvzzZ4Y9OQh7A2HR6/DUp6/6e70fr3SVNdOjRBcSKUNgd6gq3VWJ1XQ0A4SAWtsAssxA3bLZaLiVI0cyaD960NGXtsdWSsvS7boHMm+O2DhxZthWAqbJgpBtwL71V5AgV448IYHen0Hr4EEh5QmHTh4ROLwR4HuD2I4uuhKAIDQLzEDoiWvbgMAIkrnKgM6IpIaqcZZopeQj1BdM+KtPOyHAzwILEoVZYVnQG14INoVubzjU22TIINv7VXcyLy5dfWwnBNBYPjNckkzowZKnTFcC+miEvDmiB8gCAuqcPEmzEv0LQ9UJWX0Uo/jBhnoRBnLym+/sfdObIAChEKDsoMwgZAYjxb5kNHlVSRZAQvulk66KBPrRO/3soSqzE/2R3Jo5nNM+m5L3K7bGZ/IMAWwF6VQlBlnQInOQQlln9dEHrGYZCT3ZIkvP/dkRPHqQxrhQ2AtO3jboHn/FzHT81UeYIQBhrKQkEDQkmJG6q489g0/C3G9+q9lA0CM8525u+0wfi9GzMaFlJNsgyskC/CYzxE4meJEV/6domgSMMME0q89EBoKz94CVd1c1aAv8tHx7VHflzS6lZUH3+Clni4bfsq17cTyoTSA3A0yDQYI5UVoSWQdj3XE6iWj6CyII2DBL4ObFqveER+bir/R1ONylzL0ktlz5hJBzQYhoi1BJ+MWv/54wDCG0AXWYB6K7IddATm+AbcA8gLo/D3WCZlLxVRdNgluSOn4jzoXo5MpzhbGx5GyAYcDWYAB1nAA4iVPIp8E46FOuKymNbZCeqysZCZiTeSQgstWxaABZGUS/rLu8jwOR/8qw/86gjgwwEqcggmBohwLiunHQBMxv/QD76bkgBbDPJZilkKB9P2SM3wyq6w8oOJR3ICIDOGtEEAxBhVjvyopC3Djw4n+1ZR6bA9t1g2dMLQL8b5Ajue1goAy+gwRVlQmQxGpGcjtjpaPAOSLR5+utMl+K+moRIEZ09QlM6kEXumQLynkPKcgBwUMSwRA8slDYy5AtUOg49IIJMON+ymEgBJGsZCSrxOoSaNkYC6ZMJ90HycjkHMj+EkNHCYIJKLER1GUPKawyB2MayCHJggky6ikxdpptUJsAe/X05g6qRnEWoLz24Ud9cPmTa2sAGZhm9Rnno3n/dw777ap6HgH8nGvgN0MMHhZH9fWMQKqMVvX/+8I7PfCPc68vA8hgzLTkMtbIe2v9Cj7z8GNQ/0UHuYH4RORy3wX4cc4HP/L3tm/dgszZSU5ZtZ+ZAR3T5QwQItUOfYZ31q+ojEMSXYP155XoYDvdd/7i+vMiw2dKQB0wB7C6qOUToB3xBwMUc87pE2BXHlDYv5TsW98J6jgWj9XHZXRMF/m2rVv4rttWR0tx+rDY12+m0QWQgb4Bu8Da6GAbXwB1bEg/AQL1W9rpUkTjK28LjHu9WvyQoSQwEaCbibvy8AJG9dGbGM7SRkfAuI5MVvhsHr+wdLALyBYjFNtdIX6EV+TRePR+jx4Q+45SwDw0gyE+Bes63gUEczgLZLB+hYazQByAef3iBGdjy/oeLuPaMYmxOFugg12ALQjEjm+bOpDR+paHroxTn6rsy5jMJTFkZMECJjQHzAlKMaCrLcYLV1x0Si/sMl6U1BZtbHtg+0j3bJfMMZuBvNHipK42BOX1h8oYb7ZCx9TV2xQC6joxi/6sYz8HAAD//3vYMkwAAAAGSURBVAMA5iKRzIQ30sQAAAAASUVORK5CYII="); }
+src\styles.css:416:.history-drawer { position:fixed; z-index:2400; left:72px; bottom:58px; width:min(340px,calc(100vw - 92px)); max-height:min(540px,calc(100vh - 100px)); display:flex; flex-direction:column; overflow:hidden; border:1px solid var(--line); border-radius:13px; background:var(--surface); box-shadow:0 18px 55px rgba(0,0,0,.18); }
+src\styles.css:457:.editor-mode-menu { position:absolute; z-index:45; top:36px; right:0; width:244px; padding:5px; border:1px solid var(--border-color); border-radius:8px; background:var(--bg-primary); box-shadow:0 10px 28px rgba(0,0,0,.14); animation:note-context-menu-in .12s ease-out; }
+src\styles.css:467:.friday-editor-toolbar .toolbar-more-menu { position:absolute; z-index:30; top:36px; right:0; width:178px; padding:4px; border:1px solid var(--border-color); border-radius:8px; background:var(--bg-primary); box-shadow:0 8px 24px rgba(0,0,0,.12); }
+src\styles.css:474:.friday-editor-toolbar .toolbar-insert-menu { position:absolute; z-index:30; top:36px; left:0; width:140px; padding:4px; border:1px solid var(--border-color); border-radius:8px; background:var(--bg-primary); box-shadow:0 8px 24px rgba(0,0,0,.12); }
+src\styles.css:484:.table-picker-menu { position:absolute; z-index:35; top:-5px; left:calc(100% + 5px); width:204px; padding:10px 11px 11px; border:1px solid var(--border-color); border-radius:9px; background:var(--bg-primary); box-shadow:0 10px 28px rgba(0,0,0,.14); }
+src\styles.css:489:.editor-color-menu { position:absolute; z-index:35; top:36px; left:0; width:184px; padding:10px; border:1px solid var(--border-color); border-radius:8px; background:var(--bg-primary); box-shadow:0 8px 24px rgba(0,0,0,.14); }
+src\styles.css:496:.editor-heading-menu { position:absolute; z-index:35; top:36px; left:0; width:180px; padding:6px 0; border:1px solid var(--border-color); border-radius:10px; background:var(--bg-primary); box-shadow:0 8px 24px rgba(0,0,0,.14); }
+src\styles.css:506:.editor-dialog-overlay { position:fixed; inset:0; z-index:100; display:grid; place-items:center; padding:24px; background:rgba(0,0,0,.24); }
+src\styles.css:518:   navigation, sorting, drag/drop and destructive actions discoverable. */
+src\styles.css:532:.sort-menu { position:absolute; z-index:25; top:34px; right:0; width:160px; padding:5px; border:1px solid var(--border-color); border-radius:8px; background:var(--bg-primary); box-shadow:0 10px 26px rgba(0,0,0,.13); }
+src\styles.css:540:.drop-hint { position:absolute; z-index:12; inset:56px 18px 18px; display:flex; flex-direction:column; align-items:center; justify-content:center; gap:7px; border:1px dashed var(--accent-color); border-radius:12px; color:var(--accent-color); background:color-mix(in srgb,var(--accent-light) 72%,transparent); pointer-events:none; }
+src\styles.css:556:.app-prompt-overlay { position:fixed; inset:0; z-index:5000; display:grid; place-items:center; padding:24px; background:rgba(15,23,42,.36); backdrop-filter:blur(2px); -webkit-app-region:no-drag; }
+src\styles.css:569:.app-feedback-overlay { position:fixed; z-index:5000; inset:0; display:grid; place-items:center; padding:24px; background:rgba(15,23,42,.4); backdrop-filter:blur(2px); -webkit-app-region:no-drag; }
+src\styles.css:622:.app-update-overlay { position:fixed; z-index:4900; inset:0; display:grid; place-items:center; padding:24px; background:rgba(15,23,42,.28); backdrop-filter:blur(3px); -webkit-app-region:no-drag; }
+src\styles.css:657:.app-toast-region { position:fixed; z-index:5100; right:22px; bottom:22px; width:min(360px,calc(100vw - 32px)); display:flex; flex-direction:column; gap:8px; pointer-events:none; -webkit-app-region:no-drag; }
+src\styles.css:724:.note-context-menu { position:fixed; z-index:120; width:226px; max-height:calc(100vh - 16px); overflow:auto; padding:5px; border:1px solid var(--border-color); border-radius:8px; background:var(--bg-primary); box-shadow:0 12px 30px rgba(0,0,0,.16); animation:note-context-menu-in .12s ease-out; }
+src\styles.css:744:  z-index:30;
+src\styles.css:765:.tiny-note-bubble-menu { z-index:1000; }
+src\styles.css:779:.tiny-note-assistant-sidebar { position:relative; z-index:20; display:flex; flex-direction:column; min-width:360px; max-width:50%; border-left:1px solid var(--line); background:var(--bg-primary); color:var(--text-primary); overflow:hidden; }
+src\styles.css:854:.tiny-note-command-menu { position:absolute; left:0; z-index:1001; min-width:180px; padding:4px; border:1px solid var(--line); border-radius:12px; background:var(--bg-primary,#fff); }
+src\styles.css:888:  z-index:25;
+src\styles.css:990:.home-chat-dialog-overlay { position:fixed; z-index:2500; inset:0; display:grid; place-items:center; padding:28px; background:rgba(15,23,42,.28); backdrop-filter:blur(3px); }
+src\styles.css:1154:.agent-approval-overlay { position:fixed; inset:0; z-index:4000; display:grid; place-items:center; padding:24px; pointer-events:auto; background:rgba(0,0,0,.46); backdrop-filter:blur(2px); -webkit-app-region:no-drag; }
+src\styles.css:1201:.home-reference-menu { position:absolute; z-index:30; right:0; bottom:calc(100% + 8px); width:250px; max-height:360px; overflow:auto; padding:5px; border:1px solid var(--border-color); border-radius:10px; background:var(--bg-primary); box-shadow:0 6px 24px rgba(0,0,0,.12),0 0 1px rgba(0,0,0,.08); animation:dropdown-in .12s ease-out; }
+src\styles.css:1232:.chat-reference-menu { position:absolute; z-index:40; left:0; bottom:calc(100% + 8px); display:flex; flex-direction:column; width:260px; max-height:330px; overflow:auto; padding:6px; border:1px solid var(--border-color); border-radius:9px; background:var(--bg-primary); box-shadow:0 8px 28px rgba(0,0,0,.14); }
+src\styles.css:1236:.file-index-status.is-indexed { color:#16a34a; }
+src\styles.css:1237:.file-index-status.is-failed { color:#dc2626; }
+src\styles.css:1238:.file-index-status.is-unsupported,.file-index-status.is-pending { color:var(--text-tertiary); }
+src\styles.css:1276:   toggle and the empty region remains draggable between tabs and controls. */
+src\styles.css:1278:.topbar-leading { width:56px; height:100%; flex:0 0 56px; display:flex; align-items:center; justify-content:center; -webkit-app-region:no-drag; app-region:no-drag; }
+src\styles.css:1279:.tab-strip { min-width:0; display:flex; align-items:center; flex:1; height:100%; gap:3px; padding:7px 0 0 4px; -webkit-app-region:no-drag; app-region:no-drag; }
+src\styles.css:1285:.tabs-area-spacer { flex:1; min-width:0; height:100%; -webkit-app-region:drag; app-region:drag; }
+src\styles.css:1286:.window-actions { height:100%; display:flex; align-items:center; gap:2px; padding:0 8px; -webkit-app-region:no-drag; app-region:no-drag; }
+src\styles.css:1293:.sidebar-resize-handle { position:relative; z-index:4; width:6px; flex:0 0 6px; margin-left:-3px; cursor:col-resize; }
+src\styles.css:1296:.note-sidebar .new-note-dropdown-menu { position:absolute; z-index:1000; top:60px; right:12px; min-width:140px; padding:4px; border:1px solid var(--border-color); border-radius:8px; background:var(--bg-primary); box-shadow:0 4px 16px rgba(0,0,0,.12); animation:dropdown-in .1s ease-out; }
+src\styles.css:1306:.note-sidebar .folder-item-menu { position:fixed; z-index:100002; min-width:110px; padding:2px 0; border-radius:6px; background:var(--bg-primary); box-shadow:0 4px 16px rgba(0,0,0,.15),0 0 1px rgba(0,0,0,.08); animation:dropdown-in .1s ease-out; }
+src\styles.css:1311:.note-context-menu { z-index:99999; width:auto; min-width:180px; padding:6px 0; border:0; border-radius:10px; box-shadow:0 4px 24px rgba(0,0,0,.12),0 0 1px rgba(0,0,0,.08); }
+src\styles.css:1319:.note-context-submenu { position:fixed; z-index:100000; min-width:140px; max-width:min(260px,calc(100vw - 16px)); max-height:calc(100vh - 16px); overflow-y:auto; padding:4px 0; border:0; border-radius:8px; background:var(--bg-primary); box-shadow:0 4px 16px rgba(0,0,0,.15),0 0 1px rgba(0,0,0,.08); animation:dropdown-in .1s ease-out; }
+src\styles.css:1348:.theme-dropdown-menu { position:absolute; z-index:100; top:calc(100% + 6px); left:0; right:0; padding:6px; border:1px solid var(--border-color); border-radius:12px; background:var(--bg-primary); box-shadow:0 8px 30px rgba(0,0,0,.12); animation:theme-dropdown-in .2s ease; }
+src\styles.css:1490:.task-flight-ghost { position:fixed!important; z-index:10000!important; display:inline-flex!important; align-items:center!important; justify-content:center!important; gap:7px!important; margin:0!important; padding:7px 11px!important; border:1px solid #d6a400!important; border-radius:8px!important; color:#37352f!important; background:#f5d75e!important; font-size:11px!important; font-weight:650!important; line-height:1!important; pointer-events:none!important; overflow:hidden!important; white-space:nowrap!important; transform-origin:center!important; box-shadow:0 10px 28px rgba(82,52,16,.28)!important; }
+src\styles.css:1547:.home-mode-menu { position:absolute; z-index:40; left:0; bottom:calc(100% + 9px); width:236px; padding:6px; border:1px solid var(--line); border-radius:14px; background:var(--surface); box-shadow:0 14px 34px rgba(15,23,42,.16); }
+src\styles.css:1554:.home-model-menu { position:absolute; z-index:40; top:calc(100% + 9px); left:0; width:min(360px,calc(100vw - 32px)); max-height:var(--home-model-menu-max-height,460px); overflow-y:auto; overscroll-behavior:contain; scrollbar-gutter:stable; padding:10px; border:1px solid var(--line); border-radius:14px; background:var(--surface); box-shadow:0 14px 34px rgba(15,23,42,.16); }
+src\styles.css:1557:.home-thinking-row { position:sticky; z-index:2; top:-10px; display:flex; align-items:center; justify-content:space-between; gap:12px; margin:-10px -10px 0; padding:11px 12px 9px; color:var(--text-primary); background:var(--surface); font-size:12px; }
+src\styles.css:1634:.settings-primary-menu { position:absolute; z-index:50; top:calc(100% + 7px); left:0; right:0; max-height:280px; overflow:auto; padding:5px; border:1px solid var(--line); border-radius:10px; background:var(--surface); box-shadow:0 12px 30px rgba(0,0,0,.14); }
+src\styles.css:1673:.settings-model-modal-backdrop { position:fixed; z-index:1300; inset:0; display:grid; place-items:center; padding:24px; background:rgba(15,23,42,.42); backdrop-filter:blur(2px); }
+src\styles.css:1687:.settings-provider-menu { position:absolute; z-index:80; top:calc(100% + 6px); left:0; right:0; max-height:250px; overflow:auto; padding:5px; border:1px solid var(--line); border-radius:9px; background:var(--surface); box-shadow:0 12px 30px rgba(0,0,0,.16); }
+src\styles.css:1705:.settings-endpoint-menu { position:absolute; z-index:82; top:calc(100% + 6px); left:0; right:0; padding:5px; border:1px solid var(--line); border-radius:9px; background:var(--surface); box-shadow:0 12px 30px rgba(0,0,0,.16); }
+src\styles.css:1784:.assistant-drawer-overlay { position:fixed; z-index:3000; inset:0; display:grid; place-items:center; padding:24px; background:rgba(15,23,42,.30); backdrop-filter:blur(2px); }
+src\styles.css:1791:.assistant-drawer-close { position:absolute; top:12px; right:10px; z-index:2; display:grid; place-items:center; width:28px; height:28px; border-radius:7px; color:var(--text-tertiary); }
+src\styles.css:1901:.memory-editor-backdrop { position:fixed; z-index:3100; inset:0; display:grid; place-items:center; padding:18px; background:rgba(15,23,42,.24); }
+src\styles.css:2012:.image-mask-stage > canvas { z-index:1; cursor:crosshair; opacity:.36; touch-action:none; }
+src\styles.css:2013:.image-mask-stage > span { position:absolute; z-index:2; left:50%; bottom:10px; transform:translateX(-50%); pointer-events:none; padding:5px 8px; border-radius:6px; color:#fff; background:rgba(20,20,25,.68); font-size:9px; white-space:nowrap; }
+src\styles.css:2078:.image-card-menu { position:absolute; z-index:2; right:10px; bottom:43px; display:grid; min-width:120px; padding:4px; border:1px solid var(--line); border-radius:7px; background:var(--surface); box-shadow:0 8px 24px rgba(0,0,0,.14); }
+src\styles.css:2088:.image-picker-backdrop { position:fixed; z-index:3200; inset:0; display:grid; place-items:center; padding:20px; background:rgba(15,23,42,.25); }
+src\styles.css:2107:.image-preview-backdrop { position:fixed; z-index:3300; inset:0; display:grid; place-items:center; padding:24px; background:rgba(8,10,15,.72); backdrop-filter:blur(4px); }
+src\styles.css:2193:.note-sidebar .notebook-tree-search .search-icon { position:absolute; left:18px; z-index:1; }
+src\App.vue:18:watch(locale, value => localStorage.setItem('tiny-note-language', value))
+src\services\appFeedback.js:55:  const index = feedbackState.toasts.findIndex(item => item.id === id)
+src\services\appFeedback.js:56:  if (index >= 0) feedbackState.toasts.splice(index, 1)
+src\services\appUpdater.js:12:  storage: typeof window !== 'undefined' ? window.localStorage : null
+src\services\appUpdater.js:21:    try { return Number(deps.storage?.getItem(UPDATE_CHECKED_AT_KEY) || 0) || 0 } catch { return 0 }
+src\services\appUpdater.js:25:    try { deps.storage?.setItem(UPDATE_CHECKED_AT_KEY, String(Date.now())) } catch { /* private mode or test storage */ }
+src\components\AgentToolsCatalog.vue:25:  retrieve_knowledge: { label: '检索知识库', group: 'knowledge', permission: '只读' },
+src\components\AgentToolsCatalog.vue:40:  { id: 'knowledge', label: '知识库', description: '管理知识库并检索已索引的本地资料', icon: LibraryBig },
+src\components\AppExportLocationDialog.vue:20:      <section ref="dialogRef" class="app-export-location-dialog" role="dialog" aria-modal="true" aria-labelledby="export-location-title" tabindex="-1" @keydown.esc.prevent="cancelExportLocationRequest">
+src\styles\friday-main.css:31:.tauri-drag-region {
+src\styles\friday-main.css:32:  -webkit-app-region: drag;
+src\styles\friday-main.css:33:  app-region: drag;
+src\styles\friday-main.css:36:.tauri-drag-region button,
+src\styles\friday-main.css:37:.tauri-drag-region a,
+src\styles\friday-main.css:38:.tauri-drag-region input,
+src\styles\friday-main.css:39:.tauri-drag-region select,
+src\styles\friday-main.css:40:.tauri-drag-region textarea,
+src\styles\friday-main.css:41:.tauri-drag-region [role="button"],
+src\styles\friday-main.css:42:.tauri-drag-region [role="tab"] {
+src\styles\friday-main.css:43:  -webkit-app-region: no-drag;
+src\styles\friday-main.css:44:  app-region: no-drag;
+src\components\AppShell.vue:66:async function startWindowDrag(event) {
+src\components\AppShell.vue:72:  try { await current.startDragging() } catch { /* browser preview or a window without drag permission */ }
+src\components\AppShell.vue:87:    <header class="topbar tauri-drag-region" @mousedown="startWindowDrag">
+src\utils\noteExport.js:29:  font-family: "Notion Sans", Inter, -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", sans-serif;
+src\utils\noteExport.js:156:  z-index: 1;
+src\utils\noteExport.js:178:  z-index: 2147483647;
+src\utils\noteExport.js:259:.tiny-note-export-mermaid-viewport.is-dragging { cursor: grabbing; }
+src\utils\noteExport.js:409:  roots.forEach((root, index) => {
+src\utils\noteExport.js:433:        anchor.download = `${safeTitle}-流程图-${index + 1}.png`
+src\utils\noteExport.js:470:<div class="tiny-note-export-mermaid-viewport" data-mermaid-viewport tabindex="0" aria-label="全屏图表画布，按住鼠标左键拖动，滚轮围绕指针缩放">
+src\utils\noteExport.js:492:      let drag = null
+src\utils\noteExport.js:580:          const focusable = [...dialog.querySelectorAll('button:not(:disabled), [tabindex="0"]')]
+src\utils\noteExport.js:625:      const endDrag = event => {
+src\utils\noteExport.js:626:        if (!drag || event.pointerId !== drag.pointerId) return
+src\utils\noteExport.js:628:        drag = null
+src\utils\noteExport.js:629:        viewport.classList.remove('is-dragging')
+src\utils\noteExport.js:635:        drag = {
+src\utils\noteExport.js:642:        viewport.classList.add('is-dragging')
+src\utils\noteExport.js:647:        if (!drag || event.pointerId !== drag.pointerId) return
+src\utils\noteExport.js:649:          endDrag(event)
+src\utils\noteExport.js:652:        const nextScroll = viewportKernel.panScroll(drag, event.clientX, event.clientY)
+src\utils\noteExport.js:656:      viewport.addEventListener('pointerup', endDrag)
+src\utils\noteExport.js:657:      viewport.addEventListener('pointercancel', endDrag)
+src\utils\noteExport.js:917:  const comma = dataUrl.indexOf(',')
+src\utils\noteExport.js:984:  stage.style.cssText = 'position:absolute;left:0;top:0;z-index:-2147483647;width:174mm;pointer-events:none;background:#fff;'
+src\components\ChatHistoryDrawer.vue:47:        <div v-for="conversation in conversations" v-else :key="conversation.id" class="history-row" role="button" tabindex="0" @click="openConversation(conversation.id)" @keydown.enter="openConversation(conversation.id)">
+src\components\MarkdownSourceEditor.vue:172:function setSmallParagraph() {
+src\components\MarkdownSourceEditor.vue:183:  const smallParagraphPattern = /^<p data-small-text="true">([\s\S]*)<\/p>$/
+src\components\MarkdownSourceEditor.vue:189:  const shouldUnwrap = lines.length > 0 && lines.every(line => smallParagraphPattern.test(line.text))
+src\components\MarkdownSourceEditor.vue:194:      ? line.text.match(smallParagraphPattern)?.[1] || ''
+src\components\MarkdownSourceEditor.vue:203:defineExpose({ view, focus, getScrollElement, setScrollProgress, applyFormat, setHeading, setSmallParagraph })
+src\components\AppUpdateDialog.vue:15:function isChinese() { return (localStorage.getItem('tiny-note-language') || 'zh-CN') !== 'en' }
+src\components\AppUpdateDialog.vue:86:        <section ref="dialogRef" class="app-update-dialog" role="dialog" aria-modal="true" aria-labelledby="app-update-title" tabindex="-1">
+src\utils\taskFlight.js:20:  ghost.setAttribute('tabindex', '-1')
+src\utils\workspaceSidebar.js:7:const STORAGE_KEY = 'tiny-note-workspace-sidebar-width'
+src\utils\workspaceSidebar.js:15:    const stored = Number(globalThis.localStorage?.getItem(STORAGE_KEY))
+src\utils\workspaceSidebar.js:42:      try { globalThis.localStorage?.setItem(STORAGE_KEY, String(sidebarWidth.value)) } catch { /* Persistence is optional. */ }
+src\utils\noteMarkdown.js:97:  lines.forEach((line, index) => {
+src\utils\noteMarkdown.js:106:      fencedLines.add(index)
+src\utils\noteMarkdown.js:116:      fencedLines.add(index)
+src\utils\noteMarkdown.js:120:  for (let index = 0; index < lines.length - 1; index += 1) {
+src\utils\noteMarkdown.js:121:    if (fencedLines.has(index) || fencedLines.has(index + 1)) continue
+src\utils\noteMarkdown.js:122:    const current = blockquoteLine(lines[index])
+src\utils\noteMarkdown.js:123:    const next = blockquoteLine(lines[index + 1])
+src\utils\noteMarkdown.js:127:    lines[index] = `${lines[index].replace(/[ \t]+$/, '')}  `
+src\utils\noteMarkdown.js:182:    const separator = declaration.indexOf(':')
+src\components\MermaidDiagram.vue:27:const dragging = ref(false)
+src\components\MermaidDiagram.vue:319:  dragging.value = true
+src\components\MermaidDiagram.vue:330:  if (!dragging.value || event.pointerId !== panPointerId) return
+src\components\MermaidDiagram.vue:347:  if (!dragging.value || event.pointerId !== panPointerId) return
+src\components\MermaidDiagram.vue:349:  dragging.value = false
+src\components\MermaidDiagram.vue:360:  dragging.value = false
+src\components\MermaidDiagram.vue:413:  const focusable = Array.from(fullscreenDialog.value?.querySelectorAll('button:not(:disabled), [tabindex="0"]') || [])
+src\components\MermaidDiagram.vue:486:    <div v-if="!fullscreen" ref="inlineStage" class="mermaid-diagram-stage" role="group" tabindex="0" aria-label="图表画布，可用加号、减号和数字 0 调整缩放" aria-keyshortcuts="+ - 0" @keydown="handleStageKeydown" @wheel="handleWheel">
+src\components\MermaidDiagram.vue:515:        <div ref="fullscreenStage" class="mermaid-fullscreen-stage" :class="{ 'is-dragging': dragging }" role="group" tabindex="0" aria-label="全屏图表画布，按住鼠标左键拖动，滚轮围绕指针缩放，也可用加号、减号和数字 0 调整缩放" aria-keyshortcuts="+ - 0" @wheel="handleWheel" @pointerdown="startPan" @pointermove="movePan" @pointerup="finishPan" @pointercancel="finishPan" @lostpointercapture="finishPan">
+src\components\MermaidDiagram.vue:600:  z-index:3600;
+src\components\MermaidDiagram.vue:639:.mermaid-fullscreen-stage.is-dragging { cursor:grabbing; }
+src\components\NoteAssistantSidebar.vue:54:      <div v-for="(message, index) in messages" :key="`${index}-${message.role}`" class="tiny-note-assistant-message" :class="`is-${message.role}`">
+src\components\NoteAssistantSidebar.vue:70:            <div v-if="message.sources?.length" class="tiny-note-assistant-sources"><span v-for="(source, sourceIndex) in message.sources" :key="source.id" :title="source.snippet">[{{ sourceIndex + 1 }}] {{ source.title }}<small v-if="source.truncated">已截取</small></span></div>
+src\components\NotebookTreeItem.vue:13:function dragStart(event, kind, id) {
+src\components\NotebookTreeItem.vue:21:  } catch { /* ignore foreign drags */ }
+src\components\NotebookTreeItem.vue:36:      tabindex="0"
+src\components\NotebookTreeItem.vue:37:      draggable="true"
+src\components\NotebookTreeItem.vue:38:      @dragstart="dragStart($event, 'notebook', node.id)"
+src\components\NotebookTreeItem.vue:39:      @dragover.prevent
+src\components\NotebookTreeItem.vue:73:        draggable="true"
+src\components\NotebookTreeItem.vue:74:        @dragstart="dragStart($event, 'note', note.id)"
+src\components\UsageStatistics.vue:55:const sourceLabel = source => ({ chat: '对话', note_ai: '笔记 AI', fim: '智能续写', agent: '助手', rag: '知识库' }[source] || source || '其他')
+src\components\UsageStatistics.vue:74:        <section v-if="stats.byModel?.length" class="usage-section"><h3>{{ t('byModel') }}</h3><div class="usage-list"><div v-for="(item, index) in stats.byModel" :key="item.key" class="usage-list-row"><div class="usage-list-name"><i :style="{ background: colors[index % colors.length] }"></i>{{ item.label }}</div><div class="usage-list-value"><strong>{{ formatNumber(item.totalTokens) }}</strong><small>{{ formatNumber(item.requests) }} {{ t('requests') }}</small></div><div class="usage-list-bar"><span :style="{ width: Math.max(3, Math.round(item.totalTokens / Math.max(1, stats.byModel[0].totalTokens) * 100)) + '%', background: colors[index % colors.length] }"></span></div></div></div></section>
+src\components\SkillsManagement.vue:103:              <li><span>2</span><p>调用 <code>list_knowledge_bases</code>，确认当前有哪些知识库及索引状态。</p></li>
+src\components\SkillsManagement.vue:104:              <li><span>3</span><p>按技能规则选择范围，再调用 <code>retrieve_knowledge</code> 检索相关内容。</p></li>
+src\components\NoteEditor.vue:50:const modeMenuIndex = ref(0)
+src\components\NoteEditor.vue:62:const pendingSourceDrafts = new Map()
+src\components\NoteEditor.vue:71:let splitDragState
+src\components\NoteEditor.vue:103:let aiDragState = null
+src\components\NoteEditor.vue:147:  // so retain only the top-level title and repair nested ones as paragraphs.
+src\components\NoteEditor.vue:155:    const paragraph = document.createElement('p')
+src\components\NoteEditor.vue:157:    if (textAlign) paragraph.style.textAlign = textAlign
+src\components\NoteEditor.vue:158:    paragraph.innerHTML = titleNode.innerHTML
+src\components\NoteEditor.vue:159:    titleNode.replaceWith(paragraph)
+src\components\NoteEditor.vue:225:  return instance.isActive('smallParagraph') ? '小正' : '正文'
+src\components\NoteEditor.vue:232:  return $from.depth === 1 && $from.index(0) === 0
+src\components\NoteEditor.vue:261:  pendingSourceDrafts.delete(props.note.id)
+src\components\NoteEditor.vue:272:  if (pendingSourceDrafts.has(note.id)) return pendingSourceDrafts.get(note.id)
+src\components\NoteEditor.vue:302:    pendingSourceDrafts.delete(note.id)
+src\components\NoteEditor.vue:308:    pendingSourceDrafts.delete(note.id)
+src\components\NoteEditor.vue:328:  pendingSourceDrafts.set(props.note.id, value)
+src\components\NoteEditor.vue:343:  sourceDirty.value = pendingSourceDrafts.has(note?.id)
+src\components\NoteEditor.vue:393:  modeMenuIndex.value = Math.max(0, editorModes.findIndex(mode => mode.id === editorMode.value))
+src\components\NoteEditor.vue:399:  modeMenuRef.value?.querySelectorAll('[role="menuitemradio"]')?.[modeMenuIndex.value]?.focus()
+src\components\NoteEditor.vue:403:  modeMenuIndex.value = (modeMenuIndex.value + offset + editorModes.length) % editorModes.length
+src\components\NoteEditor.vue:410:  else if (event.key === 'Home') { event.preventDefault(); modeMenuIndex.value = 0; focusModeOption() }
+src\components\NoteEditor.vue:411:  else if (event.key === 'End') { event.preventDefault(); modeMenuIndex.value = editorModes.length - 1; focusModeOption() }
+src\components\NoteEditor.vue:431:  const currentIndex = items.indexOf(document.activeElement)
+src\components\NoteEditor.vue:432:  if (event.key === 'ArrowDown') { event.preventDefault(); focusMoreItem((currentIndex + 1) % items.length) }
+src\components\NoteEditor.vue:433:  else if (event.key === 'ArrowUp') { event.preventDefault(); focusMoreItem((currentIndex - 1 + items.length) % items.length) }
+src\components\NoteEditor.vue:463:  if (!splitDragState) return
+src\components\NoteEditor.vue:467:  splitDragState = null
+src\components\NoteEditor.vue:471:  if (!splitDragState || event.pointerId !== splitDragState.pointerId) return
+src\components\NoteEditor.vue:481:  splitDragState = { pointerId: event.pointerId }
+src\components\NoteEditor.vue:597:  stopAiDrag()
+src\components\NoteEditor.vue:646:  if (!sourceEditorRef.value?.setSmallParagraph()) return
+src\components\NoteEditor.vue:653:  return localStorage.getItem(key) === 'granted'
+src\components\NoteEditor.vue:660:  localStorage.setItem(`tiny-note-context-consent:${contextConsentModelId.value}`, 'granted')
+src\components\NoteEditor.vue:850:  pendingSourceDrafts.delete(props.note.id)
+src\components\NoteEditor.vue:1034:function stopAiDrag() {
+src\components\NoteEditor.vue:1035:  if (!aiDragState) return
+src\components\NoteEditor.vue:1037:  window.removeEventListener('pointerup', stopAiDrag)
+src\components\NoteEditor.vue:1038:  window.removeEventListener('pointercancel', stopAiDrag)
+src\components\NoteEditor.vue:1039:  aiDragState = null
+src\components\NoteEditor.vue:1042:  if (!aiDragState || event.pointerId !== aiDragState.pointerId) return
+src\components\NoteEditor.vue:1043:  const maxLeft = Math.max(8, window.innerWidth - aiDragState.width - 8)
+src\components\NoteEditor.vue:1044:  const maxTop = Math.max(8, window.innerHeight - aiDragState.height - 8)
+src\components\NoteEditor.vue:1046:    left: Math.min(maxLeft, Math.max(8, event.clientX - aiDragState.offsetX)),
+src\components\NoteEditor.vue:1047:    top: Math.min(maxTop, Math.max(8, event.clientY - aiDragState.offsetY))
+src\components\NoteEditor.vue:1050:function startAiDrag(event) {
+src\components\NoteEditor.vue:1056:  aiDragState = { pointerId: event.pointerId, offsetX: event.clientX - rect.left, offsetY: event.clientY - rect.top, width: rect.width, height: rect.height }
+src\components\NoteEditor.vue:1059:  window.addEventListener('pointerup', stopAiDrag)
+src\components\NoteEditor.vue:1060:  window.addEventListener('pointercancel', stopAiDrag)
+src\components\NoteEditor.vue:1088:async function selectAiCommand(action, event) { const taskFlight = prepareTaskFlight(event?.currentTarget); saveCurrentSelection(); const text = aiPanelSelectionText.value || selectedText.value || props.note?.contentText || ''; let instruction = null; if (action === 'translate') { const previous = localStorage.getItem('tiny-note-translation-language') || '英文'; const language = await requestPrompt('请输入目标语言', previous); if (!language?.trim()) return; localStorage.setItem('tiny-note-translation-language', language.trim()); instruction = `翻译为${language.trim()}` }; closeAiPanel(); runAi(action, text, instruction, taskFlight) }
+src\components\NoteEditor.vue:1199:  if (level === 0) editor.value.chain().focus().setParagraph().run()
+src\components\NoteEditor.vue:1211:  if (editor.value.isActive('smallParagraph')) chain.setParagraph().run()
+src\components\NoteEditor.vue:1212:  else chain.setNode('smallParagraph').run()
+src\components\NoteEditor.vue:1294:            <button class="heading-preview" :class="{ active: editor?.isActive('paragraph') }" :disabled="editor?.isActive('noteTitle')" @click="setHeading(0)"><span>正文</span></button>
+src\components\NoteEditor.vue:1295:            <button class="heading-preview" :class="{ active: editor?.isActive('smallParagraph') }" :disabled="editor?.isActive('noteTitle')" @click="setSmallBody"><span class="small-body-label">小正</span></button>
+src\components\NoteEditor.vue:1348:            <button v-for="(mode, index) in editorModes" :key="mode.id" type="button" role="menuitemradio" :aria-checked="editorMode === mode.id" :tabindex="index === modeMenuIndex ? 0 : -1" @focus="modeMenuIndex = index" @click="changeEditorMode(mode.id)">
+src\components\NoteEditor.vue:1442:        <div class="ai-output-header" @pointerdown="startAiDrag"><strong><Sparkles :size="14" />{{ aiActionLabels[aiResultAction] || 'AI 写作' }}内容</strong><button type="button" title="关闭" aria-label="关闭" @click="closeAiResult"><X :size="17" /></button></div>
+src\components\NoteEditor.vue:1446:          <div v-if="aiSources.length" class="ai-source-list"><span v-for="(source, index) in aiSources" :key="source.id" :title="source.snippet">[{{ index + 1 }}] {{ source.title }}<small v-if="source.truncated">已截取</small></span></div>

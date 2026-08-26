@@ -11,6 +11,9 @@
   --accent-color: #2563eb;
   --accent-light: rgba(37, 99, 235, 0.1);
   --sidebar-width: 56px;
+  --workspace-sidebar-width: 360px;
+  --workspace-sidebar-min-width: 300px;
+  --workspace-sidebar-max-width: 460px;
   --tab-bar-height: 46px;
   --content-radius: 10px;
   --window-close-hover: #e81123;

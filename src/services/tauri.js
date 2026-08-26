@@ -13,8 +13,9 @@ const browserMemorySeed = [
   { fileName: 'Agent.md', nameKey: 'Agent', description: '经验与技巧', content: '# 经验与技巧\n\n> 记录 Tiny Note 助手在工作中积累的可复用经验。\n\n## 工具使用经验\n- （待补充）\n' }
 ]
 const browserSkillSeed = [
-  { name: 'knowledge-research', description: '检索和管理 Tiny Note 知识库，并在知识库中新建或移动笔记。', fileName: 'knowledge-research/SKILL.md', builtin: true, content: '---\nname: knowledge-research\ndescription: 检索和管理 Tiny Note 知识库，并在知识库中新建或移动笔记。\n---\n\n# 知识库管理与调研\n\n知识库保存文件，笔记通过 `knowledgeBaseId` 直接归属知识库。\n\n- 在知识库新建笔记：`create_note_in_knowledge_base`\n- 移动到其他知识库：`move_note_to_knowledge_base`\n- 查看目录：`list_knowledge_bases`\n- 检索正文：`retrieve_knowledge`\n\n先确认唯一的笔记 ID、来源知识库 ID 和目标知识库 ID。移动会更新笔记归属，不改变正文或笔记本归属。\n' },
-  { name: 'note-organizer', description: '创建、查找、读取、修改、移动或删除 Tiny Note 笔记，并保持归类清晰。', fileName: 'note-organizer/SKILL.md', builtin: true, content: '---\nname: note-organizer\ndescription: 创建、查找、读取、修改、移动或删除 Tiny Note 笔记，并保持归类清晰。\n---\n\n# 笔记管理与整理\n\nAI 生成文章未指定笔记本时默认归入“未分类”，并显示在“全部笔记”中。\n\n- 新建普通笔记：`create_note`\n- 在知识库新建：`create_note_in_knowledge_base`\n- 移动知识库引用：`move_note_to_knowledge_base`\n- 搜索和读取：`search_notes`、`get_note`\n- 修改和删除：`update_note`、`delete_note`\n' }
+  { name: 'knowledge-research', description: '管理 Tiny Note 知识库元数据和笔记引用。', fileName: 'knowledge-research/SKILL.md', builtin: true, content: '---\nname: knowledge-research\ndescription: 管理 Tiny Note 知识库元数据和笔记引用。\n---\n\n# 知识库管理\n\n知识库与笔记本是不同实体；当前版本不自动检索知识库正文。使用 `list_knowledge_bases`、`create_knowledge_base`、`update_knowledge_base`、`delete_knowledge_base` 管理知识库；使用 `create_note_in_knowledge_base` 和 `move_note_to_knowledge_base` 管理笔记引用。只有对话中手动选择的文件才作为本轮参考。\n' },
+  { name: 'note-organizer', description: '列出、搜索、读取、创建、修改或删除 Tiny Note 普通笔记。', fileName: 'note-organizer/SKILL.md', builtin: true, content: '---\nname: note-organizer\ndescription: 列出、搜索、读取、创建、修改或删除 Tiny Note 普通笔记。\n---\n\n# 笔记管理\n\n“我有哪些笔记”调用 `list_notes`；只有给出主题时才调用 `search_notes`。搜索无结果时缩短关键词重试。修改前用 `get_note` 读取 `contentMarkdown`；删除前确认精确 ID。创建时使用不超过 50 字符的简洁标题和完整 Markdown 正文。写操作使用 `create_note`、`update_note`、`delete_note`。\n' },
+  { name: 'notebook-manager', description: '列出、创建、修改、移动或删除 Tiny Note 笔记本。', fileName: 'notebook-manager/SKILL.md', builtin: true, content: '---\nname: notebook-manager\ndescription: 列出、创建、修改、移动或删除 Tiny Note 笔记本。\n---\n\n# 笔记本管理\n\n笔记本、笔记和知识库是不同实体。使用 `list_notebooks`、`create_notebook`、`update_notebook`、`move_notebook`、`delete_notebook`。不要修改、移动或删除系统“未分类”笔记本；移动前确认目标不是自身或后代。删除普通笔记本不会递归删除笔记或子笔记本。\n' }
 ]
 const browserTemplateSeed = [
   { id: 'daily', name: '每日记录', description: '记录当天的重点、进展和复盘', title: '每日记录', contentMarkdown: '# 今日重点\n\n## 计划\n\n## 进展\n\n## 复盘\n', builtin: true },
@@ -25,22 +26,25 @@ const browserDemoImageDataUri = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAA
 const browserLegacySkillContent = {
   'knowledge-research': [
     '---\nname: knowledge-research\ndescription: 检索并汇总 Tiny Note 本地知识，保留来源和不确定性。\n---\n\n# 知识调研\n\n先检索，再汇总并保留来源。\n',
-    '---\nname: knowledge-research\ndescription: 检索、创建、更新或删除 Tiny Note 知识库，并基于已索引资料生成可追溯答案。\n---\n\n# 知识库管理与调研\n\n## 工具对应关系\n\n- 新建：`create_knowledge_base`\n- 查看目录：`list_knowledge_bases`\n- 检索正文：`retrieve_knowledge`\n- 修改信息：`update_knowledge_base`\n- 删除：`delete_knowledge_base`\n\n更新或删除前先列出知识库并确认唯一 ID。删除成功表示记录和索引已删除，受管目录已移入系统回收站。当前 Agent 工具不直接修改知识库内的单个文件。\n'
+    '---\nname: knowledge-research\ndescription: 检索、创建、更新或删除 Tiny Note 知识库，并基于已索引资料生成可追溯答案。\n---\n\n# 知识库管理与调研\n\n## 工具对应关系\n\n- 新建：`create_knowledge_base`\n- 查看目录：`list_knowledge_bases`\n- 检索正文：`retrieve_knowledge`\n- 修改信息：`update_knowledge_base`\n- 删除：`delete_knowledge_base`\n\n更新或删除前先列出知识库并确认唯一 ID。删除成功表示记录和索引已删除，受管目录已移入系统回收站。当前 Agent 工具不直接修改知识库内的单个文件。\n',
+    '---\nname: knowledge-research\ndescription: 检索和管理 Tiny Note 知识库，并在知识库中新建或移动笔记。\n---\n\n# 知识库管理与调研\n\n知识库保存文件，笔记通过 `knowledgeBaseId` 直接归属知识库。\n\n- 在知识库新建笔记：`create_note_in_knowledge_base`\n- 移动到其他知识库：`move_note_to_knowledge_base`\n- 查看目录：`list_knowledge_bases`\n- 检索正文：`retrieve_knowledge`\n\n先确认唯一的笔记 ID、来源知识库 ID 和目标知识库 ID。移动会更新笔记归属，不改变正文或笔记本归属。\n'
   ],
   'note-organizer': [
     '---\nname: note-organizer\ndescription: 将零散材料整理为结构清晰、便于后续维护的笔记。\n---\n\n# 笔记整理\n\n保持结构清晰，不添加未知事实。\n',
-    '---\nname: note-organizer\ndescription: 使用 Tiny Note 工具创建、查找、读取、修改或删除笔记，并保持内容结构清晰。\n---\n\n# 笔记管理与整理\n\n## 工具对应关系\n\n- 新建：`create_note`\n- 搜索：`search_notes`\n- 读取：`get_note`\n- 修改：`update_note`，只生成待审阅提案\n- 删除：`delete_note`，移入最近删除\n\n修改或删除前先搜索并读取，使用精确笔记 ID；只有工具成功后才能报告完成。\n'
+    '---\nname: note-organizer\ndescription: 使用 Tiny Note 工具创建、查找、读取、修改或删除笔记，并保持内容结构清晰。\n---\n\n# 笔记管理与整理\n\n## 工具对应关系\n\n- 新建：`create_note`\n- 搜索：`search_notes`\n- 读取：`get_note`\n- 修改：`update_note`，只生成待审阅提案\n- 删除：`delete_note`，移入最近删除\n\n修改或删除前先搜索并读取，使用精确笔记 ID；只有工具成功后才能报告完成。\n',
+    '---\nname: note-organizer\ndescription: 创建、查找、读取、修改、移动或删除 Tiny Note 笔记，并保持归类清晰。\n---\n\n# 笔记管理与整理\n\nAI 生成文章未指定笔记本时默认归入“未分类”，并显示在“全部笔记”中。\n\n- 新建普通笔记：`create_note`\n- 在知识库新建：`create_note_in_knowledge_base`\n- 移动知识库引用：`move_note_to_knowledge_base`\n- 搜索和读取：`search_notes`、`get_note`\n- 修改和删除：`update_note`、`delete_note`\n'
   ]
 }
 const browserAgentToolDefaults = [
-  ['list_knowledge_bases', '列出现有知识库及索引概况', false], ['get_current_time', '获取本机当前时间', false],
+  ['list_knowledge_bases', '列出现有知识库元数据', false], ['get_current_time', '获取本机当前时间', false],
   ['list_mcp_tools', '列出已发现的 MCP 工具', false], ['call_mcp_tool', '调用外部 MCP 工具', true],
   ['delegate_task', '委派独立子任务', true], ['run_sandbox_script', '执行隔离计算脚本', true],
-  ['search_notes', '搜索未删除笔记', false], ['get_note', '读取指定笔记', false],
-  ['retrieve_knowledge', '检索笔记和文本知识库', false], ['list_agent_files', '浏览 Agent 工作区', false],
+  ['list_notes', '列出未删除的普通笔记', false], ['search_notes', '搜索未删除的普通笔记', false], ['get_note', '读取指定笔记的完整 Markdown', false],
+  ['list_notebooks', '列出笔记本及直属统计', false], ['list_agent_files', '浏览 Agent 工作区', false],
   ['read_agent_file', '读取 Agent 工作区文本文件', false], ['write_agent_file', '写入 Agent 工作区文本文件', true],
   ['read_skill', '读取 Agent 技能', false], ['write_skill', '创建或更新 Agent 技能', true],
   ['create_note', '创建笔记', true], ['create_note_in_knowledge_base', '在知识库中新建笔记', true], ['move_note_to_knowledge_base', '移动笔记到其他知识库', true], ['update_note', '生成笔记修改提案', true], ['delete_note', '将笔记移入最近删除', true],
+  ['create_notebook', '创建笔记本', true], ['update_notebook', '更新笔记本信息', true], ['move_notebook', '移动笔记本层级', true], ['delete_notebook', '删除笔记本并安全归位内容', true],
   ['create_knowledge_base', '创建知识库', true], ['update_knowledge_base', '更新知识库信息', true], ['delete_knowledge_base', '删除知识库并移入回收站', true],
   ['update_memory', '更新 Agent 记忆', true]
 ]
@@ -60,7 +64,7 @@ function ensureLibraryParents(state, knowledgeBaseId, relativePath, now) {
   }
 }
 function libraryEntry(file) {
-  return { name: entryName(file.relativePath), relativePath: file.relativePath, kind: file.kind, size: file.size || 0, modifiedAt: file.modifiedAt, extension: file.kind === 'file' ? (entryName(file.relativePath).split('.').pop() || '').toLowerCase() : null, indexStatus: file.kind === 'file' ? 'indexed' : null }
+  return { name: entryName(file.relativePath), relativePath: file.relativePath, kind: file.kind, size: file.size || 0, modifiedAt: file.modifiedAt, extension: file.kind === 'file' ? (entryName(file.relativePath).split('.').pop() || '').toLowerCase() : null }
 }
 function normalizeTags(tags = []) {
   const seen = new Set()
@@ -150,8 +154,15 @@ export async function invoke(command, args = {}) {
   if (!state.libraryFiles) state.libraryFiles = []
   if (!state.memories) state.memories = browserMemorySeed.map(file => ({ ...file, updatedAt: new Date().toISOString() }))
   if (!state.agentSkills) state.agentSkills = browserSkillSeed.map(skill => ({ ...skill, updatedAt: new Date().toISOString() }))
-  else state.agentSkills.forEach(skill => { const replacement = browserSkillSeed.find(seed => seed.name === skill.name); if (replacement && browserLegacySkillContent[skill.name]?.includes(skill.content)) Object.assign(skill, replacement, { updatedAt: new Date().toISOString() }) })
+  else {
+    state.agentSkills.forEach(skill => {
+      const replacement = browserSkillSeed.find(seed => seed.name === skill.name)
+      if (replacement && browserLegacySkillContent[skill.name]?.includes(skill.content)) Object.assign(skill, replacement, { updatedAt: new Date().toISOString() })
+    })
+    browserSkillSeed.filter(seed => !state.agentSkills.some(skill => skill.name === seed.name)).forEach(seed => state.agentSkills.push({ ...seed, updatedAt: new Date().toISOString() }))
+  }
   if (!state.agentToolPolicies) state.agentToolPolicies = {}
+  delete state.agentToolPolicies.retrieve_knowledge
   if (!state.mcpServers) state.mcpServers = []
   if (!state.usageRecords) state.usageRecords = []
   if (!state.imageGenerations) state.imageGenerations = []
@@ -222,7 +233,7 @@ export async function invoke(command, args = {}) {
   else if (command === 'image_asset_read') { const asset = state.imageAssets.find(item => item.id === args.assetId); result = asset ? { ...asset, dataUri: asset.dataUri || browserDemoImageDataUri } : null }
   else if (command === 'image_generation_delete') { const generation = state.imageGenerations.find(item => item.id === args.generationId); state.imageGenerations = state.imageGenerations.filter(item => item.id !== args.generationId); state.imageAssets = state.imageAssets.filter(item => item.generationId !== args.generationId); result = generation ? null : null }
   else if (command === 'external_markdown_list') result = state.notes.filter(note => note.externalPath).map(note => ({ id: note.id, title: note.title, path: note.externalPath, fileName: String(note.externalPath).split(/[\\/]/).pop() || 'Markdown 文件', updatedAt: note.updatedAt, available: true })).sort((a, b) => String(b.updatedAt).localeCompare(String(a.updatedAt)))
-  else if (command === 'external_markdown_read') { const note = state.notes.find(item => item.id === args.id && item.externalPath); if (!note) throw new Error('外部来源记录不存在'); result = { path: note.externalPath, fileName: String(note.externalPath).split(/[\\/]/).pop() || 'Markdown 文件', content: note.contentMarkdown || '', error: null } }
+  else if (command === 'external_markdown_read') { const note = state.notes.find(item => item.id === args.id && item.externalPath); if (!note) throw new Error('外部来源记录不存在'); result = { path: note.externalPath, fileName: String(note.externalPath).split(/[\\/]/).pop() || 'Markdown 文件', content: null, error: null, changed: false } }
   else if (command === 'external_markdown_clear') { const ids = new Set(state.notes.filter(note => note.externalPath).map(note => note.id)); state.notes = state.notes.filter(note => !ids.has(note.id)); state.noteTags = state.noteTags.filter(link => !ids.has(link.noteId)); rebuildBrowserLinks(state); result = ids.size }
   else if (command === 'note_list') result = state.notes.filter(n => !n.externalPath && Boolean(n.deletedAt) === Boolean(args.deleted) && (args.knowledgeBaseId == null || n.knowledgeBaseId === args.knowledgeBaseId) && (args.pinned == null || Boolean(n.pinned) === Boolean(args.pinned)) && (!args.search || `${n.title} ${n.contentText}`.toLowerCase().includes(args.search.toLowerCase()))).sort((a, b) => Number(Boolean(b.pinned)) - Number(Boolean(a.pinned)) || String(b.updatedAt).localeCompare(String(a.updatedAt)))
   else if (command === 'note_get') result = state.notes.find(n => n.id === args.id)
@@ -351,15 +362,8 @@ export async function invoke(command, args = {}) {
     const extension = (entryName(target).split('.').pop() || '').toLowerCase()
     const kind = extension === 'html' || extension === 'htm' ? 'html' : extension || 'text'
     const extensionMime = { png: 'image/png', jpg: 'image/jpeg', jpeg: 'image/jpeg', gif: 'image/gif', webp: 'image/webp', svg: 'image/svg+xml' }
-    result = file ? extensionMime[extension] ? { title: entryName(target), kind: 'image', mimeType: extensionMime[extension], content: `data:${extensionMime[extension]};base64,${file.contentBase64 || ''}` } : ['pdf', 'epub'].includes(extension) ? { title: entryName(target), kind: 'unsupported', mimeType: 'application/octet-stream', content: '该文件已保存，但当前版本暂不提供预览和全文索引。' } : { title: entryName(target), kind, mimeType: kind === 'html' ? 'text/html' : 'text/plain', content: storedFileText(file) } : null
+    result = file ? extensionMime[extension] ? { title: entryName(target), kind: 'image', mimeType: extensionMime[extension], content: `data:${extensionMime[extension]};base64,${file.contentBase64 || ''}` } : ['pdf', 'epub'].includes(extension) ? { title: entryName(target), kind: 'unsupported', mimeType: 'application/octet-stream', content: '该文件已保存，但当前版本暂不提供预览。' } : { title: entryName(target), kind, mimeType: kind === 'html' ? 'text/html' : 'text/plain', content: storedFileText(file) } : null
   }
-  else if (command === 'context_search') {
-    const query = String(args.query || '').toLowerCase()
-    const noteSources = state.notes.filter(note => !note.deletedAt && !note.externalPath && `${note.title} ${note.contentText}`.toLowerCase().includes(query)).map(note => ({ id: `note:${note.id}`, sourceType: 'note', title: note.title, noteId: note.id, knowledgeBaseId: null, relativePath: null, snippet: note.contentText.slice(0, 160), content: note.contentText.slice(0, 2000), contentHash: '', score: 1, explicit: false, truncated: note.contentText.length > 2000 }))
-    const fileSources = state.libraryFiles.filter(file => file.kind === 'file' && `${file.relativePath} ${storedFileText(file)}`.toLowerCase().includes(query)).map(file => ({ id: `file:${file.knowledgeBaseId}:${file.relativePath}`, sourceType: 'file', title: entryName(file.relativePath), noteId: null, knowledgeBaseId: file.knowledgeBaseId, relativePath: file.relativePath, snippet: storedFileText(file).slice(0, 160), content: storedFileText(file).slice(0, 2000), contentHash: '', score: 1, explicit: false, truncated: storedFileText(file).length > 2000 }))
-    result = { sources: [...noteSources, ...fileSources].slice(0, 6), totalCharacters: 0, truncated: false }
-  }
-  else if (command === 'search_index_status' || command === 'search_index_rebuild' || command === 'search_index_retry_failed') { const indexedNotes = state.notes.filter(note => !note.deletedAt && !note.externalPath); result = { documents: indexedNotes.length + state.libraryFiles.filter(file => file.kind === 'file').length, chunks: indexedNotes.length + state.libraryFiles.length, indexed: indexedNotes.length + state.libraryFiles.filter(file => file.kind === 'file').length, failed: 0, unsupported: 0 } }
   else if (command === 'note_edit_get') result = state.editProposals.find(item => item.id === args.proposalId)
   else if (command === 'note_edit_discard') { const proposal = state.editProposals.find(item => item.id === args.proposalId); if (proposal) proposal.status = 'discarded'; result = null }
   else if (command === 'note_edit_apply') {

@@ -2,12 +2,15 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { mount } from '@vue/test-utils'
 import { createPinia, setActivePinia } from 'pinia'
 
-const mocks = vi.hoisted(() => ({ invoke: vi.fn(), push: vi.fn() }))
+const mocks = vi.hoisted(() => ({ invoke: vi.fn(), push: vi.fn(), saveExportBlob: vi.fn(), showExportSuccess: vi.fn() }))
 vi.mock('../services/tauri', () => ({ invoke: mocks.invoke }))
+vi.mock('../services/exportLocation', () => ({ saveExportBlob: mocks.saveExportBlob }))
+vi.mock('../services/exportSuccess', () => ({ showExportSuccess: mocks.showExportSuccess }))
 vi.mock('@tauri-apps/api/core', () => ({ Channel: class Channel { onmessage = null } }))
 vi.mock('vue-router', () => ({ useRoute: () => ({ query: {} }), useRouter: () => ({ push: mocks.push }) }))
 
 import ImageGenerationView from './ImageGenerationView.vue'
+import { useAppStore } from '../stores/app'
 
 const generation = {
   id: 'generation-1',
@@ -29,6 +32,9 @@ describe('ImageGenerationView history reuse', () => {
     setActivePinia(pinia)
     mocks.invoke.mockReset()
     mocks.push.mockReset()
+    mocks.saveExportBlob.mockReset()
+    mocks.showExportSuccess.mockReset()
+    mocks.saveExportBlob.mockResolvedValue({ path: 'D:\\Exports\\tiny-note-generati-asset-.png', fileName: 'tiny-note-generati-asset-.png' })
     mocks.invoke.mockImplementation(async command => {
       if (command === 'image_model_list') return [{ id: 'image-model', name: '图片模型', imageEnabled: true, apiKeyConfigured: true, isImageDefault: true }]
       if (command === 'image_generation_list') return [generation]
@@ -66,5 +72,27 @@ describe('ImageGenerationView history reuse', () => {
     await vi.waitFor(() => expect(wrapper.find('.image-source-preview').exists()).toBe(true))
     expect(wrapper.get('.image-source-preview').text()).toContain('生成结果-asset-')
     expect(wrapper.find('.image-history-picker-modal').exists()).toBe(false)
+  })
+
+  it('saves a generated image through the configured export location', async () => {
+    const pinia = createPinia()
+    setActivePinia(pinia)
+    useAppStore().settings.exportDirectory = 'D:\\Exports'
+    const wrapper = mount(ImageGenerationView, { global: { plugins: [pinia] } })
+    await vi.waitFor(() => expect(wrapper.find('.image-save-button').exists()).toBe(true))
+    expect(wrapper.get('.image-save-button').attributes('title')).toBe('保存图片到 D:\\Exports')
+
+    await wrapper.get('.image-save-button').trigger('click')
+
+    await vi.waitFor(() => expect(mocks.saveExportBlob).toHaveBeenCalledOnce())
+    expect(mocks.saveExportBlob).toHaveBeenCalledWith(
+      expect.objectContaining({ type: 'image/png' }),
+      'tiny-note-generati-asset-.png',
+      { appStore: useAppStore() }
+    )
+    expect(mocks.showExportSuccess).toHaveBeenCalledWith({
+      path: 'D:\\Exports\\tiny-note-generati-asset-.png',
+      fileName: 'tiny-note-generati-asset-.png'
+    })
   })
 })

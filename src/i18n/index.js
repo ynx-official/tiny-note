@@ -29,11 +29,11 @@ Object.assign(messages['zh-CN'], {
   editorModeShortcut: '切换编辑模式', editorModeShortcutHint: '在即时编辑和 Markdown 之间切换，仅保存在当前设备。',
   recordShortcut: '点击后按下新的组合键', pressShortcut: '请按下新快捷键',
   shortcutRequiresModifier: '请同时按下 Ctrl（macOS 为 ⌘）和一个按键', resetShortcut: '恢复默认'
-  , fileSaveLocation: '文件保存位置', fileSaveLocationHint: '设置 Markdown、HTML 和 PDF 的默认导出文件夹', defaultExportDirectory: '默认导出文件夹',
-  chooseEveryExport: '每次导出时选择', chooseExportLocation: '选择文章导出位置', chooseExportLocationHint: '选择一个文件夹保存本次导出。已有同名文件时会自动生成新名称。',
+  , fileSaveLocation: '文件保存位置', fileSaveLocationHint: '设置 Markdown、HTML、PDF 和生成图片的默认保存文件夹', defaultExportDirectory: '默认保存文件夹',
+  chooseEveryExport: '每次保存时选择', chooseExportLocation: '选择文件保存位置', chooseExportLocationHint: '选择一个文件夹保存本次文件。已有同名文件时会自动生成新名称。',
   rememberExportLocation: '以后都保存到此目录', rememberExportLocationHint: '可随时在“设置 → 文件保存位置”中更改', selectFolder: '选择文件夹', openingFolderPicker: '正在打开…',
   changeFolder: '更换文件夹', clearFolder: '清除', exportLocationSaved: '文件保存位置已更新', exportLocationCleared: '已恢复为每次导出时选择'
-  , exportSucceeded: '导出成功', exportSucceededHint: '“{fileName}”已经保存完成。', openContainingFolder: '打开所在文件夹', openExportedFile: '打开文件', maybeLater: '以后再说'
+  , exportSucceeded: '保存成功', exportSucceededHint: '“{fileName}”已经保存完成。', openContainingFolder: '打开所在文件夹', openExportedFile: '打开文件', maybeLater: '以后再说'
 })
 
 Object.assign(messages.en, {
@@ -58,9 +58,9 @@ Object.assign(messages.en, {
   editorModeShortcut: 'Switch editor mode', editorModeShortcutHint: 'Switch between instant editing and Markdown. Stored on this device only.',
   recordShortcut: 'Click, then press a new shortcut', pressShortcut: 'Press a new shortcut',
   shortcutRequiresModifier: 'Press Ctrl (⌘ on macOS) together with another key', resetShortcut: 'Reset'
-  , fileSaveLocation: 'File save location', fileSaveLocationHint: 'Set the default folder for Markdown, HTML, and PDF exports', defaultExportDirectory: 'Default export folder',
-  chooseEveryExport: 'Choose on every export', chooseExportLocation: 'Choose article export location', chooseExportLocationHint: 'Choose a folder for this export. A new name is created when a file already exists.',
+  , fileSaveLocation: 'File save location', fileSaveLocationHint: 'Set the default folder for Markdown, HTML, PDF, and generated images', defaultExportDirectory: 'Default save folder',
+  chooseEveryExport: 'Choose every time', chooseExportLocation: 'Choose file save location', chooseExportLocationHint: 'Choose a folder for this file. A new name is created when a file already exists.',
   rememberExportLocation: 'Always save to this folder', rememberExportLocationHint: 'You can change it later in Settings → File save location', selectFolder: 'Choose folder', openingFolderPicker: 'Opening…',
   changeFolder: 'Change folder', clearFolder: 'Clear', exportLocationSaved: 'File save location updated', exportLocationCleared: 'Export location will be chosen each time'
-  , exportSucceeded: 'Export complete', exportSucceededHint: '“{fileName}” has been saved.', openContainingFolder: 'Show in folder', openExportedFile: 'Open file', maybeLater: 'Maybe later'
+  , exportSucceeded: 'Saved', exportSucceededHint: '“{fileName}” has been saved.', openContainingFolder: 'Show in folder', openExportedFile: 'Open file', maybeLater: 'Maybe later'
 })

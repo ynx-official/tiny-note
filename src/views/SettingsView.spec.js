@@ -40,7 +40,6 @@ describe('SettingsView model services', () => {
       if (command === 'model_list') return [model]
       if (command === 'model_fetch_models') return [{ id: 'company-chat', name: 'Company Chat' }]
       if (command === 'model_test') return { ok: true, message: '连接成功' }
-      if (command === 'search_index_status') return null
       if (command === 'model_upsert') return args
       return null
     })
@@ -51,7 +50,6 @@ describe('SettingsView model services', () => {
       if (command === 'settings_get') return { theme: 'light', language: 'zh-CN', fimEnabled: false, exportDirectory: 'D:\\Old exports' }
       if (command === 'settings_update') return args.settings
       if (command === 'model_list') return [model]
-      if (command === 'search_index_status') return null
       return null
     })
     dialogMocks.open.mockResolvedValue('D:\\New exports')
@@ -73,7 +71,7 @@ describe('SettingsView model services', () => {
     await vi.waitFor(() => expect(mocks.invoke).toHaveBeenCalledWith('settings_update', {
       settings: expect.objectContaining({ exportDirectory: '' })
     }))
-    expect(wrapper.get('[data-testid="export-directory-path"]').text()).toContain('每次导出时选择')
+    expect(wrapper.get('[data-testid="export-directory-path"]').text()).toContain('每次保存时选择')
   })
 
   it('organizes editor shortcuts in their own settings category and supports recording and reset', async () => {
@@ -154,7 +152,6 @@ describe('SettingsView model services', () => {
     mocks.invoke.mockImplementation(async command => {
       if (command === 'settings_get') return { theme: 'light', language: 'zh-CN', fimEnabled: false }
       if (command === 'model_list') return [model, { ...model, id: 'custom-model-2', name: '推理模型', model: 'company-reasoner', isDefault: false }]
-      if (command === 'search_index_status') return null
       return null
     })
     const wrapper = mount(SettingsView, { global: { plugins: [createPinia(), createI18n({ legacy: false, locale: 'zh-CN', messages })], stubs: { AgentToolsCatalog: true } } })

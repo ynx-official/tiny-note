@@ -113,6 +113,7 @@ describe('NoteEditor article modes', () => {
     expect(wrapper.get('.external-note-banner').text()).toContain('外部文件')
     expect(wrapper.get('.external-note-banner').text()).toContain('outside.md')
     expect(wrapper.get('.external-note-banner').text()).toContain('不会出现在笔记列表')
+    expect(wrapper.get('.external-note-dismiss').attributes('aria-label')).toBe('关闭外部文件提示')
     expect(wrapper.get('.editor-mode-trigger').text()).toBe('')
     expect(wrapper.get('.editor-mode-trigger').attributes('aria-label')).toContain('Markdown')
 
@@ -120,6 +121,31 @@ describe('NoteEditor article modes', () => {
     await flushPromises()
     expect(wrapper.emitted('import-external')).toEqual([[external]])
     wrapper.unmount()
+  })
+
+  it('remembers a dismissed external-file notice per article', async () => {
+    const first = { ...note('external-first'), external: true, externalPath: 'C:\\docs\\first.md' }
+    const second = { ...note('external-second'), external: true, externalPath: 'C:\\docs\\second.md' }
+    const wrappers = []
+
+    try {
+      const firstVisit = await mountEditor(first)
+      wrappers.push(firstVisit)
+      await firstVisit.get('.external-note-dismiss').trigger('click')
+      expect(firstVisit.find('.external-note-banner').exists()).toBe(false)
+      firstVisit.unmount()
+
+      const firstReopened = await mountEditor(first)
+      wrappers.push(firstReopened)
+      expect(firstReopened.find('.external-note-banner').exists()).toBe(false)
+      firstReopened.unmount()
+
+      const secondVisit = await mountEditor(second)
+      wrappers.push(secondVisit)
+      expect(secondVisit.get('.external-note-banner').text()).toContain('second.md')
+    } finally {
+      wrappers.forEach(wrapper => wrapper.unmount())
+    }
   })
 
   it('uses a dedicated export trigger and keeps only export and print actions in its menu', async () => {
@@ -727,7 +753,7 @@ describe('NoteEditor article modes', () => {
     expect(payload.input.payload.request.thinkingMode).toBe('disabled')
     expect(payload.input.payload.request.text).toBe('标题')
     expect(payload.input.payload.request.selection).toMatchObject({ from: 1, to: 3, text: '标题' })
-    expect(payload.input.payload.request.autoRetrieve).toBe(false)
+    expect(payload.input.payload.request).not.toHaveProperty('autoRetrieve')
     wrapper.unmount()
   })
 

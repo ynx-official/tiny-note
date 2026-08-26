@@ -97,12 +97,12 @@ onMounted(loadSkills)
           </div>
           <aside class="skill-help-rule"><strong>作用边界</strong><span>技能可以编排多个工具；工具不理解完整工作流。MCP 属于工具来源，不属于技能。</span></aside>
           <section class="skill-help-example">
-            <div><small>组合示例</small><h3>“知识库研究技能”如何工作</h3></div>
+            <div><small>组合示例</small><h3>“笔记整理技能”如何工作</h3></div>
             <ol>
-              <li><span>1</span><p>Agent 加载技能，理解“先盘点、再检索、最后引用总结”的步骤。</p></li>
-              <li><span>2</span><p>调用 <code>list_knowledge_bases</code>，确认当前有哪些知识库及索引状态。</p></li>
-              <li><span>3</span><p>按技能规则选择范围，再调用 <code>retrieve_knowledge</code> 检索相关内容。</p></li>
-              <li><span>4</span><p>技能约束最终答案的结构和引用方式；真正读取数据的能力始终来自工具。</p></li>
+              <li><span>1</span><p>Agent 加载技能，区分用户要查看笔记列表，还是搜索某个主题。</p></li>
+              <li><span>2</span><p>查看全部笔记时调用 <code>list_notes</code>；按主题查找时调用 <code>search_notes</code>。</p></li>
+              <li><span>3</span><p>修改前用 <code>get_note</code> 读取完整 Markdown，保留原有结构和格式。</p></li>
+              <li><span>4</span><p>技能约束操作顺序；真正读取和写入数据的能力始终来自工具。</p></li>
             </ol>
           </section>
         </div>

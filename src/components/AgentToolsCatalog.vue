@@ -1,6 +1,6 @@
 <script setup>
 import { computed, onMounted, ref } from 'vue'
-import { Brain, Cable, CheckCircle2, LibraryBig, LoaderCircle, NotebookPen, RefreshCw, ShieldCheck, Sparkles, TerminalSquare, UsersRound, Wrench } from 'lucide-vue-next'
+import { Brain, Cable, CheckCircle2, FolderTree, LibraryBig, LoaderCircle, NotebookPen, RefreshCw, ShieldCheck, Sparkles, TerminalSquare, UsersRound, Wrench } from 'lucide-vue-next'
 import { invoke } from '../services/tauri'
 
 const tools = ref([])
@@ -11,6 +11,7 @@ const error = ref('')
 const toolMeta = {
   get_current_time: { label: '获取当前时间', group: 'system', permission: '只读' },
   run_sandbox_script: { label: '运行隔离计算脚本', group: 'system', permission: '计算' },
+  list_notes: { label: '列出笔记', group: 'notes', permission: '只读' },
   search_notes: { label: '搜索笔记', group: 'notes', permission: '只读' },
   get_note: { label: '读取笔记', group: 'notes', permission: '只读' },
   create_note: { label: '创建笔记', group: 'notes', permission: '写入' },
@@ -18,11 +19,15 @@ const toolMeta = {
   move_note_to_knowledge_base: { label: '移动笔记到其他知识库', group: 'knowledge', permission: '写入' },
   update_note: { label: '生成笔记修改提案', group: 'notes', permission: '写入' },
   delete_note: { label: '将笔记移入最近删除', group: 'notes', permission: '写入' },
+  list_notebooks: { label: '列出笔记本', group: 'notebooks', permission: '只读' },
+  create_notebook: { label: '创建笔记本', group: 'notebooks', permission: '写入' },
+  update_notebook: { label: '更新笔记本', group: 'notebooks', permission: '写入' },
+  move_notebook: { label: '移动笔记本', group: 'notebooks', permission: '写入' },
+  delete_notebook: { label: '删除笔记本', group: 'notebooks', permission: '写入' },
   create_knowledge_base: { label: '创建知识库', group: 'knowledge', permission: '写入' },
   update_knowledge_base: { label: '更新知识库信息', group: 'knowledge', permission: '写入' },
   delete_knowledge_base: { label: '删除知识库', group: 'knowledge', permission: '写入' },
   list_knowledge_bases: { label: '读取知识库目录', group: 'knowledge', permission: '只读' },
-  retrieve_knowledge: { label: '检索知识库', group: 'knowledge', permission: '只读' },
   update_memory: { label: '更新 Agent 记忆', group: 'agent-memory', permission: '写入' },
   read_skill: { label: '读取 Agent 技能', group: 'agent-skills', permission: '只读' },
   write_skill: { label: '更新 Agent 技能', group: 'agent-skills', permission: '写入' },
@@ -37,7 +42,8 @@ const toolMeta = {
 const groupDefinitions = [
   { id: 'system', label: '系统', description: '时间、隔离计算等系统基础能力', icon: Wrench },
   { id: 'notes', label: '笔记', description: '创建、搜索、读取、修改或删除笔记', icon: NotebookPen },
-  { id: 'knowledge', label: '知识库', description: '管理知识库并检索已索引的本地资料', icon: LibraryBig },
+  { id: 'notebooks', label: '笔记本', description: '管理笔记本信息与层级，不递归删除内容', icon: FolderTree },
+  { id: 'knowledge', label: '知识库', description: '管理知识库元数据与笔记引用', icon: LibraryBig },
   { id: 'agent-memory', label: 'Agent 记忆', description: '维护 Agent 跨会话使用的长期记忆', icon: Brain },
   { id: 'agent-skills', label: 'Agent 技能', description: '读取、创建或更新本地 SKILL.md', icon: Sparkles },
   { id: 'agent-workspace', label: 'Agent 工作区', description: '在隔离工作区浏览、读取或写入文件', icon: TerminalSquare },

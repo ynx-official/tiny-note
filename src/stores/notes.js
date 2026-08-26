@@ -95,7 +95,18 @@ export const useNotesStore = defineStore('notes', {
     },
     async openExternalSource(source) {
       const file = await invoke('external_markdown_read', { id: source.id })
-      if (file.error || typeof file.content !== 'string') throw new Error(file.error || '外部文件读取失败')
+      if (file.error) throw new Error(file.error)
+      if (file.changed === false) {
+        const cached = await invoke('note_get', { id: source.id })
+        if (!cached) throw new Error('外部来源缓存不存在')
+        const note = { ...cached, external: true, externalPath: file.path }
+        const index = this.notes.findIndex(item => item.id === note.id)
+        if (index >= 0) this.notes[index] = note
+        else this.notes.unshift(note)
+        this.activeId = note.id
+        return note
+      }
+      if (typeof file.content !== 'string') throw new Error('外部文件读取失败')
       const contentHtml = sanitizeEditorHtml(markdownToEditorHtml(file.content))
       return this.openExternalMarkdown({
         path: file.path,

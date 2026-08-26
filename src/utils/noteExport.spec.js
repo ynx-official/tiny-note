@@ -6,6 +6,7 @@ import {
   downloadNoteHtml,
   downloadBlob,
   exportNotePdf,
+  exportMermaidPng,
   initializeExportMermaidViewers,
   NOTE_EXPORT_CSS,
   printNote
@@ -29,6 +30,7 @@ describe('note export documents', () => {
   it('centers a focused Mermaid diagram while keeping oversized diagrams scrollable', () => {
     expect(NOTE_EXPORT_CSS).toMatch(/\.tiny-note-export-mermaid-viewport\s*\{[^}]*display:\s*flex;/s)
     expect(NOTE_EXPORT_CSS).toMatch(/\.tiny-note-export-mermaid-canvas\s*\{[^}]*flex:\s*0 0 auto;[^}]*margin:\s*auto;/s)
+    expect(NOTE_EXPORT_CSS).toMatch(/\.tiny-note-export-mermaid-actions button\s*\{[^}]*height:\s*32px;[^}]*font:\s*500 12px/s)
   })
 
   it('embeds rendered Mermaid SVG in standalone HTML instead of exporting its source block', async () => {
@@ -52,14 +54,53 @@ describe('note export documents', () => {
     expect(html).toContain('data-mermaid-viewer')
     const exportedDocument = new window.DOMParser().parseFromString(html, 'text/html')
     const exportedFigure = exportedDocument.querySelector('[data-mermaid-viewer]')
-    expect(exportedFigure.querySelector('[data-mermaid-action="expand"]')).not.toBeNull()
+    const figureActions = [...exportedFigure.querySelectorAll('[data-mermaid-action]')]
+    expect(figureActions.map(button => button.dataset.mermaidAction)).toEqual(['download-png', 'expand'])
+    expect(figureActions[0].textContent).toContain('下载高清图')
     expect(exportedFigure.querySelector('[data-mermaid-action="zoom-in"]')).toBeNull()
     expect(exportedFigure.querySelector('[data-mermaid-viewport]')).toBeNull()
     expect(html).toContain('initializeExportMermaidViewers')
     expect(html).toContain('createMermaidViewportKernel')
+    expect(html).toContain('exportMermaidPng')
     expect(html).toContain('<svg viewBox="0 0 100 50">')
     expect(html).toContain('渲染完成')
     expect(html).not.toContain('class="language-mermaid"')
+  })
+
+  it('rasterizes a Mermaid SVG to a bounded four-times PNG on a white background', async () => {
+    const drawImage = vi.fn()
+    const fillRect = vi.fn()
+    const context = { drawImage, fillRect, set fillStyle(value) { this.background = value } }
+    const canvas = {
+      width: 0,
+      height: 0,
+      getContext: vi.fn(() => context),
+      toBlob: callback => callback(new window.Blob(['png'], { type: 'image/png' }))
+    }
+    class FakeImage {
+      set src(value) {
+        this.source = value
+        Promise.resolve().then(() => this.onload())
+      }
+    }
+    const createObjectURL = vi.fn(() => 'blob:mermaid')
+    const revokeObjectURL = vi.fn()
+    const svg = window.document.createElementNS('http://www.w3.org/2000/svg', 'svg')
+    svg.setAttribute('viewBox', '0 0 400 200')
+
+    const result = await exportMermaidPng(svg, {
+      documentRef: { createElement: vi.fn(() => canvas) },
+      windowRef: { Blob: window.Blob, Image: FakeImage, XMLSerializer: window.XMLSerializer },
+      urlRef: { createObjectURL, revokeObjectURL }
+    })
+
+    expect(result.type).toBe('image/png')
+    expect(canvas.width).toBe(1600)
+    expect(canvas.height).toBe(800)
+    expect(context.background).toBe('#ffffff')
+    expect(fillRect).toHaveBeenCalledWith(0, 0, 1600, 800)
+    expect(drawImage).toHaveBeenCalledOnce()
+    expect(revokeObjectURL).toHaveBeenCalledWith('blob:mermaid')
   })
 
   it('keeps the article clean and activates shared zoom and pan controls only in a focused diagram dialog', () => {

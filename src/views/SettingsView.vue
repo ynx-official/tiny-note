@@ -39,8 +39,6 @@ const modelFetchError = ref('')
 const modelTestStates = ref({})
 const balanceStates = ref({})
 const balanceRefreshingAll = ref(false)
-const indexStatus = ref(null)
-const indexBusy = ref(false)
 const appVersion = ref(BUNDLED_APP_VERSION)
 const updateStatus = ref('idle')
 const updateInfo = ref(null)
@@ -558,12 +556,6 @@ async function queryAllBalances() {
     balanceRefreshingAll.value = false
   }
 }
-async function refreshIndexStatus() { try { indexStatus.value = await invoke('search_index_status') } catch { indexStatus.value = null } }
-async function rebuildSearchIndex() {
-  indexBusy.value = true
-  try { indexStatus.value = await invoke('search_index_rebuild') } finally { indexBusy.value = false }
-}
-
 async function checkForUpdates() {
   updateStatus.value = 'checking'
   updateInfo.value = null
@@ -602,7 +594,6 @@ onMounted(async () => {
   await appStore.initialize()
   locale.value = settings.value.language
   try { appVersion.value = await appUpdater.currentVersion(appVersion.value) } catch { /* keep the bundled fallback */ }
-  await refreshIndexStatus()
 })
 
 watch(() => settings.value.language, value => { if (value) locale.value = value })
@@ -692,9 +683,6 @@ watch(filteredSections, sections => {
               <label class="settings-switch"><input v-model="settings.fimEnabled" type="checkbox" :disabled="saving" @change="save" /><span class="settings-switch-track"></span></label>
             </div>
             <p class="settings-inline-note">{{ t('fimCostHint') }}</p>
-            <div class="settings-subheading">本地知识索引</div>
-            <div class="settings-setting-row"><div class="settings-setting-copy"><strong>自动全文检索</strong><span>为笔记和文本类知识库文件建立本地索引，不需要 Embedding。</span></div><button type="button" class="settings-fetch-button" :disabled="indexBusy" @click="rebuildSearchIndex"><RefreshCw :size="14" :class="{ spinning: indexBusy }" />{{ indexBusy ? '重建中…' : '重建索引' }}</button></div>
-            <p v-if="indexStatus" class="settings-inline-note">已索引 {{ indexStatus.indexed }} 个文档、{{ indexStatus.chunks }} 个片段；失败 {{ indexStatus.failed }}，不支持 {{ indexStatus.unsupported }}。</p>
           </section>
 
           <section v-else-if="activeSectionId === 'models'" class="settings-detail-section">

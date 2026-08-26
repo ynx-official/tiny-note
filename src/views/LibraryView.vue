@@ -9,6 +9,7 @@ import {
 } from 'lucide-vue-next'
 import { useLibraryStore } from '../stores/library'
 import { useNotesStore } from '../stores/notes'
+import { useWorkspaceSidebar } from '../utils/workspaceSidebar'
 import { requestPrompt } from '../services/promptDialog'
 import { requestConfirmation, showToast } from '../services/appFeedback'
 
@@ -22,6 +23,7 @@ const category = ref('personal')
 const view = ref('grid')
 const query = ref('')
 const sidebarCollapsed = ref(false)
+const { sidebarWidth, isResizing, onResizeStart } = useWorkspaceSidebar()
 const searchVisible = ref(false)
 const sorting = ref(false)
 const importing = ref(false)
@@ -103,7 +105,7 @@ function openNote(note) { router.push({ path: '/notes', query: { note: note.id }
 
 <template>
   <div class="library-layout knowledge-page">
-    <aside class="library-sidebar kb-sidebar" :class="{ collapsed: sidebarCollapsed }">
+    <aside class="library-sidebar kb-sidebar" :class="{ collapsed: sidebarCollapsed, 'is-resizing': isResizing }" :style="{ width: sidebarCollapsed ? '0px' : sidebarWidth + 'px' }">
       <div class="kb-sidebar-inner">
         <div class="kb-sidebar-topbar">
           <button class="topbar-btn" :title="t('noteSidebarCollapse')" @click="sidebarCollapsed = true"><PanelLeftClose :size="18" /></button>
@@ -128,6 +130,7 @@ function openNote(note) { router.push({ path: '/notes', query: { note: note.id }
         </div>
       </div>
     </aside>
+    <div v-if="!sidebarCollapsed" class="sidebar-resize-handle" @mousedown="onResizeStart"></div>
     <button v-if="sidebarCollapsed" class="sidebar-expand-btn kb-expand" :title="t('noteSidebarExpand')" @click="sidebarCollapsed = false"><PanelLeftOpen :size="18" /></button>
 
     <section class="library-main kb-main" :class="{ 'is-drop-target': dropActive }" @dragover.prevent="dropActive = true" @dragleave.prevent="dropActive = false" @drop.prevent="handleDrop">
@@ -171,7 +174,7 @@ function openNote(note) { router.push({ path: '/notes', query: { note: note.id }
         </article>
         <article v-for="entry in entries" :key="entry.relativePath" class="file-card" tabindex="0" @dblclick="openEntry(entry)" @keydown.enter="openEntry(entry)">
           <div class="file-icon" :class="entry.kind"><FolderOpen v-if="entry.kind === 'folder'" :size="23" /><File v-else :size="23" /></div>
-          <div class="file-info"><strong>{{ entry.name }}</strong><small>{{ entry.kind === 'folder' ? '文件夹' : `${Math.max(1, Math.round(entry.size / 1024))} KB` }}<span v-if="entry.kind === 'file'" class="file-index-status" :class="`is-${entry.indexStatus || 'pending'}`"> · {{ ({ indexed: '已索引', failed: '索引失败', unsupported: '不支持', pending: '待索引' })[entry.indexStatus || 'pending'] }}</span></small><em v-if="query && entry.relativePath !== entry.name">{{ entry.relativePath }}</em></div>
+          <div class="file-info"><strong>{{ entry.name }}</strong><small>{{ entry.kind === 'folder' ? '文件夹' : `${Math.max(1, Math.round(entry.size / 1024))} KB` }}</small><em v-if="query && entry.relativePath !== entry.name">{{ entry.relativePath }}</em></div>
           <div class="file-card-actions"><button v-if="entry.kind === 'file'" class="file-menu" title="预览" @click.stop="store.openPreview(entry.relativePath)"><Eye :size="15" /></button><button class="file-action" title="重命名" @click.stop="rename(entry)"><Pencil :size="14" /></button><button class="file-trash" :title="t('trash')" @click.stop="remove(entry)"><Trash2 :size="14" /></button></div>
         </article>
       </div>

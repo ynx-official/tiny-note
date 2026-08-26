@@ -23,9 +23,10 @@ describe('SkillsManagement', () => {
     const dialog = wrapper.get('[role="dialog"][aria-label="Agent 技能与工具说明"]')
     expect(dialog.text()).toContain('技能决定怎么做')
     expect(dialog.text()).toContain('工具决定能做什么')
-    expect(dialog.text()).toContain('知识库研究技能')
-    expect(dialog.text()).toContain('list_knowledge_bases')
-    expect(dialog.text()).toContain('retrieve_knowledge')
+    expect(dialog.text()).toContain('笔记整理技能')
+    expect(dialog.text()).toContain('list_notes')
+    expect(dialog.text()).toContain('get_note')
+    expect(dialog.text()).not.toContain('retrieve_knowledge')
 
     await dialog.get('[aria-label="关闭说明"]').trigger('click')
     expect(wrapper.find('[role="dialog"][aria-label="Agent 技能与工具说明"]').exists()).toBe(false)
