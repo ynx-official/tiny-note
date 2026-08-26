@@ -29,6 +29,7 @@ import { confirmAppDialog, feedbackState } from '../services/appFeedback'
 
 describe('SettingsView model services', () => {
   beforeEach(() => {
+    localStorage.clear()
     setActivePinia(createPinia())
     mocks.invoke.mockReset()
     mocks.invoke.mockImplementation(async (command, args) => {
@@ -40,6 +41,44 @@ describe('SettingsView model services', () => {
       if (command === 'model_upsert') return args
       return null
     })
+  })
+
+  it('organizes editor shortcuts in their own settings category and supports recording and reset', async () => {
+    const wrapper = mount(SettingsView, {
+      global: {
+        plugins: [createPinia(), createI18n({ legacy: false, locale: 'zh-CN', messages })],
+        stubs: { AgentToolsCatalog: true }
+      }
+    })
+    await vi.waitFor(() => expect(wrapper.text()).toContain('外观'))
+
+    expect(wrapper.find('.settings-shortcut-recorder').exists()).toBe(false)
+    const shortcutsSection = wrapper.findAll('.settings-nav-item').find(button => button.text().includes('快捷键'))
+    expect(shortcutsSection).toBeTruthy()
+    await shortcutsSection.trigger('click')
+    expect(wrapper.get('.settings-section-kicker').text()).toBe('编辑器')
+
+    const recorder = wrapper.get('.settings-shortcut-recorder')
+    await recorder.trigger('click')
+    expect(recorder.attributes('aria-pressed')).toBe('true')
+    expect(recorder.text()).toContain('请按下新快捷键')
+
+    await recorder.trigger('keydown', { key: 'm', code: 'KeyM' })
+    expect(wrapper.get('.settings-shortcut-status').text()).toContain('Ctrl')
+    expect(localStorage.getItem('tiny-note-editor-mode-shortcut')).toBeNull()
+    await recorder.trigger('keydown', { key: 'Escape', code: 'Escape' })
+    expect(recorder.attributes('aria-pressed')).toBe('false')
+
+    await recorder.trigger('click')
+
+    await recorder.trigger('keydown', { key: 'm', code: 'KeyM', ctrlKey: true, shiftKey: true })
+    expect(localStorage.getItem('tiny-note-editor-mode-shortcut')).toBe('Mod+Shift+KeyM')
+    expect(wrapper.findAll('.settings-shortcut-recorder kbd').map(key => key.text())).toEqual(['Ctrl', 'Shift', 'M'])
+
+    await wrapper.get('.settings-shortcut-reset').trigger('click')
+    expect(localStorage.getItem('tiny-note-editor-mode-shortcut')).toBe('Mod+Slash')
+    expect(wrapper.findAll('.settings-shortcut-recorder kbd').map(key => key.text())).toEqual(['Ctrl', '/'])
+    wrapper.unmount()
   })
 
   it('labels compatible providers clearly and updates an existing profile in place', async () => {

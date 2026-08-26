@@ -4,7 +4,6 @@ import { EditorContent, useEditor } from '@tiptap/vue-3'
 import { BubbleMenu } from '@tiptap/vue-3/menus'
 import { TextSelection } from '@tiptap/pm/state'
 import { Channel } from '@tauri-apps/api/core'
-import { openUrl } from '@tauri-apps/plugin-opener'
 import { createLowlight } from 'lowlight'
 import javascript from 'highlight.js/lib/languages/javascript'
 import typescript from 'highlight.js/lib/languages/typescript'
@@ -22,7 +21,7 @@ import CodeBlockComponent from './CodeBlockComponent.vue'
 import MarkdownSourceEditor from './MarkdownSourceEditor.vue'
 import MarkdownMessage from './MarkdownMessage.vue'
 import NoteAssistantSidebar from './NoteAssistantSidebar.vue'
-import { BookOpen, Bold, CalendarDays, Check, ChevronDown, CircleHelp, Columns2, Copy, Eye, FileCode2, FileText, Italic, Languages, LoaderCircle, Maximize2, MessageSquare, Pin, RotateCcw, Send, ShieldCheck, Table2, ThumbsDown, ThumbsUp, Underline as UnderlineIcon, Strikethrough, List, ListOrdered, ListChecks, Quote, Code2, Undo2, Redo2, Eraser, Link2, Highlighter, PenLine, AlignLeft, AlignCenter, AlignRight, Plus, PlusCircle, MoreHorizontal, Layers, Sparkles, Trash2, Download, Printer, Workflow, X, Zap } from 'lucide-vue-next'
+import { BookOpen, Bold, CalendarDays, Check, ChevronDown, CircleHelp, Columns2, Copy, FileCode2, FileText, Italic, Languages, LoaderCircle, Maximize2, MessageSquare, Pin, RotateCcw, Send, ShieldCheck, Table2, ThumbsDown, ThumbsUp, Underline as UnderlineIcon, Strikethrough, List, ListOrdered, ListChecks, Quote, Code2, Undo2, Redo2, Eraser, Link2, Highlighter, PenLine, AlignLeft, AlignCenter, AlignRight, Plus, PlusCircle, MoreHorizontal, Layers, Sparkles, Trash2, Download, Printer, Workflow, X, Zap } from 'lucide-vue-next'
 import { useNotesStore } from '../stores/notes'
 import { useLibraryStore } from '../stores/library'
 import { useAppStore } from '../stores/app'
@@ -30,6 +29,7 @@ import { useTasksStore } from '../stores/tasks'
 import { useI18n } from 'vue-i18n'
 import { createNoteExtensions } from '../editor/noteExtensions'
 import { DEFAULT_NOTE_MODE, NOTE_MODES, applyMarkdownSourceToEditor, clampSplitRatio, isRichClipboardHtml, markdownToEditorHtml, sanitizeEditorHtml, scrollOffset, scrollProgress } from '../utils/noteMarkdown'
+import { matchesKeyboardShortcut, shortcutDisplayParts } from '../utils/keyboardShortcut'
 import { createSafeExportFilename, downloadBlob, downloadNoteHtml, exportNotePdf, printNote as printNoteDocument } from '../utils/noteExport'
 import { prepareTaskFlight } from '../utils/taskFlight'
 import { markMermaidDiagramForEditing } from '../utils/mermaidEditorState'
@@ -39,7 +39,7 @@ import { requestConfirmation, showToast } from '../services/appFeedback'
 const lowlight = createLowlight()
 lowlight.register('javascript', javascript); lowlight.register('typescript', typescript); lowlight.register('python', python); lowlight.register('json', json); lowlight.register('html', xml); lowlight.register('xml', xml); lowlight.register('css', css); lowlight.register('bash', bash); lowlight.register('sql', sql); lowlight.register('markdown', markdown); lowlight.register('yaml', yaml); lowlight.register('rust', rust)
 const props = defineProps({ note: Object, tocVisible: { type: Boolean, default: false }, proposalId: { type: String, default: '' } }); const emit = defineEmits(['deleted', 'toggle-toc', 'proposal-reviewed']); const store = useNotesStore(); const library = useLibraryStore(); const appStore = useAppStore(); const tasksStore = useTasksStore(); const { t, locale } = useI18n(); const aiBusy = ref(false); const aiText = ref(''); const aiRequestId = ref(''); const aiAction = ref('summarize'); const aiResultAction = ref(''); const aiProposal = ref(null); const aiSources = ref([]); const aiConsentOpen = ref(false); const assistantOpen = ref(false); const assistantTriggerVisible = ref(true); const assistantBusy = ref(false); const assistantRequestId = ref(''); const assistantStreamingText = ref(''); const assistantMessages = ref([]); const assistantSelection = ref(null); const assistantResponseSources = ref([]); const assistantResponseProposal = ref(null); const aiPanelOpen = ref(false); const aiPanelSelectionText = ref(''); const commandMenuOpen = ref(false); const aiPrompt = ref(''); const aiInputRef = ref(null); const commandMenuDirection = ref('down'); const moreOpen = ref(false); const moreTriggerRef = ref(null); const moreMenuRef = ref(null); const revisionsOpen = ref(false); const revisions = ref([]); const revisionsBusy = ref(false); const insertOpen = ref(false); const tablePickerOpen = ref(false); const textColorOpen = ref(false); const highlightOpen = ref(false); const headingOpen = ref(false); const knowledgeMenuOpen = ref(false); const imageDialogOpen = ref(false); const imageUrl = ref(''); const imageAlt = ref(''); const imageInput = ref(null); const imageFileInput = ref(null); const tableRows = ref(0); const tableCols = ref(0); const fimEnabled = computed(() => appStore.settings.fimEnabled === true); const fimSuggestion = ref(''); const editorStateTick = ref(0); let fimTimer; let assistantTriggerTimer; let savedSelection = null; let pendingAiRequest = null; let pendingAiChange = null
-const modeIcons = { rich: PenLine, markdown: FileCode2, read: Eye }
+const modeIcons = { rich: PenLine, markdown: FileCode2 }
 const noteLinks = ref([])
 const tagDraft = ref('')
 const editorModes = NOTE_MODES.map(mode => ({ ...mode, icon: modeIcons[mode.id] }))
@@ -68,7 +68,10 @@ let splitResizeObserver
 let splitDragState
 let scrollSyncFrame
 let scrollSyncSource = ''
+let modeShortcutSwitching = false
 const currentMode = computed(() => editorModes.find(mode => mode.id === editorMode.value) || editorModes[0])
+const modeShortcutParts = computed(() => shortcutDisplayParts(appStore.editorModeShortcut))
+const modeShortcutLabel = computed(() => modeShortcutParts.value.join(' + '))
 const richMode = computed(() => editorMode.value === 'rich')
 const codeMode = computed(() => editorMode.value === 'markdown')
 const splitMode = computed(() => codeMode.value && markdownPreview.value)
@@ -310,6 +313,23 @@ async function changeEditorMode(mode) {
   setupSplitObserver()
 }
 
+async function handleEditorModeShortcut(event) {
+  if (!props.note || !matchesKeyboardShortcut(event, appStore.editorModeShortcut)) return
+  event.preventDefault()
+  event.stopPropagation()
+  if (modeShortcutSwitching || event.repeat) return
+  modeShortcutSwitching = true
+  try {
+    const nextMode = editorMode.value === 'rich' ? 'markdown' : 'rich'
+    await changeEditorMode(nextMode)
+    await nextTick()
+    if (editorMode.value === 'markdown') sourceEditorRef.value?.focus()
+    else editor.value?.commands.focus()
+  } finally {
+    modeShortcutSwitching = false
+  }
+}
+
 function toggleModeMenu() {
   closeToolbarMenus()
   modeMenuIndex.value = Math.max(0, editorModes.findIndex(mode => mode.id === editorMode.value))
@@ -441,17 +461,6 @@ async function viewPastedMarkdown() {
   sourceEditorRef.value?.focus()
 }
 
-async function handleEditorLink(event) {
-  if (editorMode.value !== 'read') return
-  const link = event.target.closest('a[href]')
-  if (!link) return
-  event.preventDefault()
-  const href = normalizeLinkHref(link.getAttribute('href'))
-  if (!href) return
-  if (window.__TAURI_INTERNALS__) await openUrl(href)
-  else window.open(href, '_blank', 'noopener,noreferrer')
-}
-
 function resetTransientEditorState() {
   savedSelection = null
   pendingAiRequest = null
@@ -532,6 +541,7 @@ onBeforeUnmount(() => {
   cancelAnimationFrame(scrollSyncFrame)
   document.removeEventListener('pointerdown', handleDocumentPointerDown)
   window.removeEventListener('tiny-note-task-updated', handleBackgroundNoteTask)
+  window.removeEventListener('keydown', handleEditorModeShortcut, true)
   void flushLatestContent({ save: true })
   editor.value?.destroy()
 })
@@ -554,6 +564,7 @@ watch(() => props.proposalId, id => loadExternalProposal(id))
 onMounted(async () => {
   document.addEventListener('pointerdown', handleDocumentPointerDown)
   window.addEventListener('tiny-note-task-updated', handleBackgroundNoteTask)
+  window.addEventListener('keydown', handleEditorModeShortcut, true)
   await appStore.initialize()
   await tasksStore.initialize()
   if (!library.bases.length) { try { await library.load() } catch {} }
@@ -872,7 +883,7 @@ async function confirmPendingAiChange() {
 async function applyAiResult(mode) {
   if (!editor.value || !aiText.value || !aiProposal.value) return
   if (mode === 'insert' && editorMode.value !== 'rich') {
-    showToast('Markdown 和阅读模式没有可靠插入位置，请切换到即时编辑后再应用插入。', { tone: 'warning' })
+    showToast('Markdown 模式没有可靠插入位置，请切换到即时编辑后再应用插入。', { tone: 'warning' })
     return
   }
   if (!await flushLatestContent()) return
@@ -1157,7 +1168,7 @@ async function createKnowledgeFromEditor() {
 const title = computed({
   get: () => props.note?.title || '',
   set: value => {
-    if (!props.note || editorMode.value === 'read') return
+    if (!props.note) return
     props.note.title = value
     scheduleNoteSave(props.note)
   }
@@ -1165,7 +1176,7 @@ const title = computed({
 </script>
 <template>
   <div v-if="note" class="note-editor-shell">
-    <section class="editor-panel" :class="{ 'is-code-mode': codeMode, 'is-read-mode': editorMode === 'read' }">
+    <section class="editor-panel" :class="{ 'is-code-mode': codeMode }">
     <div class="toolbar friday-editor-toolbar" :class="{ 'is-compact': !richMode, 'with-assistant': !assistantTriggerVisible }">
       <div v-show="richMode" key="toolbar-rich-controls" class="toolbar-left-group">
         <button :title="t('undo')" :disabled="!canUndo" @click="editor?.chain().focus().undo().run()"><Undo2 :size="19" /></button>
@@ -1217,7 +1228,7 @@ const title = computed({
           @click="toggleMarkdownPreview"
         ><Columns2 :size="16" /><span>预览</span></button>
         <span class="toolbar-menu-anchor mode-menu-anchor">
-          <button type="button" class="editor-mode-trigger" :aria-expanded="modeMenuOpen" aria-haspopup="menu" :title="`文章模式：${currentMode.label}`" @click="toggleModeMenu" @keydown.esc.stop="modeMenuOpen = false">
+          <button type="button" class="editor-mode-trigger" :aria-expanded="modeMenuOpen" aria-haspopup="menu" :title="`文章模式：${currentMode.label}（${modeShortcutLabel}）`" @click="toggleModeMenu" @keydown.esc.stop="modeMenuOpen = false">
             <component :is="currentMode.icon" :size="16" />
             <span class="editor-mode-label">{{ currentMode.label }}</span>
             <ChevronDown :size="13" />
@@ -1228,6 +1239,7 @@ const title = computed({
               <span><strong>{{ mode.label }}</strong><small>{{ mode.description }}</small></span>
               <Check v-if="editorMode === mode.id" :size="14" class="editor-mode-check" />
             </button>
+            <div class="editor-mode-shortcut-hint"><span>切换快捷键</span><kbd v-for="part in modeShortcutParts" :key="part">{{ part }}</kbd></div>
           </div>
         </span>
         <span v-if="exportStatusLabel" class="toolbar-export-status" role="status" aria-live="polite"><LoaderCircle :size="14" class="is-spinning" /> {{ exportStatusLabel }}</span>
@@ -1247,11 +1259,11 @@ const title = computed({
         <button v-if="assistantTriggerVisible" class="ai-button" @click="toggleAssistant"><Layers :size="17" /> Tiny Note 助理</button>
       </div>
     </div>
-    <div class="editor-head"><input v-model="title" class="title-input" :readonly="editorMode === 'read'" :aria-readonly="editorMode === 'read'" :placeholder="t('untitled')" /><div class="editor-meta"><button type="button" class="note-pin-button" :class="{ active: note.pinned }" :aria-pressed="note.pinned" :aria-label="note.pinned ? '取消置顶' : '置顶笔记'" :title="note.pinned ? '取消置顶' : '置顶笔记'" @click="togglePinned"><Pin :size="14" /></button><span :class="{ saving: store.saving }">{{ store.saving ? t('saving') : t('save') }}</span></div></div>
-    <div v-if="editorMode !== 'read' || note.tags?.length || noteLinks.length" class="note-metadata">
+    <div class="editor-head"><input v-model="title" class="title-input" :placeholder="t('untitled')" /><div class="editor-meta"><button type="button" class="note-pin-button" :class="{ active: note.pinned }" :aria-pressed="note.pinned" :aria-label="note.pinned ? '取消置顶' : '置顶笔记'" :title="note.pinned ? '取消置顶' : '置顶笔记'" @click="togglePinned"><Pin :size="14" /></button><span :class="{ saving: store.saving }">{{ store.saving ? t('saving') : t('save') }}</span></div></div>
+    <div class="note-metadata">
       <div class="note-tag-list">
-        <span v-for="tag in note.tags || []" :key="tag" class="note-tag">#{{ tag }}<button v-if="editorMode !== 'read'" type="button" aria-label="移除标签" @click="removeTag(tag)">×</button></span>
-        <input v-if="editorMode !== 'read'" v-model="tagDraft" class="note-tag-input" placeholder="添加标签" @keydown.enter.prevent="addTag" />
+        <span v-for="tag in note.tags || []" :key="tag" class="note-tag">#{{ tag }}<button type="button" aria-label="移除标签" @click="removeTag(tag)">×</button></span>
+        <input v-model="tagDraft" class="note-tag-input" placeholder="添加标签" @keydown.enter.prevent="addTag" />
       </div>
       <div v-if="noteLinks.length" class="note-links" aria-label="关联笔记"><span>关联笔记</span><button v-for="link in noteLinks" :key="link.sourceNoteId + '-' + link.targetNoteId" type="button" @click="store.activeId = link.sourceNoteId === note.id ? link.targetNoteId : link.sourceNoteId">{{ link.targetTitle }}</button></div>
     </div>
@@ -1262,7 +1274,7 @@ const title = computed({
       </div>
       <div v-if="splitMode" class="split-divider" role="separator" :aria-orientation="splitVertical ? 'horizontal' : 'vertical'" aria-label="调整源码与预览比例" aria-valuemin="30" aria-valuemax="70" :aria-valuenow="Math.round(splitRatio)" @pointerdown="startSplitResize"><span></span></div>
       <div v-show="!codeMode || markdownPreview" key="editor-render" ref="previewScroller" class="editor-render-pane" :class="{ 'split-preview-pane': splitMode }" @scroll.passive="handlePreviewScroll">
-        <EditorContent :editor="editor" class="editor-content" :class="{ 'split-preview-content': splitMode, 'read-content': editorMode === 'read', 'has-pending-ai-change': aiChangePending }" @mousedown="confirmPendingAiChange" @click="handleEditorLink" @keydown.tab="handleEditorTab" @keydown.esc="dismissFim" />
+        <EditorContent :editor="editor" class="editor-content" :class="{ 'split-preview-content': splitMode, 'has-pending-ai-change': aiChangePending }" @mousedown="confirmPendingAiChange" @keydown.tab="handleEditorTab" @keydown.esc="dismissFim" />
       </div>
       <div v-if="markdownParseError" class="markdown-parse-error" role="alert">{{ markdownParseError }}</div>
       <div v-if="markdownPasteNotice" class="markdown-paste-notice" role="status">

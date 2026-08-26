@@ -2,11 +2,12 @@
 import { computed, onMounted, ref, watch } from 'vue'
 import { storeToRefs } from 'pinia'
 import { useI18n } from 'vue-i18n'
-import { AlertCircle, Check, ChevronDown, ChevronRight, Cpu, FlaskConical, Globe2, Info, Languages, LoaderCircle, Moon, Monitor, Palette, Pencil, Plus, RefreshCw, Search, Sparkles, Sun, Trash2, Wrench, X } from 'lucide-vue-next'
+import { AlertCircle, Check, ChevronDown, ChevronRight, Cpu, FlaskConical, Globe2, Info, Keyboard, Languages, LoaderCircle, Moon, Monitor, Palette, Pencil, Plus, RefreshCw, Search, Sparkles, Sun, Trash2, Wrench, X } from 'lucide-vue-next'
 import { invoke } from '../services/tauri'
 import { appUpdater, BUNDLED_APP_VERSION } from '../services/appUpdater'
 import { requestConfirmation, showToast } from '../services/appFeedback'
 import { useAppStore } from '../stores/app'
+import { shortcutDisplayParts, shortcutFromKeyboardEvent } from '../utils/keyboardShortcut'
 import { modelProviderLabel } from '../utils/modelProvider'
 import AgentToolsCatalog from '../components/AgentToolsCatalog.vue'
 import doubaoIcon from '../assets/providers/doubao.png'
@@ -19,7 +20,7 @@ import otherIcon from '../assets/providers/other.png'
 
 const { t, locale } = useI18n()
 const appStore = useAppStore()
-const { settings, models } = storeToRefs(appStore)
+const { settings, models, editorModeShortcut } = storeToRefs(appStore)
 const draft = ref(null)
 const showLanguageDropdown = ref(false)
 const providerMenuOpen = ref(false)
@@ -47,6 +48,8 @@ const updateError = ref('')
 const backupInput = ref(null)
 const backupStatus = ref('')
 const selectedImageModelIds = ref([])
+const shortcutRecording = ref(false)
+const shortcutError = ref('')
 
 const providerOptions = [
   { key: 'doubao', label: '豆包', mark: '豆', icon: doubaoIcon, baseUrl: 'https://ark.cn-beijing.volces.com/api/v3' },
@@ -73,8 +76,10 @@ const languageOptions = computed(() => [
   { value: 'en', label: 'English' }
 ])
 const currentLanguageLabel = computed(() => languageOptions.value.find(option => option.value === settings.value.language)?.label || '简体中文')
+const editorModeShortcutParts = computed(() => shortcutDisplayParts(editorModeShortcut.value))
 const settingsSections = computed(() => [
   { id: 'appearance', label: t('appearance'), description: t('appearanceHint'), icon: Palette },
+  { id: 'shortcuts', label: t('shortcutSettings'), description: t('shortcutSettingsHint'), icon: Keyboard },
   { id: 'ai', label: t('aiWriting'), description: t('aiWritingHint'), icon: Sparkles },
   { id: 'agent-tools', label: locale.value === 'zh-CN' ? 'Agent 工具（实验）' : 'Agent tools (Experimental)', description: locale.value === 'zh-CN' ? '查看实验能力和强制审批策略' : 'Inspect experimental capabilities and approval policies', icon: Wrench },
   { id: 'models', label: t('models'), description: t('modelsHint'), icon: Cpu },
@@ -159,6 +164,39 @@ async function selectLanguage(value) {
   locale.value = value
   showLanguageDropdown.value = false
   await save()
+}
+
+function beginShortcutRecording() {
+  shortcutError.value = ''
+  shortcutRecording.value = true
+}
+
+function cancelShortcutRecording() {
+  shortcutRecording.value = false
+  shortcutError.value = ''
+}
+
+function recordEditorModeShortcut(event) {
+  if (!shortcutRecording.value) return
+  event.preventDefault()
+  event.stopPropagation()
+  if (event.key === 'Escape') {
+    cancelShortcutRecording()
+    return
+  }
+  const shortcut = shortcutFromKeyboardEvent(event)
+  if (!shortcut) {
+    shortcutError.value = t('shortcutRequiresModifier')
+    return
+  }
+  appStore.setEditorModeShortcut(shortcut)
+  shortcutRecording.value = false
+  shortcutError.value = ''
+}
+
+function resetEditorModeShortcut() {
+  appStore.resetEditorModeShortcut()
+  cancelShortcutRecording()
 }
 
 function closeDropdowns() {
@@ -575,6 +613,30 @@ watch(filteredSections, sections => {
                 <div v-if="showLanguageDropdown" class="theme-dropdown-menu">
                   <button v-for="option in languageOptions" :key="option.value" class="theme-dropdown-item" :class="{ active: settings.language === option.value }" type="button" @click="selectLanguage(option.value)"><span>{{ option.label }}</span><Check v-if="settings.language === option.value" class="check-icon" :size="16" /></button>
                 </div>
+              </div>
+            </div>
+          </section>
+
+          <section v-else-if="activeSectionId === 'shortcuts'" class="settings-detail-section settings-shortcuts-section">
+            <div class="settings-section-kicker">{{ t('editorShortcuts') }}</div>
+            <div class="settings-setting-row settings-shortcut-row">
+              <div class="settings-setting-copy"><strong>{{ t('editorModeShortcut') }}</strong><span>{{ t('editorModeShortcutHint') }}</span></div>
+              <div class="settings-shortcut-control" @click.stop>
+                <button
+                  type="button"
+                  class="settings-shortcut-recorder"
+                  :class="{ recording: shortcutRecording }"
+                  :aria-pressed="String(shortcutRecording)"
+                  aria-describedby="editor-mode-shortcut-help"
+                  @click="beginShortcutRecording"
+                  @keydown="recordEditorModeShortcut"
+                  @blur="cancelShortcutRecording"
+                >
+                  <span v-if="shortcutRecording">{{ t('pressShortcut') }}</span>
+                  <template v-else><kbd v-for="part in editorModeShortcutParts" :key="part">{{ part }}</kbd></template>
+                </button>
+                <button type="button" class="settings-shortcut-reset" @click="resetEditorModeShortcut">{{ t('resetShortcut') }}</button>
+                <span id="editor-mode-shortcut-help" class="settings-shortcut-status" :class="{ error: shortcutError }" role="status" aria-live="polite">{{ shortcutError || t('recordShortcut') }}</span>
               </div>
             </div>
           </section>

@@ -23,7 +23,11 @@ Object.assign(messages['zh-CN'], {
   exportingHtml: '正在导出 HTML…', exportingPdf: '正在导出 PDF…', preparingPrint: '正在准备打印…',
   htmlExported: 'HTML 已导出', pdfExported: 'PDF 已导出',
   htmlExportFailed: 'HTML 导出失败，请重试', pdfExportFailed: 'PDF 导出失败，请重试', printFailed: '打印失败，请重试',
-  pdfTooLong: '文章过长，无法安全生成 PDF。请使用“打印”保存为 PDF，或拆分文章后重试。'
+  pdfTooLong: '文章过长，无法安全生成 PDF。请使用“打印”保存为 PDF，或拆分文章后重试。',
+  shortcutSettings: '快捷键', shortcutSettingsHint: '按功能分类查看并自定义应用快捷键', editorShortcuts: '编辑器',
+  editorModeShortcut: '切换编辑模式', editorModeShortcutHint: '在即时编辑和 Markdown 之间切换，仅保存在当前设备。',
+  recordShortcut: '点击后按下新的组合键', pressShortcut: '请按下新快捷键',
+  shortcutRequiresModifier: '请同时按下 Ctrl（macOS 为 ⌘）和一个按键', resetShortcut: '恢复默认'
 })
 
 Object.assign(messages.en, {
@@ -42,5 +46,9 @@ Object.assign(messages.en, {
   exportingHtml: 'Exporting HTML…', exportingPdf: 'Exporting PDF…', preparingPrint: 'Preparing to print…',
   htmlExported: 'HTML exported', pdfExported: 'PDF exported',
   htmlExportFailed: 'Could not export HTML. Try again.', pdfExportFailed: 'Could not export PDF. Try again.', printFailed: 'Could not print. Try again.',
-  pdfTooLong: 'This article is too long to export safely. Use Print to save as PDF, or split the article and try again.'
+  pdfTooLong: 'This article is too long to export safely. Use Print to save as PDF, or split the article and try again.',
+  shortcutSettings: 'Shortcuts', shortcutSettingsHint: 'Browse and customize shortcuts by feature', editorShortcuts: 'Editor',
+  editorModeShortcut: 'Switch editor mode', editorModeShortcutHint: 'Switch between instant editing and Markdown. Stored on this device only.',
+  recordShortcut: 'Click, then press a new shortcut', pressShortcut: 'Press a new shortcut',
+  shortcutRequiresModifier: 'Press Ctrl (⌘ on macOS) together with another key', resetShortcut: 'Reset'
 })

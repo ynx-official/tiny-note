@@ -1,9 +1,22 @@
 import { defineStore } from 'pinia'
 import { invoke } from '../services/tauri'
+import {
+  DEFAULT_EDITOR_MODE_SHORTCUT,
+  EDITOR_MODE_SHORTCUT_STORAGE_KEY,
+  normalizeShortcut
+} from '../utils/keyboardShortcut'
 
 const DEFAULT_SETTINGS = { theme: 'system', language: 'zh-CN', fimEnabled: false }
 let initialization = null
 let stopSystemThemeListener = null
+
+function readEditorModeShortcut() {
+  try {
+    return normalizeShortcut(localStorage.getItem(EDITOR_MODE_SHORTCUT_STORAGE_KEY))
+  } catch {
+    return DEFAULT_EDITOR_MODE_SHORTCUT
+  }
+}
 
 function mediaQuery() {
   return typeof window !== 'undefined' && typeof window.matchMedia === 'function'
@@ -42,6 +55,7 @@ export function applyCachedTheme() {
 export const useAppStore = defineStore('app', {
   state: () => ({
     settings: { ...DEFAULT_SETTINGS },
+    editorModeShortcut: readEditorModeShortcut(),
     models: [],
     initialized: false,
     settingsError: null,
@@ -51,6 +65,15 @@ export const useAppStore = defineStore('app', {
     defaultModel: state => state.models.find(model => model.isDefault) || state.models[0] || null
   },
   actions: {
+    setEditorModeShortcut(shortcut) {
+      const normalized = normalizeShortcut(shortcut)
+      this.editorModeShortcut = normalized
+      try { localStorage.setItem(EDITOR_MODE_SHORTCUT_STORAGE_KEY, normalized) } catch { /* keep the in-memory preference */ }
+      return normalized
+    },
+    resetEditorModeShortcut() {
+      return this.setEditorModeShortcut(DEFAULT_EDITOR_MODE_SHORTCUT)
+    },
     async initialize({ force = false } = {}) {
       if (this.initialized && !force) return
       if (initialization && !force) return initialization

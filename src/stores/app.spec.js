@@ -33,6 +33,23 @@ describe('app startup store', () => {
     expect(window.document.documentElement.dataset.theme).toBe('dark')
   })
 
+  it('persists the device-local editor mode shortcut and restores the default', () => {
+    const store = useAppStore()
+    expect(store.editorModeShortcut).toBe('Mod+Slash')
+
+    store.setEditorModeShortcut('Mod+Shift+KeyM')
+    expect(store.editorModeShortcut).toBe('Mod+Shift+KeyM')
+    expect(localStorage.getItem('tiny-note-editor-mode-shortcut')).toBe('Mod+Shift+KeyM')
+
+    setActivePinia(createPinia())
+    const reloadedStore = useAppStore()
+    expect(reloadedStore.editorModeShortcut).toBe('Mod+Shift+KeyM')
+
+    reloadedStore.resetEditorModeShortcut()
+    expect(reloadedStore.editorModeShortcut).toBe('Mod+Slash')
+    expect(localStorage.getItem('tiny-note-editor-mode-shortcut')).toBe('Mod+Slash')
+  })
+
   it('applies the cached resolved theme synchronously during bootstrap', () => {
     localStorage.setItem('tiny-note-theme', 'dark')
     applyCachedTheme()

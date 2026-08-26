@@ -4,6 +4,7 @@ import { EditorContent } from '@tiptap/vue-3'
 import { createI18n } from 'vue-i18n'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { messages } from '../i18n'
+import { useAppStore } from '../stores/app'
 import { useNotesStore } from '../stores/notes'
 import NoteEditor from './NoteEditor.vue'
 import MarkdownSourceEditor from './MarkdownSourceEditor.vue'
@@ -47,6 +48,7 @@ function note(id = 'note-1') {
 
 async function mountEditor(activeNote = note(), extraProps = {}) {
   const pinia = createPinia()
+  const appStore = useAppStore(pinia)
   const notesStore = useNotesStore(pinia)
   notesStore.notes = [activeNote]
   notesStore.activeId = activeNote.id
@@ -71,6 +73,7 @@ async function mountEditor(activeNote = note(), extraProps = {}) {
   })
   await flushPromises()
   wrapper.notesStore = notesStore
+  wrapper.appStore = appStore
   return wrapper
 }
 
@@ -186,25 +189,93 @@ describe('NoteEditor article modes', () => {
     wrapper.unmount()
   })
 
-  it('opens in instant editing and exposes Markdown and reading as the other primary modes', async () => {
+  it('opens in instant editing and exposes only instant editing and Markdown', async () => {
     const wrapper = await mountEditor()
     expect(wrapper.get('.editor-mode-trigger').text()).toContain('即时编辑')
     expect(wrapper.get('.toolbar-left-group').isVisible()).toBe(true)
 
     await wrapper.get('.editor-mode-trigger').trigger('click')
     const modeItems = wrapper.findAll('[role="menuitemradio"]')
-    expect(modeItems.map(item => item.find('strong').text())).toEqual(['即时编辑', 'Markdown', '阅读'])
+    expect(modeItems.map(item => item.find('strong').text())).toEqual(['即时编辑', 'Markdown'])
     await modeItems[1].trigger('click')
     await flushPromises()
     expect(wrapper.find('.markdown-source-editor').exists()).toBe(true)
     expect(wrapper.find('.split-preview-pane').exists()).toBe(true)
     expect(wrapper.get('.toolbar-left-group').isVisible()).toBe(false)
 
-    await wrapper.get('.editor-mode-trigger').trigger('click')
-    await wrapper.findAll('[role="menuitemradio"]')[2].trigger('click')
+    expect(wrapper.text()).not.toContain('阅读模式')
+    wrapper.unmount()
+  })
+
+  it('toggles both editor modes with Ctrl+/ even when CodeMirror has focus', async () => {
+    const active = note('note-mode-shortcut')
+    const wrapper = await mountEditor(active)
+    const enterMarkdown = new window.KeyboardEvent('keydown', {
+      key: '/', code: 'Slash', ctrlKey: true, bubbles: true, cancelable: true
+    })
+
+    wrapper.get('.note-prose').element.dispatchEvent(enterMarkdown)
     await flushPromises()
-    expect(wrapper.get('.note-prose').attributes('contenteditable')).toBe('false')
-    expect(wrapper.find('.markdown-source-editor').exists()).toBe(false)
+    expect(enterMarkdown.defaultPrevented).toBe(true)
+    expect(wrapper.get('.editor-mode-trigger').text()).toContain('Markdown')
+    expect(globalThis.document.activeElement).toBe(wrapper.get('.cm-content').element)
+
+    const exactDraft = '# 快捷键保存\n\n\n保留空行\n'
+    const source = wrapper.findComponent(MarkdownSourceEditor)
+    source.vm.view.dispatch({ changes: { from: 0, to: source.vm.view.state.doc.length, insert: exactDraft } })
+    const returnToRich = new window.KeyboardEvent('keydown', {
+      key: '/', code: 'Slash', ctrlKey: true, bubbles: true, cancelable: true
+    })
+    wrapper.get('.cm-content').element.dispatchEvent(returnToRich)
+    await flushPromises()
+    expect(returnToRich.defaultPrevented).toBe(true)
+    expect(wrapper.get('.editor-mode-trigger').text()).toContain('即时编辑')
+    expect(globalThis.document.activeElement).toBe(wrapper.get('.note-prose').element)
+    expect(active.contentMarkdown).toBe(exactDraft)
+    expect(wrapper.get('.note-prose').text()).toContain('保留空行')
+    wrapper.unmount()
+  })
+
+  it('uses the customized editor mode shortcut instead of Ctrl+/', async () => {
+    const wrapper = await mountEditor(note('note-custom-shortcut'))
+    wrapper.appStore.setEditorModeShortcut('Mod+Shift+KeyM')
+    await flushPromises()
+
+    wrapper.get('.note-prose').element.dispatchEvent(new window.KeyboardEvent('keydown', {
+      key: '/', code: 'Slash', ctrlKey: true, bubbles: true, cancelable: true
+    }))
+    await flushPromises()
+    expect(wrapper.get('.editor-mode-trigger').text()).toContain('即时编辑')
+
+    wrapper.get('.note-prose').element.dispatchEvent(new window.KeyboardEvent('keydown', {
+      key: 'm', code: 'KeyM', ctrlKey: true, shiftKey: true, bubbles: true, cancelable: true
+    }))
+    await flushPromises()
+    expect(wrapper.get('.editor-mode-trigger').text()).toContain('Markdown')
+    expect(wrapper.get('.editor-mode-trigger').attributes('title')).toContain('Ctrl + Shift + M')
+    wrapper.unmount()
+  })
+
+  it('consumes repeated shortcut presses while a mode switch is still saving', async () => {
+    const wrapper = await mountEditor(note('note-shortcut-race'))
+    const first = new window.KeyboardEvent('keydown', {
+      key: '/', code: 'Slash', ctrlKey: true, bubbles: true, cancelable: true
+    })
+    const second = new window.KeyboardEvent('keydown', {
+      key: '/', code: 'Slash', ctrlKey: true, bubbles: true, cancelable: true
+    })
+    const repeated = new window.KeyboardEvent('keydown', {
+      key: '/', code: 'Slash', ctrlKey: true, repeat: true, bubbles: true, cancelable: true
+    })
+
+    wrapper.get('.note-prose').element.dispatchEvent(first)
+    wrapper.get('.note-prose').element.dispatchEvent(second)
+    wrapper.get('.note-prose').element.dispatchEvent(repeated)
+    expect(first.defaultPrevented).toBe(true)
+    expect(second.defaultPrevented).toBe(true)
+    expect(repeated.defaultPrevented).toBe(true)
+    await flushPromises()
+    expect(wrapper.get('.editor-mode-trigger').text()).toContain('Markdown')
     wrapper.unmount()
   })
 
