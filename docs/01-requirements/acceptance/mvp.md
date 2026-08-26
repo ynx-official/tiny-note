@@ -30,7 +30,7 @@
 - Given 用户在任一文章模式中打开“更多”，When 查看输出操作，Then “打印”“导出 PDF”和“导出 HTML”是三个独立入口，PDF 导出直接生成 `.pdf` 文件而不复用系统打印对话框。
 - Given Markdown 草稿刚刚发生变化且尚未经过 150ms 解析防抖，When 用户立即打印或导出 HTML/PDF，Then 输出包含从最新草稿读取的标题和安全正文，标题不重复，且不包含应用外壳、工具栏或 AI 面板；HTML/PDF 中的 Mermaid 图表从围栏源码重新渲染，不复制编辑器瞬时 DOM。
 - Given 单个 Mermaid 围栏无法渲染，When 导出 HTML/PDF，Then 导出继续，该位置显示渲染失败提示并保留完整源码。
-- Given 导出的 HTML 包含一张或多张 Mermaid 图表，When 用户离线打开文件，Then 每张图都可独立使用缩小、放大、适合宽度和 100% 控件，滚轮绕鼠标位置缩放，按住左键拖动画布，键盘也可操作；When 打印该 HTML，Then 控件隐藏且图形适合页宽。
+- Given 导出的 HTML 包含一张或多张 Mermaid 图表，When 用户离线打开文件，Then 正文中的每张图都保持静态适宽，只显示“放大查看”；When 点击该按钮，Then 进入独立全屏聚焦层，可使用缩小、放大、适合宽度和 100% 控件，滚轮绕鼠标位置缩放，按住左键拖动画布，键盘也可操作；When 按 Esc 或关闭，Then 聚焦层移除且焦点返回原按钮。When 打印该 HTML，Then 放大按钮隐藏且图形适合页宽。
 - Given 导出 PDF，When 查看 Mermaid 图表，Then 只包含适合页宽的静态渲染结果，不包含 HTML 控件或脚本。
 - Given 文章标题包含中文、Emoji、文件系统非法字符、保留名或为空，When 导出 HTML/PDF，Then 生成合法文件名；HTML 包含 UTF-8 声明和内嵌阅读样式，PDF 使用 A4 文章版式。
 - Given PDF 正文很长或包含无 CORS 授权的远程图片，When 直接导出 PDF，Then 在浏览器画布安全范围内动态调整清晰度；超过范围时给出打印/拆分建议且不下载空白文件，无法嵌入的远程图片以可见占位说明替代而不静默消失。

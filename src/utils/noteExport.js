@@ -1,5 +1,6 @@
 import { sanitizeEditorHtml } from './noteMarkdown'
 import { renderMermaidDiagram } from './mermaidRenderer'
+import { createMermaidViewportKernel } from './mermaidViewport'
 
 const DEFAULT_EXPORT_TITLE = '未命名笔记'
 const WINDOWS_RESERVED_FILENAME = /^(?:con|prn|aux|nul|com[1-9]|lpt[1-9])(?:\..*)?$/i
@@ -140,23 +141,70 @@ const NOTE_EXPORT_ARTICLE_CSS = `
   overflow-wrap: anywhere;
 }
 .tiny-note-export-mermaid {
+  position: relative;
   margin: 1.2em 0;
+  padding: 16px;
   break-inside: avoid-page;
   border: 1px solid #e5e3df;
   border-radius: 8px;
   background: #ffffff;
   overflow: hidden;
 }
-.tiny-note-export-mermaid:not([data-mermaid-viewer]) { padding: 16px; }
-.tiny-note-export-mermaid:not([data-mermaid-viewer]) svg { display: block; width: 100%; max-width: 100%; height: auto; margin: 0 auto; }
+.tiny-note-export-mermaid svg { display: block; width: 100%; max-width: 100%; height: auto; margin: 0 auto; }
+.tiny-note-export-mermaid-expand {
+  position: absolute;
+  z-index: 1;
+  top: 10px;
+  right: 10px;
+  min-width: 40px;
+  height: 40px;
+  padding: 0 12px;
+  border: 1px solid #c8c4be;
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.96);
+  color: #37352f;
+  font: 500 13px/1 "Notion Sans", Inter, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  cursor: pointer;
+}
+.tiny-note-export-mermaid-expand:hover { background: #f0eeec; }
+.tiny-note-export-mermaid-expand:focus-visible { outline: 2px solid #5645d4; outline-offset: 2px; }
+.tiny-note-export-mermaid-dialog {
+  position: fixed;
+  z-index: 2147483647;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  padding: 24px;
+  background: rgba(10, 15, 24, 0.72);
+}
+.tiny-note-export-mermaid-dialog-panel {
+  display: flex;
+  flex-direction: column;
+  width: min(1180px, 100%);
+  height: min(820px, 100%);
+  min-height: 0;
+  overflow: hidden;
+  border: 1px solid #c8c4be;
+  border-radius: 12px;
+  background: #ffffff;
+  box-shadow: rgba(15, 15, 15, 0.2) 0 24px 48px -8px;
+}
+.tiny-note-export-mermaid-dialog-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 10px 12px 10px 16px;
+  border-bottom: 1px solid #e5e3df;
+  background: #fafaf9;
+}
+.tiny-note-export-mermaid-dialog-title { color: #1a1a1a; font-size: 14px; font-weight: 600; }
+.tiny-note-export-mermaid-dialog-hint { margin-left: 10px; color: #787671; font-size: 12px; font-weight: 400; }
 .tiny-note-export-mermaid-toolbar {
   display: flex;
   align-items: center;
   flex-wrap: wrap;
   gap: 6px;
-  padding: 8px;
-  border-bottom: 1px solid #e5e3df;
-  background: #fafaf9;
 }
 .tiny-note-export-mermaid-toolbar button {
   min-width: 40px;
@@ -183,23 +231,23 @@ const NOTE_EXPORT_ARTICLE_CSS = `
 }
 .tiny-note-export-mermaid-viewport {
   position: relative;
+  flex: 1;
+  min-height: 0;
   width: 100%;
-  height: clamp(280px, 55vh, 540px);
-  overflow: hidden;
+  overflow: auto;
   background: #ffffff;
   cursor: grab;
+  overscroll-behavior: contain;
   touch-action: none;
   user-select: none;
 }
+body.tiny-note-export-mermaid-open { overflow: hidden; }
 .tiny-note-export-mermaid-viewport.is-dragging { cursor: grabbing; }
 .tiny-note-export-mermaid-canvas {
-  position: absolute;
-  left: 0;
-  top: 0;
-  transform-origin: 0 0;
-  will-change: transform;
+  position: relative;
+  margin: 0 auto;
 }
-.tiny-note-export-mermaid-canvas svg { display: block; width: 100%; height: 100%; max-width: none; margin: 0; }
+.tiny-note-export-mermaid-canvas svg { display: block; width: 100%; height: auto; max-width: none; margin: 0; }
 .tiny-note-export-mermaid-error {
   margin: 1em 0 -0.5em;
   padding: 8px 10px;
@@ -234,6 +282,10 @@ const NOTE_EXPORT_RESPONSIVE_CSS = `
   .tiny-note-export-document { width: min(100% - 32px, 820px); padding: 36px 0 48px; }
   .tiny-note-export-title { margin-bottom: 26px; font-size: 32px; }
   .tiny-note-export-body { font-size: 15px; }
+  .tiny-note-export-mermaid-dialog { padding: 0; }
+  .tiny-note-export-mermaid-dialog-panel { width: 100%; height: 100%; border: 0; border-radius: 0; }
+  .tiny-note-export-mermaid-dialog-header { align-items: flex-start; flex-direction: column; gap: 8px; }
+  .tiny-note-export-mermaid-dialog-hint { display: block; margin: 4px 0 0; }
 }
 `
 
@@ -255,10 +307,8 @@ const NOTE_EXPORT_PRINT_CSS = `
   .tiny-note-export-title { font-size: 30px; }
   .tiny-note-export-body { font-size: 11pt; line-height: 1.65; }
   .tiny-note-export-body a { color: #1a1a1a; text-decoration: underline; }
-  .tiny-note-export-mermaid-toolbar { display: none !important; }
-  .tiny-note-export-mermaid-viewport { height: auto !important; overflow: visible !important; }
-  .tiny-note-export-mermaid-canvas { position: static !important; width: 100% !important; height: auto !important; transform: none !important; }
-  .tiny-note-export-mermaid-canvas svg { width: 100% !important; height: auto !important; }
+  .tiny-note-export-mermaid-expand,
+  .tiny-note-export-mermaid-dialog { display: none !important; }
 }
 `
 
@@ -279,149 +329,212 @@ function normalizeSnapshot(note = {}) {
   return { title, contentHtml }
 }
 
-export function initializeExportMermaidViewers(documentRef = globalThis.document) {
-  const MIN_SCALE = 0.75
-  const MAX_SCALE = 2.5
-  const SCALE_STEP = 0.25
+export function initializeExportMermaidViewers(documentRef, viewportKernel) {
+  const MINIMUM_ZOOM = 10
+  const MAXIMUM_ZOOM = 250
+  const BUTTON_STEP = 25
+  const WHEEL_STEP = 15
   const roots = [...documentRef.querySelectorAll('[data-mermaid-viewer]')]
 
   roots.forEach(root => {
     if (root.dataset.mermaidInitialized === 'true') return
-    const viewport = root.querySelector('[data-mermaid-viewport]')
-    const canvas = root.querySelector('[data-mermaid-canvas]')
-    const scaleOutput = root.querySelector('[data-mermaid-scale]')
-    const svg = canvas?.querySelector('svg')
-    if (!viewport || !canvas || !svg) return
+    const expandButton = root.querySelector('[data-mermaid-action="expand"]')
+    const previewSvg = root.querySelector('[data-mermaid-preview] > svg')
+    if (!expandButton || !previewSvg) return
     root.dataset.mermaidInitialized = 'true'
 
-    const viewBox = String(svg.getAttribute('viewBox') || '').trim().split(/[\s,]+/).map(Number)
-    if (viewBox.length === 4 && viewBox.every(Number.isFinite) && viewBox[2] > 0 && viewBox[3] > 0) {
-      const dimensionScale = Math.min(1, 12000 / Math.max(viewBox[2], viewBox[3]))
-      canvas.style.width = `${viewBox[2] * dimensionScale}px`
-      canvas.style.height = `${viewBox[3] * dimensionScale}px`
-    }
+    expandButton.addEventListener('click', () => {
+      if (documentRef.querySelector('[data-mermaid-dialog]')) return
+      const windowRef = documentRef.defaultView
+      const dialog = documentRef.createElement('div')
+      dialog.className = 'tiny-note-export-mermaid-dialog'
+      dialog.setAttribute('data-mermaid-dialog', '')
+      dialog.setAttribute('role', 'dialog')
+      dialog.setAttribute('aria-modal', 'true')
+      dialog.setAttribute('aria-label', 'Mermaid 图表放大查看')
+      dialog.innerHTML = `<div class="tiny-note-export-mermaid-dialog-panel">
+<header class="tiny-note-export-mermaid-dialog-header">
+<div><span class="tiny-note-export-mermaid-dialog-title">Mermaid 图表</span><span class="tiny-note-export-mermaid-dialog-hint">按住左键拖动 · 滚轮指向缩放</span></div>
+<div class="tiny-note-export-mermaid-toolbar" role="toolbar" aria-label="图表缩放控制">
+<button type="button" data-mermaid-action="zoom-out" title="缩小" aria-label="缩小图表">−</button>
+<output class="tiny-note-export-mermaid-scale" data-mermaid-scale aria-live="polite">100%</output>
+<button type="button" data-mermaid-action="fit" title="适合宽度">适合宽度</button>
+<button type="button" data-mermaid-action="actual" title="原始比例">100%</button>
+<button type="button" data-mermaid-action="zoom-in" title="放大" aria-label="放大图表">+</button>
+<button type="button" data-mermaid-action="close" title="关闭" aria-label="关闭图表">×</button>
+</div>
+</header>
+<div class="tiny-note-export-mermaid-viewport" data-mermaid-viewport tabindex="0" aria-label="全屏图表画布，按住鼠标左键拖动，滚轮围绕指针缩放">
+<div class="tiny-note-export-mermaid-canvas" data-mermaid-canvas></div>
+</div>
+</div>`
+      const viewport = dialog.querySelector('[data-mermaid-viewport]')
+      const canvas = dialog.querySelector('[data-mermaid-canvas]')
+      const scaleOutput = dialog.querySelector('[data-mermaid-scale]')
+      const svg = previewSvg.cloneNode(true)
+      canvas.appendChild(svg)
+      documentRef.body.appendChild(dialog)
+      documentRef.body.classList.add('tiny-note-export-mermaid-open')
 
-    let scale = 1
-    let offsetX = 0
-    let offsetY = 0
-    let fitMode = true
-    let drag = null
+      const inertTargets = [...documentRef.body.children]
+        .filter(element => element !== dialog)
+        .map(element => ({ element, wasInert: element.hasAttribute('inert') }))
+      inertTargets.forEach(({ element }) => element.setAttribute('inert', ''))
 
-    const dimensions = () => ({
-      viewportWidth: viewport.clientWidth || viewport.getBoundingClientRect().width || 1,
-      viewportHeight: viewport.clientHeight || viewport.getBoundingClientRect().height || 1,
-      canvasWidth: canvas.offsetWidth || 1,
-      canvasHeight: canvas.offsetHeight || 1
-    })
-    const clampAxis = (offset, viewportSize, contentSize, centerWhenSmaller) => {
-      if (contentSize <= viewportSize) return centerWhenSmaller ? (viewportSize - contentSize) / 2 : 0
-      return Math.min(0, Math.max(viewportSize - contentSize, offset))
-    }
-    const apply = () => {
-      const size = dimensions()
-      offsetX = clampAxis(offsetX, size.viewportWidth, size.canvasWidth * scale, true)
-      offsetY = clampAxis(offsetY, size.viewportHeight, size.canvasHeight * scale, false)
-      const roundedX = Math.round(offsetX * 100) / 100
-      const roundedY = Math.round(offsetY * 100) / 100
-      const roundedScale = Math.round(scale * 100) / 100
-      canvas.style.transform = `translate(${roundedX}px, ${roundedY}px) scale(${roundedScale})`
-      root.dataset.mermaidScaleValue = String(roundedScale)
-      if (scaleOutput) scaleOutput.textContent = `${Math.round(roundedScale * 100)}%`
-      const zoomOut = root.querySelector('[data-mermaid-action="zoom-out"]')
-      const zoomIn = root.querySelector('[data-mermaid-action="zoom-in"]')
-      if (zoomOut) zoomOut.disabled = scale <= MIN_SCALE
-      if (zoomIn) zoomIn.disabled = scale >= MAX_SCALE
-    }
-    const setScale = (nextScale, anchorX, anchorY, allowBelowMinimum = false) => {
-      const minimum = allowBelowMinimum ? 0.05 : MIN_SCALE
-      const next = Math.min(MAX_SCALE, Math.max(minimum, Math.round(nextScale * 100) / 100))
-      const bounds = viewport.getBoundingClientRect()
-      const x = Number.isFinite(anchorX) ? anchorX : bounds.width / 2
-      const y = Number.isFinite(anchorY) ? anchorY : bounds.height / 2
-      const ratio = next / scale
-      offsetX = x - ((x - offsetX) * ratio)
-      offsetY = y - ((y - offsetY) * ratio)
-      scale = next
-      fitMode = false
-      apply()
-    }
-    const zoomBy = (amount, anchorX, anchorY) => {
-      if (scale < MIN_SCALE && amount < 0) return
-      const nextScale = scale < MIN_SCALE ? MIN_SCALE : scale + amount
-      setScale(nextScale, anchorX, anchorY)
-    }
-    const fit = () => {
-      const size = dimensions()
-      scale = Math.min(1, size.viewportWidth / Math.max(1, size.canvasWidth))
-      offsetX = 0
-      offsetY = 0
-      fitMode = true
-      apply()
-    }
-    const actual = () => {
-      scale = 1
-      offsetX = 0
-      offsetY = 0
-      fitMode = false
-      apply()
-    }
+      const naturalWidth = viewportKernel.readNaturalWidth(svg.outerHTML) || viewport.clientWidth || 1
+      let zoom = 100
+      let fitMode = true
+      let drag = null
+      let lastWheelZoomAt = -Infinity
 
-    root.addEventListener('click', event => {
-      const action = event.target.closest?.('[data-mermaid-action]')?.dataset.mermaidAction
-      if (action === 'zoom-in') zoomBy(SCALE_STEP)
-      else if (action === 'zoom-out') zoomBy(-SCALE_STEP)
-      else if (action === 'fit') fit()
-      else if (action === 'actual') actual()
-    })
-    viewport.addEventListener('wheel', event => {
-      event.preventDefault()
-      const bounds = viewport.getBoundingClientRect()
-      const direction = event.deltaY < 0 ? SCALE_STEP : -SCALE_STEP
-      zoomBy(direction, event.clientX - bounds.left, event.clientY - bounds.top)
-    }, { passive: false })
-    viewport.addEventListener('pointerdown', event => {
-      if (event.button !== 0) return
-      event.preventDefault()
-      drag = { pointerId: event.pointerId, x: event.clientX, y: event.clientY, offsetX, offsetY }
-      viewport.classList.add('is-dragging')
-      viewport.setPointerCapture?.(event.pointerId)
-    })
-    viewport.addEventListener('pointermove', event => {
-      if (!drag || event.pointerId !== drag.pointerId) return
-      offsetX = drag.offsetX + event.clientX - drag.x
-      offsetY = drag.offsetY + event.clientY - drag.y
-      fitMode = false
-      apply()
-    })
-    const endDrag = event => {
-      if (!drag || event.pointerId !== drag.pointerId) return
-      viewport.releasePointerCapture?.(event.pointerId)
-      drag = null
-      viewport.classList.remove('is-dragging')
-    }
-    viewport.addEventListener('pointerup', endDrag)
-    viewport.addEventListener('pointercancel', endDrag)
-    viewport.addEventListener('keydown', event => {
-      if (event.key === '+' || event.key === '=') zoomBy(SCALE_STEP)
-      else if (event.key === '-') zoomBy(-SCALE_STEP)
-      else if (event.key === '0') actual()
-      else if (event.key.toLowerCase() === 'f') fit()
-      else if (event.key.startsWith('Arrow')) {
-        const movement = 40
-        if (event.key === 'ArrowLeft') offsetX -= movement
-        if (event.key === 'ArrowRight') offsetX += movement
-        if (event.key === 'ArrowUp') offsetY -= movement
-        if (event.key === 'ArrowDown') offsetY += movement
+      const apply = () => {
+        canvas.style.width = `${Math.round(naturalWidth * zoom) / 100}px`
+        dialog.dataset.mermaidScaleValue = String(zoom / 100)
+        scaleOutput.textContent = `${zoom}%`
+        dialog.querySelector('[data-mermaid-action="zoom-out"]').disabled = zoom <= MINIMUM_ZOOM
+        dialog.querySelector('[data-mermaid-action="zoom-in"]').disabled = zoom >= MAXIMUM_ZOOM
+      }
+      const setZoom = nextZoom => {
+        zoom = nextZoom
         fitMode = false
         apply()
-      } else return
-      event.preventDefault()
+      }
+      const zoomBy = (direction, step = BUTTON_STEP) => {
+        const nextZoom = viewportKernel.nextZoom(zoom, direction, {
+          minimum: MINIMUM_ZOOM,
+          maximum: MAXIMUM_ZOOM,
+          step
+        })
+        if (nextZoom !== zoom) setZoom(nextZoom)
+      }
+      const setScroll = (left, top) => {
+        const next = viewportKernel.clampScroll(viewport, left, top)
+        viewport.scrollLeft = next.left
+        viewport.scrollTop = next.top
+      }
+      const fit = () => {
+        zoom = viewportKernel.fitZoom(viewport.clientWidth || viewport.getBoundingClientRect().width, naturalWidth)
+        fitMode = true
+        apply()
+        viewport.scrollLeft = 0
+        viewport.scrollTop = 0
+      }
+      const actual = () => {
+        zoom = 100
+        fitMode = false
+        apply()
+        viewport.scrollLeft = 0
+        viewport.scrollTop = 0
+      }
+      const close = () => {
+        documentRef.removeEventListener('keydown', handleDocumentKeydown)
+        windowRef?.removeEventListener('resize', handleResize)
+        dialog.remove()
+        documentRef.body.classList.remove('tiny-note-export-mermaid-open')
+        inertTargets.forEach(({ element, wasInert }) => {
+          if (!wasInert) element.removeAttribute('inert')
+        })
+        expandButton.focus()
+      }
+      const handleResize = () => {
+        if (fitMode) fit()
+        else setScroll(viewport.scrollLeft, viewport.scrollTop)
+      }
+      const handleDocumentKeydown = event => {
+        if (event.key === 'Escape') {
+          event.preventDefault()
+          close()
+          return
+        }
+        if (event.key === '+' || event.key === '=') zoomBy(1)
+        else if (event.key === '-') zoomBy(-1)
+        else if (event.key === '0') fit()
+        else if (event.key === 'Tab') {
+          const focusable = [...dialog.querySelectorAll('button:not(:disabled), [tabindex="0"]')]
+          const first = focusable[0]
+          const last = focusable.at(-1)
+          if (event.shiftKey && documentRef.activeElement === first) {
+            event.preventDefault()
+            last.focus()
+          } else if (!event.shiftKey && documentRef.activeElement === last) {
+            event.preventDefault()
+            first.focus()
+          }
+          return
+        } else return
+        event.preventDefault()
+      }
+
+      dialog.addEventListener('click', event => {
+        const action = event.target.closest?.('[data-mermaid-action]')?.dataset.mermaidAction
+        if (action === 'zoom-in') zoomBy(1)
+        else if (action === 'zoom-out') zoomBy(-1)
+        else if (action === 'fit') fit()
+        else if (action === 'actual') actual()
+        else if (action === 'close') close()
+      })
+      viewport.addEventListener('wheel', async event => {
+        event.preventDefault()
+        if (!event.deltaY) return
+        const now = windowRef?.performance?.now?.() ?? Date.now()
+        if (now - lastWheelZoomAt < 32) return
+        lastWheelZoomAt = now
+        const before = svg.getBoundingClientRect()
+        const anchor = viewportKernel.pointerAnchor(before, event.clientX, event.clientY)
+        const nextZoom = viewportKernel.nextZoom(zoom, event.deltaY < 0 ? 1 : -1, {
+          minimum: MINIMUM_ZOOM,
+          maximum: MAXIMUM_ZOOM,
+          step: WHEEL_STEP
+        })
+        if (nextZoom === zoom) return
+        setZoom(nextZoom)
+        await new Promise(resolve => {
+          if (windowRef?.requestAnimationFrame) windowRef.requestAnimationFrame(resolve)
+          else setTimeout(resolve, 0)
+        })
+        if (!svg.isConnected) return
+        const after = svg.getBoundingClientRect()
+        const nextScroll = viewportKernel.anchoredScroll(viewport, { before, after, anchor })
+        setScroll(nextScroll.left, nextScroll.top)
+      }, { passive: false })
+      const endDrag = event => {
+        if (!drag || event.pointerId !== drag.pointerId) return
+        try { viewport.releasePointerCapture?.(event.pointerId) } catch { /* The browser may release capture first. */ }
+        drag = null
+        viewport.classList.remove('is-dragging')
+      }
+      viewport.addEventListener('pointerdown', event => {
+        if (event.button !== 0 || event.isPrimary === false) return
+        if (viewport.scrollWidth <= viewport.clientWidth && viewport.scrollHeight <= viewport.clientHeight) return
+        event.preventDefault()
+        drag = {
+          pointerId: event.pointerId,
+          clientX: event.clientX,
+          clientY: event.clientY,
+          scrollLeft: viewport.scrollLeft,
+          scrollTop: viewport.scrollTop
+        }
+        viewport.classList.add('is-dragging')
+        viewport.setPointerCapture?.(event.pointerId)
+        viewport.focus?.({ preventScroll: true })
+      })
+      viewport.addEventListener('pointermove', event => {
+        if (!drag || event.pointerId !== drag.pointerId) return
+        if (event.pointerType === 'mouse' && typeof event.buttons === 'number' && !(event.buttons & 1)) {
+          endDrag(event)
+          return
+        }
+        const nextScroll = viewportKernel.panScroll(drag, event.clientX, event.clientY)
+        fitMode = false
+        setScroll(nextScroll.left, nextScroll.top)
+      })
+      viewport.addEventListener('pointerup', endDrag)
+      viewport.addEventListener('pointercancel', endDrag)
+      documentRef.addEventListener('keydown', handleDocumentKeydown)
+      windowRef?.addEventListener('resize', handleResize)
+      fit()
+      dialog.querySelector('[data-mermaid-action="close"]').focus()
     })
-    documentRef.defaultView?.addEventListener('resize', () => {
-      if (fitMode) fit()
-      else apply()
-    })
-    fit()
   })
 }
 
@@ -445,16 +558,8 @@ async function renderSnapshotMermaid(note, {
       figure.setAttribute('aria-label', 'Mermaid 图表')
       if (interactive) {
         figure.setAttribute('data-mermaid-viewer', '')
-        figure.innerHTML = `<div class="tiny-note-export-mermaid-toolbar" role="toolbar" aria-label="图表缩放控制">
-<button type="button" data-mermaid-action="zoom-out" title="缩小" aria-label="缩小图表">−</button>
-<output class="tiny-note-export-mermaid-scale" data-mermaid-scale aria-live="polite">100%</output>
-<button type="button" data-mermaid-action="zoom-in" title="放大" aria-label="放大图表">+</button>
-<button type="button" data-mermaid-action="fit" title="适合宽度">适合宽度</button>
-<button type="button" data-mermaid-action="actual" title="原始比例">100%</button>
-</div>
-<div class="tiny-note-export-mermaid-viewport" data-mermaid-viewport tabindex="0" aria-label="可缩放的 Mermaid 图表；滚轮缩放，按住鼠标左键拖动">
-<div class="tiny-note-export-mermaid-canvas" data-mermaid-canvas>${result.svg}</div>
-</div>`
+        figure.innerHTML = `<button type="button" class="tiny-note-export-mermaid-expand" data-mermaid-action="expand" title="放大查看图表" aria-label="放大查看 Mermaid 图表">⛶ 放大查看</button>
+<div data-mermaid-preview>${result.svg}</div>`
       } else {
         figure.innerHTML = result.svg
       }
@@ -482,7 +587,7 @@ function articleMarkup(note = {}) {
 function buildPreparedNoteExportHtml(snapshot, lang) {
   const safeLang = /^[a-z]{2,3}(?:-[a-z\d]{2,8})*$/i.test(lang) ? lang : 'zh-CN'
   const interactiveRuntime = snapshot.contentHtml.includes('data-mermaid-viewer')
-    ? `<script>(${initializeExportMermaidViewers.toString()})(document);<\/script>`
+    ? `<script>(${initializeExportMermaidViewers.toString()})(document, (${createMermaidViewportKernel.toString()})());<\/script>`
     : ''
   return `<!doctype html>
 <html lang="${safeLang}">

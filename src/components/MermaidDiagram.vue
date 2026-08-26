@@ -2,11 +2,13 @@
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { AlertTriangle, Check, Copy, Expand, Maximize2, Minimize2, Minus, Plus, RefreshCw, Scan, Workflow, X } from 'lucide-vue-next'
 import { renderMermaidDiagram } from '../utils/mermaidRenderer'
+import { createMermaidViewportKernel } from '../utils/mermaidViewport'
 
 const props = defineProps({
   source: { type: String, default: '' }
 })
 const emit = defineEmits(['show-source', 'rendered'])
+const viewportKernel = createMermaidViewportKernel()
 
 const svg = ref('')
 const loading = ref(false)
@@ -92,7 +94,7 @@ async function renderDiagram() {
     const result = await renderMermaidDiagram(props.source, { theme: theme.value })
     if (revision !== renderRevision) return
     svg.value = result.svg
-    naturalWidth.value = readNaturalWidth(result.svg)
+    naturalWidth.value = viewportKernel.readNaturalWidth(result.svg)
     emit('rendered')
     await nextTick()
     if (revision === renderRevision && inlineFit) updateFitZoom(false)
@@ -122,15 +124,6 @@ function scheduleRender({ resetPreview = false } = {}) {
   renderTimer = window.setTimeout(renderDiagram, 220)
 }
 
-function readNaturalWidth(svgText) {
-  const viewBox = String(svgText || '').match(/\bviewBox=["']\s*[-+\d.e]+[ ,]+[-+\d.e]+[ ,]+([-+\d.e]+)[ ,]+[-+\d.e]+\s*["']/i)
-  const width = Number(viewBox?.[1])
-  if (Number.isFinite(width) && width > 0) return width
-  const widthAttribute = String(svgText || '').match(/<svg\b[^>]*\bwidth=["']([\d.]+)(?:px)?["']/i)
-  const fallback = Number(widthAttribute?.[1])
-  return Number.isFinite(fallback) && fallback > 0 ? fallback : 0
-}
-
 function availableStageWidth(stage) {
   if (!stage?.clientWidth) return 0
   const styles = window.getComputedStyle(stage)
@@ -141,9 +134,7 @@ function updateFitZoom(useFullscreen = fullscreen.value) {
   const stage = useFullscreen ? fullscreenStage.value : inlineStage.value
   if (!stage) return
   const available = availableStageWidth(stage)
-  const fitted = available && naturalWidth.value
-    ? Math.min(100, Math.max(1, Math.floor(available / naturalWidth.value * 100)))
-    : 100
+  const fitted = viewportKernel.fitZoom(available, naturalWidth.value)
   if (useFullscreen) fullscreenZoom.value = fitted
   else zoom.value = fitted
 }
@@ -152,7 +143,10 @@ function zoomIn() {
   viewportRevision += 1
   if (fullscreen.value) fullscreenFit = false
   else inlineFit = false
-  activeZoom.value = Math.min(250, activeZoom.value + 25)
+  activeZoom.value = viewportKernel.nextZoom(activeZoom.value, 1, {
+    minimum: fullscreen.value ? 10 : 75,
+    step: 25
+  })
 }
 
 function zoomOut() {
@@ -161,7 +155,7 @@ function zoomOut() {
   viewportRevision += 1
   if (fullscreen.value) fullscreenFit = false
   else inlineFit = false
-  activeZoom.value = Math.max(minimum, activeZoom.value - 25)
+  activeZoom.value = viewportKernel.nextZoom(activeZoom.value, -1, { minimum, step: 25 })
 }
 
 function fitWidth() {
@@ -272,15 +266,10 @@ function handleStageKeydown(event) {
   }
 }
 
-function clamp(value, minimum, maximum) {
-  return Math.min(maximum, Math.max(minimum, value))
-}
-
 function setStageScroll(stage, left, top) {
-  const maximumLeft = Math.max(0, stage.scrollWidth - stage.clientWidth)
-  const maximumTop = Math.max(0, stage.scrollHeight - stage.clientHeight)
-  stage.scrollLeft = clamp(left, 0, maximumLeft)
-  stage.scrollTop = clamp(top, 0, maximumTop)
+  const next = viewportKernel.clampScroll(stage, left, top)
+  stage.scrollLeft = next.left
+  stage.scrollTop = next.top
 }
 
 async function zoomAroundPointer(event) {
@@ -291,17 +280,10 @@ async function zoomAroundPointer(event) {
   if (!stage || !diagram) return
 
   const before = diagram.getBoundingClientRect()
-  const anchorX = before.width ? clamp((event.clientX - before.left) / before.width, 0, 1) : 0.5
-  const anchorY = before.height ? clamp((event.clientY - before.top) / before.height, 0, 1) : 0.5
-  const beforeAnchorX = before.left + before.width * anchorX
-  const beforeAnchorY = before.top + before.height * anchorY
+  const anchor = viewportKernel.pointerAnchor(before, event.clientX, event.clientY)
   const direction = event.deltaY < 0 ? 1 : -1
   const minimum = fullscreen.value ? 10 : 75
-  const nextZoom = direction > 0
-    ? Math.min(250, activeZoom.value + 15)
-    : activeZoom.value <= minimum
-      ? activeZoom.value
-      : Math.max(minimum, activeZoom.value - 15)
+  const nextZoom = viewportKernel.nextZoom(activeZoom.value, direction, { minimum, step: 15 })
   if (nextZoom === activeZoom.value) return
 
   if (fullscreen.value) fullscreenFit = false
@@ -313,11 +295,8 @@ async function zoomAroundPointer(event) {
   if (revision !== viewportRevision || fullscreen.value !== wasFullscreen || currentStage !== stage || !diagram.isConnected) return
 
   const after = diagram.getBoundingClientRect()
-  setStageScroll(
-    stage,
-    stage.scrollLeft + after.left + after.width * anchorX - beforeAnchorX,
-    stage.scrollTop + after.top + after.height * anchorY - beforeAnchorY
-  )
+  const nextScroll = viewportKernel.anchoredScroll(stage, { before, after, anchor })
+  setStageScroll(stage, nextScroll.left, nextScroll.top)
 }
 
 function handleWheel(event) {
@@ -355,11 +334,13 @@ function movePan(event) {
   }
   event.preventDefault()
   const stage = event.currentTarget
-  setStageScroll(
-    stage,
-    panStartScrollLeft - (event.clientX - panStartX),
-    panStartScrollTop - (event.clientY - panStartY)
-  )
+  const nextScroll = viewportKernel.panScroll({
+    clientX: panStartX,
+    clientY: panStartY,
+    scrollLeft: panStartScrollLeft,
+    scrollTop: panStartScrollTop
+  }, event.clientX, event.clientY)
+  setStageScroll(stage, nextScroll.left, nextScroll.top)
 }
 
 function finishPan(event) {

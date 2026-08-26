@@ -9,6 +9,7 @@ import {
   initializeExportMermaidViewers,
   printNote
 } from './noteExport'
+import { createMermaidViewportKernel } from './mermaidViewport'
 
 const unsafeNote = {
   title: '方案 & <复盘>',
@@ -41,31 +42,40 @@ describe('note export documents', () => {
     })
     expect(html).toContain('class="tiny-note-export-mermaid"')
     expect(html).toContain('data-mermaid-viewer')
-    expect(html).toContain('data-mermaid-action="zoom-in"')
-    expect(html).toContain('data-mermaid-action="fit"')
-    expect(html).toContain('data-mermaid-viewport')
+    const exportedDocument = new window.DOMParser().parseFromString(html, 'text/html')
+    const exportedFigure = exportedDocument.querySelector('[data-mermaid-viewer]')
+    expect(exportedFigure.querySelector('[data-mermaid-action="expand"]')).not.toBeNull()
+    expect(exportedFigure.querySelector('[data-mermaid-action="zoom-in"]')).toBeNull()
+    expect(exportedFigure.querySelector('[data-mermaid-viewport]')).toBeNull()
     expect(html).toContain('initializeExportMermaidViewers')
+    expect(html).toContain('createMermaidViewportKernel')
     expect(html).toContain('<svg viewBox="0 0 100 50">')
     expect(html).toContain('渲染完成')
     expect(html).not.toContain('class="language-mermaid"')
   })
 
-  it('supports independent button zoom, wheel zoom, and left-button panning in exported Mermaid viewers', () => {
+  it('keeps the article clean and activates shared zoom and pan controls only in a focused diagram dialog', () => {
     window.document.body.innerHTML = `
       <figure data-mermaid-viewer>
-        <button data-mermaid-action="zoom-out"></button>
-        <button data-mermaid-action="zoom-in"></button>
-        <button data-mermaid-action="fit"></button>
-        <button data-mermaid-action="actual"></button>
-        <output data-mermaid-scale></output>
-        <div data-mermaid-viewport tabindex="0"><div data-mermaid-canvas><svg viewBox="0 0 100 50"></svg></div></div>
+        <button data-mermaid-action="expand">放大查看</button>
+        <div data-mermaid-preview><svg viewBox="0 0 400 200"></svg></div>
       </figure>`
     const root = window.document.querySelector('[data-mermaid-viewer]')
-    const viewport = root.querySelector('[data-mermaid-viewport]')
-    const canvas = root.querySelector('[data-mermaid-canvas]')
+    const expand = root.querySelector('[data-mermaid-action="expand"]')
+
+    initializeExportMermaidViewers(window.document, createMermaidViewportKernel())
+    expect(window.document.querySelector('[data-mermaid-dialog]')).toBeNull()
+    expand.focus()
+    expand.click()
+
+    const dialog = window.document.querySelector('[data-mermaid-dialog]')
+    const viewport = dialog.querySelector('[data-mermaid-viewport]')
+    const canvas = dialog.querySelector('[data-mermaid-canvas]')
     Object.defineProperties(viewport, {
       clientWidth: { configurable: true, value: 400 },
-      clientHeight: { configurable: true, value: 240 }
+      clientHeight: { configurable: true, value: 240 },
+      scrollWidth: { configurable: true, value: 800 },
+      scrollHeight: { configurable: true, value: 500 }
     })
     Object.defineProperties(canvas, {
       offsetWidth: { configurable: true, value: 400 },
@@ -75,33 +85,32 @@ describe('note export documents', () => {
     viewport.setPointerCapture = vi.fn()
     viewport.releasePointerCapture = vi.fn()
 
-    initializeExportMermaidViewers(window.document)
-    root.querySelector('[data-mermaid-action="zoom-in"]').click()
-    expect(root.dataset.mermaidScaleValue).toBe('1.25')
-    expect(root.querySelector('[data-mermaid-scale]').textContent).toBe('125%')
+    dialog.querySelector('[data-mermaid-action="fit"]').click()
+    dialog.querySelector('[data-mermaid-action="zoom-in"]').click()
+    expect(dialog.dataset.mermaidScaleValue).toBe('1.25')
+    expect(dialog.querySelector('[data-mermaid-scale]').textContent).toBe('125%')
 
     viewport.dispatchEvent(new window.WheelEvent('wheel', { deltaY: -100, clientX: 200, clientY: 100, bubbles: true, cancelable: true }))
-    expect(root.dataset.mermaidScaleValue).toBe('1.5')
+    expect(dialog.dataset.mermaidScaleValue).toBe('1.4')
 
+    viewport.scrollLeft = 100
+    viewport.scrollTop = 60
     const down = new window.MouseEvent('pointerdown', { button: 0, clientX: 200, clientY: 100, bubbles: true })
     Object.defineProperty(down, 'pointerId', { value: 7 })
     viewport.dispatchEvent(down)
     const move = new window.MouseEvent('pointermove', { clientX: 150, clientY: 80, bubbles: true })
     Object.defineProperty(move, 'pointerId', { value: 7 })
     viewport.dispatchEvent(move)
-    expect(canvas.style.transform).toMatch(/translate\(-\d+px, -\d+px\) scale\(1\.5\)/)
+    expect(viewport.scrollLeft).toBe(150)
+    expect(viewport.scrollTop).toBe(80)
 
-    root.querySelector('[data-mermaid-action="fit"]').click()
-    expect(root.dataset.mermaidScaleValue).toBe('1')
-    expect(canvas.style.transform).toBe('translate(0px, 0px) scale(1)')
+    dialog.querySelector('[data-mermaid-action="fit"]').click()
+    expect(dialog.dataset.mermaidScaleValue).toBe('1')
+    expect(canvas.style.width).toBe('400px')
 
-    Object.defineProperty(canvas, 'offsetWidth', { configurable: true, value: 1000 })
-    root.querySelector('[data-mermaid-action="fit"]').click()
-    expect(root.dataset.mermaidScaleValue).toBe('0.4')
-    viewport.dispatchEvent(new window.WheelEvent('wheel', { deltaY: 100, clientX: 200, clientY: 100, bubbles: true, cancelable: true }))
-    expect(root.dataset.mermaidScaleValue).toBe('0.4')
-    root.querySelector('[data-mermaid-action="zoom-in"]').click()
-    expect(root.dataset.mermaidScaleValue).toBe('0.75')
+    window.document.dispatchEvent(new window.KeyboardEvent('keydown', { key: 'Escape', bubbles: true }))
+    expect(window.document.querySelector('[data-mermaid-dialog]')).toBeNull()
+    expect(window.document.activeElement).toBe(expand)
   })
 
   it('keeps Mermaid source visible when export rendering fails', async () => {
