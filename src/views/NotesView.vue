@@ -2,15 +2,18 @@
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { useI18n } from 'vue-i18n'
-import { BookOpen, ChevronRight, CirclePlus, Copy, Download, FolderInput, Pencil, Pin, PinOff, Plus, RotateCcw, Trash2 } from 'lucide-vue-next'
+import { ArrowDownAZ, BookOpen, ChevronRight, Copy, Download, FolderInput, FolderPlus, Pin, PinOff, Plus, RotateCcw, Search, Tags, Trash2 } from 'lucide-vue-next'
 import { useNotesStore } from '../stores/notes'
 import { useLibraryStore } from '../stores/library'
+import { useTagsStore } from '../stores/tags'
 import NoteEditor from '../components/NoteEditor.vue'
+import NotebookTreeItem from '../components/NotebookTreeItem.vue'
 import { requestPrompt } from '../services/promptDialog'
 import { requestConfirmation, showToast } from '../services/appFeedback'
 
 const store = useNotesStore()
 const library = useLibraryStore()
+const tagsStore = useTagsStore()
 const route = useRoute()
 const router = useRouter()
 const { t } = useI18n()
@@ -20,7 +23,6 @@ const query = ref('')
 const sidebarCollapsed = ref(false)
 const sidebarWidth = ref(260)
 const isResizing = ref(false)
-const notebookMenu = ref(false)
 const newNoteMenu = ref(false)
 const folderItemMenu = ref(null)
 const folderItemMenuStyle = ref({})
@@ -33,29 +35,49 @@ const contextMoveAnchorRef = ref(null)
 const contextMoveSubmenuRef = ref(null)
 const contextMoveStyle = ref({ left: '0px', top: '0px' })
 const contextKnowledgeOpen = ref(false)
+const contextTagsOpen = ref(false)
+const contextTagIds = ref(new Set())
 const contextKnowledgeAnchorRef = ref(null)
 const contextKnowledgeSubmenuRef = ref(null)
 const contextKnowledgeStyle = ref({ left: '0px', top: '0px' })
 let contextMoveTimer = null
 let contextKnowledgeTimer = null
+const expandedNotebookIds = ref(new Set())
 
-const list = computed(() => showDeleted.value ? store.deleted : store.visible)
+const list = computed(() => showDeleted.value ? store.deleted : store.notes)
 const contextNote = computed(() => contextMenu.value ? list.value.find(note => note.id === contextMenu.value.noteId) || store.notes.find(note => note.id === contextMenu.value.noteId) || store.deleted.find(note => note.id === contextMenu.value.noteId) : null)
-const currentFolderName = computed(() => {
-  if (showDeleted.value) return t('recentlyDeleted')
-  if (store.selectedNotebook === 'all') return t('allNotes')
-  return store.notebooks.find(book => book.id === store.selectedNotebook)?.name || t('allNotes')
+const notebookTree = computed(() => {
+  const notebookByParent = new Map()
+  for (const notebook of store.notebooks) {
+    const parentId = notebook.parentId || null
+    if (!notebookByParent.has(parentId)) notebookByParent.set(parentId, [])
+    notebookByParent.get(parentId).push(notebook)
+  }
+  for (const books of notebookByParent.values()) books.sort((a, b) => a.name.localeCompare(b.name, undefined, { numeric: true, sensitivity: 'base' }))
+  const queryText = query.value.trim().toLocaleLowerCase()
+  const noteMatches = note => (!store.pinnedOnly || note.pinned) && (!queryText || `${note.title} ${note.contentText}`.toLocaleLowerCase().includes(queryText))
+  const build = (notebook, ancestors = new Set()) => {
+    if (ancestors.has(notebook.id)) return null
+    const nextAncestors = new Set(ancestors).add(notebook.id)
+    const children = (notebookByParent.get(notebook.id) || []).map(child => build(child, nextAncestors)).filter(Boolean)
+    const notes = store.notes.filter(note => note.notebookId === notebook.id && noteMatches(note)).sort((a, b) => Number(Boolean(b.pinned)) - Number(Boolean(a.pinned)) || String(b.updatedAt).localeCompare(String(a.updatedAt)))
+    if (queryText && !notes.length && !children.length) return null
+    return { ...notebook, children, notes, totalNoteCount: notes.length + children.reduce((sum, child) => sum + child.totalNoteCount, 0) }
+  }
+  return (notebookByParent.get(null) || []).map(book => build(book)).filter(Boolean)
 })
-const folders = computed(() => [
-  { id: 'all', name: t('allNotes'), count: store.notes.length },
-  ...store.notebooks.map(book => ({ id: book.id, name: book.name, count: store.notes.filter(note => note.notebookId === book.id).length }))
-])
 const knowledgeGroups = computed(() => [
   { id: 'personal', label: t('personal'), items: library.bases.filter(base => base.category === 'personal') },
   { id: 'local', label: t('local'), items: library.bases.filter(base => base.category === 'local') }
 ].filter(group => group.items.length))
 
-watch(query, async value => { store.search = value; await store.load() })
+watch(query, value => {
+  if (!value.trim()) return
+  const expanded = new Set()
+  const visit = nodes => nodes.forEach(node => { expanded.add(node.id); visit(node.children) })
+  visit(notebookTree.value)
+  expandedNotebookIds.value = expanded
+})
 watch(() => store.activeId, () => { tocVisible.value = false })
 let creatingFromQuery = false
 async function createFromQuery() {
@@ -63,12 +85,24 @@ async function createFromQuery() {
   creatingFromQuery = true
   try { await create(); await router.replace({ path: '/notes' }) } finally { creatingFromQuery = false }
 }
-onMounted(() => { createFromQuery(); store.loadTemplates() })
+onMounted(() => { createFromQuery(); store.loadTemplates(); tagsStore.load() })
 watch(() => route.query.new, createFromQuery)
-watch(() => [store.selectedTag, store.pinnedOnly], () => store.load())
 function openRoutedNote() {
   const id = String(route.query.note || '')
-  if (id && store.notes.some(note => note.id === id)) { showDeleted.value = false; store.activeId = id }
+  const note = store.notes.find(item => item.id === id)
+  if (!note) return
+  showDeleted.value = false
+  store.activeId = id
+  store.selectedTreeNode = { type: 'note', id }
+  const expanded = new Set(expandedNotebookIds.value)
+  const visited = new Set()
+  let notebook = store.notebooks.find(book => book.id === note.notebookId)
+  while (notebook && !visited.has(notebook.id)) {
+    visited.add(notebook.id)
+    expanded.add(notebook.id)
+    notebook = store.notebooks.find(book => book.id === notebook.parentId)
+  }
+  expandedNotebookIds.value = expanded
 }
 watch(() => [route.query.note, store.notes.length], openRoutedNote, { immediate: true })
 function clearReviewedProposal() {
@@ -92,18 +126,34 @@ async function importFiles(event) {
 }
 function toggleNewNoteMenu() { newNoteMenu.value = !newNoteMenu.value }
 function closeMenus() {
-  notebookMenu.value = false
   newNoteMenu.value = false
   folderItemMenu.value = null
   closeContextMenu()
 }
-function selectFolder(id) {
+function selectFolder(folder) {
   showDeleted.value = false
-  store.selectedNotebook = id
+  store.selectedNotebook = folder.id
+  store.selectedTreeNode = { type: 'notebook', id: folder.id }
+  toggleNotebook(folder.id)
 }
-function selectNote(id) {
+function selectAllNotes() {
   showDeleted.value = false
-  store.activeId = id
+  store.selectedNotebook = 'all'
+  store.selectedTreeNode = { type: 'all', id: 'all' }
+}
+function selectNote(note) {
+  showDeleted.value = false
+  store.activeId = note.id
+  store.selectedTreeNode = { type: 'note', id: note.id }
+}
+function toggleNotebook(id) {
+  const next = new Set(expandedNotebookIds.value)
+  if (next.has(id)) next.delete(id); else next.add(id)
+  expandedNotebookIds.value = next
+}
+async function createRootNotebook() {
+  const name = await requestPrompt(t('newNotebook'))
+  if (name?.trim()) await store.createNotebook(name.trim(), null)
 }
 function openFolderItemMenu(event, folder) {
   const rect = event.currentTarget.getBoundingClientRect()
@@ -114,20 +164,44 @@ async function renameNotebook() {
   const folder = folderItemMenu.value
   if (!folder) return
   const name = await requestPrompt(t('rename'), folder.name)
-  if (name?.trim() && name.trim() !== folder.name) await store.updateNotebook(folder.id, name.trim())
+  if (name?.trim() && name.trim() !== folder.name) await store.updateNotebook(folder.id, name.trim(), folder.parentId || null)
   folderItemMenu.value = null
 }
 async function deleteNotebook() {
   const folder = folderItemMenu.value
-  if (!folder || !(await requestConfirmation({ title: '删除笔记本', message: `${t('confirmDelete')} ${folder.name}`, tone: 'danger', confirmLabel: '删除' }))) return
+  const directNotes = store.notes.filter(note => note.notebookId === folder?.id).length
+  const childNotebooks = store.notebooks.filter(book => book.parentId === folder?.id).length
+  if (!folder || !(await requestConfirmation({ title: '删除笔记本', message: `“${folder.name}”包含 ${directNotes} 篇直属笔记和 ${childNotebooks} 个子笔记本。子笔记本将提升一级，直属笔记将移入“未分类”。`, tone: 'danger', confirmLabel: '删除' }))) return
   await store.deleteNotebook(folder.id)
   if (store.selectedNotebook === folder.id) store.selectedNotebook = 'all'
   folderItemMenu.value = null
+}
+async function createChildNotebook() {
+  const folder = folderItemMenu.value
+  const name = folder && await requestPrompt('新建子笔记本')
+  if (name?.trim()) { await store.createNotebook(name.trim(), folder.id); expandedNotebookIds.value = new Set(expandedNotebookIds.value).add(folder.id) }
+  folderItemMenu.value = null
+}
+async function moveNotebookByPrompt() {
+  const folder = folderItemMenu.value
+  if (!folder) return
+  const targetName = await requestPrompt('移动到笔记本（留空移到根级）', '')
+  if (targetName === null) return
+  const target = targetName.trim() ? store.notebooks.find(book => book.id !== folder.id && book.name === targetName.trim()) : null
+  if (targetName.trim() && !target) { showToast('没有找到该笔记本', { tone: 'error' }); return }
+  await store.moveNotebook(folder.id, target?.id || null)
+  folderItemMenu.value = null
+}
+async function dropTreeNode(payload, notebookId) {
+  if (payload.kind === 'note') await store.move(payload.id, notebookId)
+  if (payload.kind === 'notebook' && payload.id !== notebookId) await store.moveNotebook(payload.id, notebookId)
+  expandedNotebookIds.value = new Set(expandedNotebookIds.value).add(notebookId)
 }
 function closeContextMenu() {
   contextMenu.value = null
   contextMoveOpen.value = false
   contextKnowledgeOpen.value = false
+  contextTagsOpen.value = false
   if (contextMoveTimer) window.clearTimeout(contextMoveTimer)
   if (contextKnowledgeTimer) window.clearTimeout(contextKnowledgeTimer)
   contextMoveTimer = null
@@ -138,6 +212,8 @@ async function openContextMenu(event, note) {
   const menuHeight = showDeleted.value ? 108 : 180
   contextMoveOpen.value = false
   contextKnowledgeOpen.value = false
+  contextTagsOpen.value = false
+  contextTagIds.value = new Set((await tagsStore.noteTags(note.id).catch(() => []))?.map(tag => tag.id) || [])
   contextMenu.value = {
     noteId: note.id,
     x: Math.max(8, Math.min(event.clientX, window.innerWidth - menuWidth - 8)),
@@ -150,6 +226,22 @@ async function openContextMenu(event, note) {
   const x = Math.max(8, Math.min(rect.left, window.innerWidth - rect.width - 8))
   const y = Math.max(8, Math.min(rect.top, window.innerHeight - rect.height - 8))
   contextMenu.value = { ...contextMenu.value, x, y }
+}
+async function toggleContextTag(tag) {
+  const note = contextNote.value
+  if (!note) return
+  const selected = !contextTagIds.value.has(tag.id)
+  await tagsStore.toggleForNote(note.id, tag.id, selected)
+  const next = new Set(contextTagIds.value)
+  if (selected) next.add(tag.id); else next.delete(tag.id)
+  contextTagIds.value = next
+}
+async function createContextTag() {
+  const name = await requestPrompt('新建标签')
+  if (!name?.trim() || !contextNote.value) return
+  const tag = await tagsStore.create(name.trim())
+  await tagsStore.toggleForNote(contextNote.value.id, tag.id, true)
+  contextTagIds.value = new Set(contextTagIds.value).add(tag.id)
 }
 async function duplicateContextNote() {
   if (contextNote.value) await store.duplicate(contextNote.value.id)
@@ -320,7 +412,7 @@ onBeforeUnmount(() => {
   <div class="notes-layout note-page" @click="closeMenus" @contextmenu.prevent="closeMenus" @keydown.esc="closeMenus">
     <aside class="list-pane note-sidebar" :class="{ collapsed: sidebarCollapsed, 'is-resizing': isResizing }" :style="{ width: sidebarCollapsed ? '0px' : sidebarWidth + 'px' }" @selectstart.prevent>
       <div class="sidebar-inner">
-        <div v-if="!searchMode" class="sidebar-topbar">
+        <div class="sidebar-topbar notebook-tree-toolbar">
           <button class="topbar-btn" :title="t('noteSidebarCollapse')" @click="sidebarCollapsed = true">
             <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="3" y="3" width="18" height="18" rx="2"/><line x1="9" y1="3" x2="9" y2="21"/></svg>
           </button>
@@ -335,45 +427,40 @@ onBeforeUnmount(() => {
               </div>
               <input ref="importInput" type="file" multiple hidden accept=".md,.markdown,.txt" @change="importFiles" />
             </div>
-            <button class="topbar-btn" :title="t('search')" @click="searchMode = true"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg></button>
+            <button class="topbar-btn" title="新建根笔记本" @click="createRootNotebook"><FolderPlus :size="17" /></button>
+            <button class="topbar-btn" title="按名称排序"><ArrowDownAZ :size="17" /></button>
+            <button class="topbar-btn" :class="{ active: store.pinnedOnly }" title="只看置顶笔记" @click="store.pinnedOnly = !store.pinnedOnly"><Pin :size="16" /></button>
+            <button class="topbar-btn" :title="t('search')" @click="searchMode = !searchMode"><Search :size="17" /></button>
           </div>
         </div>
-        <div v-else class="sidebar-search">
+        <div v-if="searchMode" class="sidebar-search notebook-tree-search">
           <svg class="search-icon" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
-          <input v-model="query" class="search-input" autofocus :placeholder="t('search')" @keydown.escape="searchMode = false" />
+          <input v-model="query" class="search-input" autofocus placeholder="搜索笔记" @keydown.escape="searchMode = false; query = ''" />
         </div>
-
-        <div v-if="!searchMode" class="sidebar-header">
-          <button class="folder-trigger" @click.stop="notebookMenu = !notebookMenu">
-            <span class="folder-name">{{ currentFolderName }}</span><svg class="folder-chevron" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="6 9 12 15 18 9"/></svg>
+        <div class="notebook-tree" role="tree" aria-label="笔记本和笔记">
+          <button class="tree-row tree-all-row" :class="{ active: store.selectedTreeNode.type === 'all' && !showDeleted }" @click="selectAllNotes">
+            <BookOpen :size="16" :stroke-width="1.9" /><span class="tree-label">{{ t('allNotes') }}</span><small>{{ store.notes.length }}</small>
           </button>
-          <div v-if="notebookMenu" class="folder-dropdown" @click.stop>
-            <button v-for="folder in folders" :key="folder.id" class="folder-item" :class="{ active: folder.id === store.selectedNotebook }" @click="selectFolder(folder.id); notebookMenu = false">
-              <span class="folder-info"><span class="folder-item-name">{{ folder.name }}</span><small>{{ folder.count }}</small></span>
-              <span v-if="folder.id !== 'all'" class="folder-more-btn" @click.stop="openFolderItemMenu($event, folder)">⋮</span>
-            </button>
-            <button class="folder-item" :class="{ active: showDeleted }" @click="showDeleted = true; notebookMenu = false">{{ t('recentlyDeleted') }}<small>{{ store.deleted.length }}</small></button>
-          </div>
-          <div class="note-filter-row">
-            <select v-model="store.selectedTag" aria-label="按标签筛选">
-              <option value="">全部标签</option>
-              <option v-for="tag in store.allTags" :key="tag" :value="tag">#{{ tag }}</option>
-            </select>
-            <button type="button" class="note-filter-pin" :class="{ active: store.pinnedOnly }" :aria-pressed="store.pinnedOnly" aria-label="只看置顶笔记" title="只看置顶笔记" @click="store.pinnedOnly = !store.pinnedOnly"><Pin :size="14" /></button>
-          </div>
-          <div v-if="folderItemMenu" class="folder-item-menu" :style="folderItemMenuStyle" @click.stop>
-            <button class="folder-item-menu-option" @click="renameNotebook"><Pencil :size="12" />{{ t('rename') }}</button>
-            <button class="folder-item-menu-option danger" @click="deleteNotebook"><Trash2 :size="12" />{{ t('delete') }}</button>
-          </div>
+          <NotebookTreeItem
+            v-for="node in notebookTree"
+            :key="node.id"
+            :node="node"
+            :expanded="expandedNotebookIds"
+            :selected="store.selectedTreeNode"
+            @toggle="toggleNotebook"
+            @select-notebook="selectFolder"
+            @select-note="selectNote"
+            @notebook-menu="openFolderItemMenu"
+            @note-menu="openContextMenu"
+            @drop-node="dropTreeNode"
+          />
+          <div v-if="!notebookTree.length" class="note-list-empty">{{ query ? '没有匹配的笔记' : t('emptyNotes') }}</div>
         </div>
-
-        <div class="note-items">
-          <button v-for="note in list" :key="note.id" class="note-item" :class="{ active: note.id === store.activeId }" @click="selectNote(note.id)" @contextmenu.prevent.stop="openContextMenu($event, note)">
-            <span class="note-title"><span class="note-title-text">{{ note.title || t('untitled') }}</span><Pin v-if="note.pinned" class="note-pin-mark" :size="12" aria-label="已置顶" /></span>
-            <span class="note-meta"><span>{{ new Date(note.updatedAt).toLocaleDateString() }}</span><span>{{ store.notebooks.find(book => book.id === note.notebookId)?.name || t('uncategorized') }}</span><span v-if="note.knowledgeBaseId">{{ library.bases.find(base => base.id === note.knowledgeBaseId)?.name || '知识库' }}</span></span>
-            <span v-if="note.tags?.length" class="note-tags-preview">{{ note.tags.map(tag => '#' + tag).join(' ') }}</span>
-          </button>
-          <div v-if="!list.length" class="note-list-empty">{{ t('emptyNotes') }}</div>
+        <div v-if="folderItemMenu" class="folder-item-menu notebook-context-menu" :style="folderItemMenuStyle" @click.stop>
+          <button class="folder-item-menu-option" @click="createChildNotebook"><FolderPlus :size="13" />新建子笔记本</button>
+          <button v-if="folderItemMenu.name !== '未分类'" class="folder-item-menu-option" @click="renameNotebook">重命名</button>
+          <button v-if="folderItemMenu.name !== '未分类'" class="folder-item-menu-option" @click="moveNotebookByPrompt"><FolderInput :size="13" />移动</button>
+          <button v-if="folderItemMenu.name !== '未分类'" class="folder-item-menu-option danger" @click="deleteNotebook"><Trash2 :size="12" />{{ t('delete') }}</button>
         </div>
       </div>
     </aside>
@@ -386,6 +473,12 @@ onBeforeUnmount(() => {
         </div>
         <div ref="contextMoveAnchorRef" class="note-context-submenu-anchor" @mouseenter="showMoveSubmenu" @mouseleave="hideMoveSubmenu">
           <button class="has-submenu"><FolderInput :size="15" /><span>移动到笔记本</span><ChevronRight class="context-arrow" :size="14" /></button>
+        </div>
+        <button class="has-submenu" @click="contextTagsOpen = !contextTagsOpen"><Tags :size="15" /><span>标签</span><ChevronRight class="context-arrow" :class="{ expanded: contextTagsOpen }" :size="14" /></button>
+        <div v-if="contextTagsOpen" class="note-context-tag-list">
+          <button class="note-context-create-item" @click="createContextTag"><Plus :size="13" />新建标签</button>
+          <button v-for="tag in tagsStore.tags" :key="tag.id" @click="toggleContextTag(tag)"><span class="context-tag-check">{{ contextTagIds.has(tag.id) ? '✓' : '' }}</span>{{ tag.name }}</button>
+          <span v-if="!tagsStore.tags.length" class="note-context-empty">暂无标签</span>
         </div>
         <button @click="duplicateContextNote"><Copy :size="15" /><span>复制</span></button>
         <button @click="togglePinned(contextNote); closeContextMenu()"><PinOff v-if="contextNote?.pinned" :size="15" /><Pin v-else :size="15" /><span>{{ contextNote?.pinned ? '取消置顶' : '置顶笔记' }}</span></button>

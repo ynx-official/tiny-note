@@ -2192,6 +2192,50 @@ body, button, input, select, textarea { font-family: -apple-system, BlinkMacSyst
 .assistant-drawer-fade-enter-from,.assistant-drawer-fade-leave-to { opacity:0; }
 .assistant-drawer-pop-enter-active { transition:transform .22s cubic-bezier(.34,1.2,.64,1),opacity .22s ease; }
 .assistant-drawer-pop-enter-from { opacity:0; transform:scale(.96) translateY(10px); }
+
+/* Unified notebook tree */
+.note-sidebar .notebook-tree-toolbar { height:48px; padding:8px 9px; border-bottom:1px solid var(--border-color); }
+.note-sidebar .notebook-tree-toolbar .topbar-actions { gap:1px; }
+.note-sidebar .notebook-tree-toolbar .topbar-btn { width:27px; height:28px; border-radius:5px; }
+.note-sidebar .notebook-tree-toolbar .topbar-btn.active { color:var(--accent-color); background:var(--bg-active); }
+.note-sidebar .notebook-tree-search { height:44px; padding:7px 10px; }
+.note-sidebar .notebook-tree-search .search-input { height:30px; padding-left:28px; border:1px solid var(--border-color); border-radius:4px; background:var(--bg-secondary); }
+.note-sidebar .notebook-tree-search .search-icon { position:absolute; left:18px; z-index:1; }
+.notebook-tree { flex:1; min-height:0; padding:8px 6px 16px; overflow:auto; scrollbar-width:thin; }
+.tree-row { box-sizing:border-box; width:100%; min-width:0; height:34px; display:flex; align-items:center; gap:7px; padding:0 8px; border:0; border-radius:4px; color:var(--text-primary); background:transparent; text-align:left; font-size:14px; line-height:1.4; cursor:default; }
+.tree-folder-row, .tree-all-row { color:var(--text-primary); font-weight:500; }
+.tree-row:hover { background:var(--bg-hover); }
+.tree-row.active { color:var(--text-primary); background:var(--bg-active); }
+.tree-row:focus-visible { outline:2px solid var(--accent-color); outline-offset:-2px; }
+.tree-row .tree-label { min-width:0; flex:1; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.tree-row small { flex:none; color:var(--text-secondary); font-size:11px; font-weight:400; }
+.tree-disclosure { width:16px; height:22px; display:grid; place-items:center; flex:none; border:0; padding:0; color:var(--text-secondary); background:transparent; }
+.tree-disclosure span { display:block; font-size:20px; line-height:1; transform:rotate(0); transition:transform .12s ease; }
+.tree-disclosure span.expanded { transform:rotate(90deg); }
+.tree-note-row { color:var(--text-primary); font-weight:400; }
+.tree-note-row.active { color:var(--text-primary); }
+.tree-pin { flex:none; color:var(--text-tertiary); }
+.notebook-context-menu { min-width:150px !important; padding:4px !important; border:1px solid var(--border-color); }
+.note-context-tag-list { max-height:180px; margin:2px 5px 5px 27px; padding:3px; overflow:auto; border-left:1px solid var(--border-color); }
+.note-context-tag-list button { height:27px; padding:0 6px; font-size:11px; }
+.context-tag-check { width:14px; flex:none; color:var(--accent-color); }
+.context-arrow.expanded { transform:rotate(90deg); }
+:root[data-theme=dark] .tags-workspace,
+:root[data-theme=dark] .tags-main,
+:root[data-theme=dark] .tag-picker,
+:root[data-theme=dark] .tags-search,
+:root[data-theme=dark] .tag-picker footer button { color:var(--text-primary); background:var(--bg-primary); border-color:var(--border-color); }
+:root[data-theme=dark] .tags-sidebar { color:var(--text-primary); background:var(--bg-secondary); border-color:var(--border-color); }
+:root[data-theme=dark] .tag-row:hover,
+:root[data-theme=dark] .tag-actions button:hover,
+:root[data-theme=dark] .tags-heading button:hover,
+:root[data-theme=dark] .tagged-note-row:hover { background:var(--bg-hover); }
+:root[data-theme=dark] .tag-row.active { color:var(--accent-color); background:var(--bg-active); }
+:root[data-theme=dark] .tags-main-header,
+:root[data-theme=dark] .tagged-note-row,
+:root[data-theme=dark] .tag-picker-list,
+:root[data-theme=dark] .tag-picker-list label { border-color:var(--border-color); }
+:root[data-theme=dark] .tag-picker footer .primary { color:#fff; background:var(--accent-color); border-color:var(--accent-color); }
 @media (max-width:760px) {
   .assistant-drawer-overlay { padding:10px; }
   .assistant-drawer { width:100%; height:calc(100vh - 20px); }

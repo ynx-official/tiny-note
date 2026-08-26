@@ -44,7 +44,6 @@ lowlight.register('javascript', javascript); lowlight.register('typescript', typ
 const props = defineProps({ note: Object, tocVisible: { type: Boolean, default: false }, proposalId: { type: String, default: '' } }); const emit = defineEmits(['deleted', 'toggle-toc', 'proposal-reviewed']); const store = useNotesStore(); const library = useLibraryStore(); const appStore = useAppStore(); const tasksStore = useTasksStore(); const { t, locale } = useI18n(); const aiBusy = ref(false); const aiText = ref(''); const aiRequestId = ref(''); const aiAction = ref('summarize'); const aiResultAction = ref(''); const aiProposal = ref(null); const aiSources = ref([]); const aiConsentOpen = ref(false); const assistantOpen = ref(false); const assistantTriggerVisible = ref(true); const assistantBusy = ref(false); const assistantRequestId = ref(''); const assistantStreamingText = ref(''); const assistantMessages = ref([]); const assistantSelection = ref(null); const assistantResponseSources = ref([]); const assistantResponseProposal = ref(null); const aiPanelOpen = ref(false); const aiPanelSelectionText = ref(''); const commandMenuOpen = ref(false); const aiPrompt = ref(''); const aiInputRef = ref(null); const commandMenuDirection = ref('down'); const moreOpen = ref(false); const moreTriggerRef = ref(null); const moreMenuRef = ref(null); const revisionsOpen = ref(false); const revisions = ref([]); const revisionsBusy = ref(false); const insertOpen = ref(false); const tablePickerOpen = ref(false); const textColorOpen = ref(false); const highlightOpen = ref(false); const headingOpen = ref(false); const knowledgeMenuOpen = ref(false); const imageDialogOpen = ref(false); const imageUrl = ref(''); const imageAlt = ref(''); const imageInput = ref(null); const imageFileInput = ref(null); const tableRows = ref(0); const tableCols = ref(0); const fimEnabled = computed(() => appStore.settings.fimEnabled === true); const fimSuggestion = ref(''); const editorStateTick = ref(0); let fimTimer; let assistantTriggerTimer; let savedSelection = null; let pendingAiRequest = null; let pendingAiChange = null
 const modeIcons = { rich: PenLine, markdown: FileCode2 }
 const noteLinks = ref([])
-const tagDraft = ref('')
 const editorModes = NOTE_MODES.map(mode => ({ ...mode, icon: modeIcons[mode.id] }))
 const editorMode = ref(DEFAULT_NOTE_MODE)
 const modeMenuOpen = ref(false)
@@ -238,7 +237,7 @@ const canSetNoteTitle = computed(() => {
 
 function noteContentSignature(note) {
   if (!note) return ''
-  return JSON.stringify([note.title, note.notebookId, note.contentHtml, note.contentText, note.contentMarkdown || '', note.tags || [], note.pinned])
+  return JSON.stringify([note.title, note.notebookId, note.contentHtml, note.contentText, note.contentMarkdown || '', note.pinned])
 }
 
 function scheduleNoteSave(note = props.note) {
@@ -555,7 +554,6 @@ watch(() => props.note?.id, async (id, previousId) => {
   }
   resetTransientEditorState()
   resetEditorSession(props.note)
-  tagDraft.value = ''
   noteLinks.value = id ? (await store.listLinks(id).catch(() => [])) || [] : []
   await nextTick()
   setupSplitObserver()
@@ -1259,21 +1257,6 @@ async function saveNoteMetadata() {
   persistedSignatures.set(props.note.id, noteContentSignature(props.note))
   noteLinks.value = (await store.listLinks(props.note.id).catch(() => [])) || []
 }
-async function addTag() {
-  const value = tagDraft.value.trim().replace(/^#/, '').toLowerCase()
-  if (!props.note || !value || (props.note.tags || []).includes(value)) {
-    tagDraft.value = ''
-    return
-  }
-  props.note.tags = [...(props.note.tags || []), value].slice(0, 32)
-  tagDraft.value = ''
-  await saveNoteMetadata()
-}
-async function removeTag(tag) {
-  if (!props.note) return
-  props.note.tags = (props.note.tags || []).filter(value => value !== tag)
-  await saveNoteMetadata()
-}
 async function togglePinned() {
   if (!props.note) return
   const updated = await store.setPinned(props.note.id, !props.note.pinned)
@@ -1409,10 +1392,6 @@ async function createKnowledgeFromEditor() {
       </div>
     </div>
     <div class="note-metadata">
-      <div class="note-tag-list">
-        <span v-for="tag in note.tags || []" :key="tag" class="note-tag">#{{ tag }}<button type="button" aria-label="移除标签" @click="removeTag(tag)">×</button></span>
-        <input v-model="tagDraft" class="note-tag-input" placeholder="添加标签" @keydown.enter.prevent="addTag" />
-      </div>
       <div v-if="noteLinks.length" class="note-links" aria-label="关联笔记"><span>关联笔记</span><button v-for="link in noteLinks" :key="link.sourceNoteId + '-' + link.targetNoteId" type="button" @click="store.activeId = link.sourceNoteId === note.id ? link.targetNoteId : link.sourceNoteId">{{ link.targetTitle }}</button></div>
       <div class="editor-meta"><button type="button" class="note-pin-button" :class="{ active: note.pinned }" :aria-pressed="note.pinned" :aria-label="note.pinned ? '取消置顶' : '置顶笔记'" :title="note.pinned ? '取消置顶' : '置顶笔记'" @click="togglePinned"><Pin :size="14" /></button><span :class="{ saving: store.saving }">{{ store.saving ? t('saving') : t('save') }}</span></div>
     </div>

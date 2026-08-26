@@ -20,8 +20,12 @@ MCP 命令：`agent_mcp_list`、`agent_mcp_upsert`、`agent_mcp_delete`、`agent
 
 上下文与索引：`context_search`、`search_index_status/rebuild/retry_failed`。AI 请求可携带 `mode`、结构化 `references`、`scope`、`targetNoteId`、`selection` 和 `autoRetrieve`；流事件增加 `sources` 与 `editProposal`，旧事件保持兼容。
 
-笔记 DTO：`NoteDto.contentMarkdown`、`tags`、`pinned` 始终存在。`note_create` 可接收 `contentMarkdown`、`tags`、`pinned`；`note_update` 必须同时接收 `contentMarkdown`、`contentHtml`、`contentText`、`tags` 和 `pinned`。`note_set_pinned`、`note_link_list`、`note_template_list/upsert/delete` 提供置顶、双向链接和模板能力。复制、Markdown/TXT 导入、浏览器适配层和 Agent `create_note` 维持相同三表示契约。
+笔记 DTO：`NoteDto.contentMarkdown` 与 `pinned` 始终存在，标签不再嵌入 `NoteDto`。`note_create` 可接收 `contentMarkdown` 与 `pinned`；`note_update` 必须同时接收 `contentMarkdown`、`contentHtml`、`contentText` 和 `pinned`。`note_set_pinned`、`note_link_list`、`note_template_list/upsert/delete` 提供置顶、双向链接和模板能力。复制、Markdown/TXT 导入、浏览器适配层和 Agent `create_note` 维持相同三表示契约。
 
-工作区命令：`workspace_export` 返回 `format=tiny-note-workspace`、`version=1` 的可迁移备份；`workspace_import` 接收备份和 `replaceExisting=true`，只在明确确认后执行全量替换，并重建知识库文件索引。备份不包含模型 API Key。
+笔记本命令：`notebook_list/create/update/move/delete`。`NotebookDto` 增加 `parentId`；创建、更新和移动接受可空 `parentId`，Rust 拒绝自身/后代循环。删除普通笔记本会在单一事务中把直接子笔记本提升到上一级、把直属笔记移到“未分类”；“未分类”不可重命名、移动或删除。
+
+标签命令：`tag_list/create/update/delete`、`note_tag_list`、`tag_note_list`、`tag_note_add/remove`。`TagDto` 返回 `id/name/noteCount/createdAt/updatedAt`；批量添加或移除接收 `tagId + noteIds`。删除标签只级联删除关系，不删除笔记；`tag_note_list(untagged=true)` 提供“未添加标签”虚拟筛选。
+
+工作区命令：`workspace_export` 返回 `format=tiny-note-workspace`、`version=3` 的可迁移备份，包含 `tags`、`noteTags` 和笔记本 `parentId`；`workspace_import` 接受 v1/v2/v3 备份和 `replaceExisting=true`，旧版本的笔记标签数组会规范化迁移。只在明确确认后执行全量替换，并重建知识库文件索引。备份不包含模型 API Key。
 
 安全编辑：`note_edit_get/apply/discard`、`note_revision_list/get/restore`。`note_edit_apply` 接受提案 ID、期望更新时间及编辑器生成的最终 Markdown/HTML/纯文本；Rust 校验提案、版本和内容哈希后，在同一事务写入带三种表示的旧版本并更新笔记。版本列表与恢复 DTO 也始终返回 `contentMarkdown`。

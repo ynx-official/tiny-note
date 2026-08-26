@@ -12,24 +12,23 @@ export const useNotesStore = defineStore('notes', {
     templates: [],
     activeId: null,
     search: '',
-    selectedTag: '',
     pinnedOnly: false,
     selectedNotebook: 'all',
+    selectedTreeNode: { type: 'all', id: 'all' },
     loading: false,
     saveTimer: null,
     saving: false
   }),
   getters: {
     active: state => state.notes.find(note => note.id === state.activeId) || null,
-    visible: state => state.notes.filter(note => state.selectedNotebook === 'all' || note.notebookId === state.selectedNotebook),
-    allTags: state => [...new Set(state.notes.flatMap(note => note.tags || []))].sort()
+    visible: state => state.notes.filter(note => state.selectedNotebook === 'all' || note.notebookId === state.selectedNotebook)
   },
   actions: {
     async load() {
       this.loading = true
       try {
         await invoke('note_purge_expired')
-        const filters = { search: this.search || null, deleted: false, tag: this.selectedTag || null, pinned: this.pinnedOnly ? true : null }
+        const filters = { search: this.search || null, deleted: false, pinned: this.pinnedOnly ? true : null }
         ;[this.notes, this.deleted, this.notebooks] = await Promise.all([
           invoke('note_list', filters),
           invoke('note_list', { search: '', deleted: true }),
@@ -46,9 +45,12 @@ export const useNotesStore = defineStore('notes', {
       return this.templates
     },
     async create() {
-      const note = await invoke('note_create', { input: { title: '未命名笔记', notebookId: this.selectedNotebook === 'all' ? null : this.selectedNotebook, knowledgeBaseId: null, contentHtml: '<p></p>', contentText: '', contentMarkdown: '', tags: [], pinned: false } })
+      const active = this.notes.find(note => note.id === this.activeId)
+      const notebookId = this.selectedTreeNode.type === 'notebook' ? this.selectedTreeNode.id : this.selectedTreeNode.type === 'note' ? active?.notebookId || null : null
+      const note = await invoke('note_create', { input: { title: '未命名笔记', notebookId, knowledgeBaseId: null, contentHtml: '<p></p>', contentText: '', contentMarkdown: '', pinned: false } })
       this.notes.unshift(note)
       this.activeId = note.id
+      this.selectedTreeNode = { type: 'note', id: note.id }
       return note
     },
     async createFromTemplate(templateId) {
@@ -58,9 +60,9 @@ export const useNotesStore = defineStore('notes', {
       const html = sanitizeEditorHtml(marked.parse(markdown))
       return this.createFromContent({ title: template.title || template.name, contentHtml: html, contentText: textFromEditorHtml(html), contentMarkdown: markdown })
     },
-    async createFromContent({ title = '未命名笔记', contentHtml = '<p></p>', contentText = '', contentMarkdown = '', notebookId, knowledgeBaseId = null, tags = [], pinned = false } = {}) {
+    async createFromContent({ title = '未命名笔记', contentHtml = '<p></p>', contentText = '', contentMarkdown = '', notebookId, knowledgeBaseId = null, pinned = false } = {}) {
       const uncategorizedId = this.notebooks.find(book => book.name === '未分类')?.id || null
-      const note = await invoke('note_create', { input: { title: title.trim() || '未命名笔记', notebookId: notebookId === undefined ? uncategorizedId : notebookId, knowledgeBaseId, contentHtml, contentText, contentMarkdown, tags, pinned } })
+      const note = await invoke('note_create', { input: { title: title.trim() || '未命名笔记', notebookId: notebookId === undefined ? uncategorizedId : notebookId, knowledgeBaseId, contentHtml, contentText, contentMarkdown, pinned } })
       this.notes.unshift(note)
       this.activeId = note.id
       return note
@@ -87,7 +89,7 @@ export const useNotesStore = defineStore('notes', {
     async save(note) {
       this.saving = true
       try {
-        const updated = await invoke('note_update', { id: note.id, input: { title: note.title, notebookId: note.notebookId, knowledgeBaseId: note.knowledgeBaseId || null, contentHtml: note.contentHtml, contentText: note.contentText, contentMarkdown: note.contentMarkdown || '', tags: note.tags || [], pinned: Boolean(note.pinned) } })
+        const updated = await invoke('note_update', { id: note.id, input: { title: note.title, notebookId: note.notebookId, knowledgeBaseId: note.knowledgeBaseId || null, contentHtml: note.contentHtml, contentText: note.contentText, contentMarkdown: note.contentMarkdown || '', pinned: Boolean(note.pinned) } })
         if (updated) Object.assign(note, updated)
       } finally {
         this.saving = false
@@ -132,7 +134,7 @@ export const useNotesStore = defineStore('notes', {
     async rename(id, title) {
       const note = [...this.notes, ...this.deleted].find(item => item.id === id)
       if (!note || !title?.trim()) return null
-      const updated = await invoke('note_update', { id, input: { title: title.trim(), notebookId: note.notebookId, knowledgeBaseId: note.knowledgeBaseId || null, contentHtml: note.contentHtml, contentText: note.contentText, contentMarkdown: note.contentMarkdown || '', tags: note.tags || [], pinned: Boolean(note.pinned) } })
+      const updated = await invoke('note_update', { id, input: { title: title.trim(), notebookId: note.notebookId, knowledgeBaseId: note.knowledgeBaseId || null, contentHtml: note.contentHtml, contentText: note.contentText, contentMarkdown: note.contentMarkdown || '', pinned: Boolean(note.pinned) } })
       if (updated) Object.assign(note, updated)
       return updated
     },
@@ -147,7 +149,7 @@ export const useNotesStore = defineStore('notes', {
     async move(id, notebookId) {
       await invoke('note_move', { id, notebookId: notebookId || null })
       const note = [...this.notes, ...this.deleted].find(item => item.id === id)
-      if (note) note.notebookId = notebookId || null
+      if (note) note.notebookId = notebookId || this.notebooks.find(book => book.name === '未分类')?.id || null
       return note
     },
     async moveToKnowledge(id, knowledgeBaseId) {
@@ -156,12 +158,17 @@ export const useNotesStore = defineStore('notes', {
       if (note && updated) Object.assign(note, updated)
       return updated || note
     },
-    async createNotebook(name) {
-      await invoke('notebook_create', { name })
+    async createNotebook(name, parentId = null) {
+      const notebook = await invoke('notebook_create', { name, description: '', parentId })
+      await this.load()
+      return notebook
+    },
+    async updateNotebook(id, name, parentId = null) {
+      await invoke('notebook_update', { id, name, description: '', parentId })
       await this.load()
     },
-    async updateNotebook(id, name) {
-      await invoke('notebook_update', { id, name, description: '' })
+    async moveNotebook(id, parentId = null) {
+      await invoke('notebook_move', { id, parentId })
       await this.load()
     },
     async deleteNotebook(id) {

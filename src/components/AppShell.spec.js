@@ -25,7 +25,7 @@ describe('AppShell task status', () => {
     const wrapper = mount(AppShell, {
       props: { active: 'notes' },
       global: {
-        plugins: [pinia, createI18n({ legacy: false, locale: 'zh-CN', messages: { 'zh-CN': { notes: '笔记', library: '知识库', settings: '设置', appName: 'Tiny Note', newNote: '新建笔记' } } })],
+        plugins: [pinia, createI18n({ legacy: false, locale: 'zh-CN', messages: { 'zh-CN': { notes: '笔记', library: '知识库', tags: '标签', settings: '设置', appName: 'Tiny Note', newNote: '新建笔记' } } })],
         stubs: { AvatarDrawer: true, ChatHistoryDrawer: true }
       }
     })

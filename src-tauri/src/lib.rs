@@ -287,7 +287,6 @@ pub struct NoteDto {
     pub content_html: String,
     pub content_text: String,
     pub content_markdown: String,
-    pub tags: Vec<String>,
     pub pinned: bool,
     pub deleted_at: Option<String>,
     pub created_at: String,
@@ -298,10 +297,56 @@ pub struct NoteDto {
 #[serde(rename_all = "camelCase")]
 pub struct NotebookDto {
     pub id: String,
+    #[serde(default)]
+    pub parent_id: Option<String>,
     pub name: String,
     pub description: String,
     pub created_at: String,
     pub updated_at: String,
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone)]
+#[serde(rename_all = "camelCase")]
+pub struct TagDto {
+    pub id: String,
+    pub name: String,
+    pub note_count: u64,
+    pub created_at: String,
+    pub updated_at: String,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct BackupNoteDto {
+    pub id: String,
+    pub notebook_id: Option<String>,
+    pub knowledge_base_id: Option<String>,
+    pub title: String,
+    pub content_html: String,
+    pub content_text: String,
+    pub content_markdown: String,
+    #[serde(default, rename = "tags", skip_serializing_if = "Vec::is_empty")]
+    pub legacy_tags: Vec<String>,
+    pub pinned: bool,
+    pub deleted_at: Option<String>,
+    pub created_at: String,
+    pub updated_at: String,
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone)]
+#[serde(rename_all = "camelCase")]
+pub struct BackupTagDto {
+    pub id: String,
+    pub name: String,
+    pub created_at: String,
+    pub updated_at: String,
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone)]
+#[serde(rename_all = "camelCase")]
+pub struct BackupNoteTagDto {
+    pub note_id: String,
+    pub tag_id: String,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -373,7 +418,11 @@ pub struct WorkspaceBackupDto {
     pub version: u32,
     pub exported_at: String,
     pub notebooks: Vec<NotebookDto>,
-    pub notes: Vec<NoteDto>,
+    pub notes: Vec<BackupNoteDto>,
+    #[serde(default)]
+    pub tags: Vec<BackupTagDto>,
+    #[serde(default)]
+    pub note_tags: Vec<BackupNoteTagDto>,
     pub knowledge_bases: Vec<KnowledgeBaseDto>,
     pub files: Vec<BackupFileDto>,
     pub templates: Vec<NoteTemplateDto>,
@@ -661,8 +710,6 @@ pub struct CreateNote {
     pub content_text: Option<String>,
     pub content_markdown: Option<String>,
     #[serde(default)]
-    pub tags: Vec<String>,
-    #[serde(default)]
     pub pinned: bool,
 }
 
@@ -675,8 +722,6 @@ pub struct UpdateNote {
     pub content_html: String,
     pub content_text: String,
     pub content_markdown: String,
-    #[serde(default)]
-    pub tags: Vec<String>,
     #[serde(default)]
     pub pinned: bool,
 }
@@ -781,8 +826,8 @@ fn now() -> String {
 
 fn init_database(conn: &Connection) -> Result<(), AppError> {
     conn.execute_batch("PRAGMA foreign_keys = ON;
-      CREATE TABLE IF NOT EXISTS notebooks (id TEXT PRIMARY KEY, name TEXT NOT NULL, description TEXT NOT NULL DEFAULT '', created_at TEXT NOT NULL, updated_at TEXT NOT NULL);
-      CREATE TABLE IF NOT EXISTS notes (id TEXT PRIMARY KEY, notebook_id TEXT REFERENCES notebooks(id) ON DELETE SET NULL, title TEXT NOT NULL, content_html TEXT NOT NULL, content_text TEXT NOT NULL, content_markdown TEXT NOT NULL DEFAULT '', tags_json TEXT NOT NULL DEFAULT '[]', is_pinned INTEGER NOT NULL DEFAULT 0, deleted_at TEXT, created_at TEXT NOT NULL, updated_at TEXT NOT NULL);
+      CREATE TABLE IF NOT EXISTS notebooks (id TEXT PRIMARY KEY, parent_id TEXT REFERENCES notebooks(id) ON DELETE SET NULL, name TEXT NOT NULL, description TEXT NOT NULL DEFAULT '', created_at TEXT NOT NULL, updated_at TEXT NOT NULL);
+      CREATE TABLE IF NOT EXISTS notes (id TEXT PRIMARY KEY, notebook_id TEXT REFERENCES notebooks(id) ON DELETE SET NULL, title TEXT NOT NULL, content_html TEXT NOT NULL, content_text TEXT NOT NULL, content_markdown TEXT NOT NULL DEFAULT '', is_pinned INTEGER NOT NULL DEFAULT 0, deleted_at TEXT, created_at TEXT NOT NULL, updated_at TEXT NOT NULL);
       CREATE INDEX IF NOT EXISTS idx_notes_deleted_updated ON notes(deleted_at, updated_at);
       CREATE TABLE IF NOT EXISTS knowledge_bases (id TEXT PRIMARY KEY, category TEXT NOT NULL CHECK(category IN ('personal','local')), name TEXT NOT NULL, description TEXT NOT NULL DEFAULT '', cover TEXT, root_path TEXT NOT NULL, created_at TEXT NOT NULL, updated_at TEXT NOT NULL);
       CREATE TABLE IF NOT EXISTS model_providers (id TEXT PRIMARY KEY, name TEXT NOT NULL, provider TEXT NOT NULL, base_url TEXT NOT NULL, api_key TEXT NOT NULL DEFAULT '', endpoint_type TEXT NOT NULL DEFAULT 'openaiChat');
@@ -943,6 +988,24 @@ fn init_database(conn: &Connection) -> Result<(), AppError> {
             .map_err(AppError::db)?;
         columns
     };
+    let notebook_columns = {
+        let mut statement = conn
+            .prepare("PRAGMA table_info(notebooks)")
+            .map_err(AppError::db)?;
+        let columns = statement
+            .query_map([], |row| row.get::<_, String>(1))
+            .map_err(AppError::db)?
+            .collect::<Result<Vec<_>, _>>()
+            .map_err(AppError::db)?;
+        columns
+    };
+    if !notebook_columns.iter().any(|column| column == "parent_id") {
+        conn.execute(
+            "ALTER TABLE notebooks ADD COLUMN parent_id TEXT REFERENCES notebooks(id) ON DELETE SET NULL",
+            [],
+        )
+        .map_err(AppError::db)?;
+    }
     if !note_columns
         .iter()
         .any(|column| column == "knowledge_base_id")
@@ -953,10 +1016,7 @@ fn init_database(conn: &Connection) -> Result<(), AppError> {
         )
         .map_err(AppError::db)?;
     }
-    for (column, definition) in [
-        ("tags_json", "TEXT NOT NULL DEFAULT '[]'"),
-        ("is_pinned", "INTEGER NOT NULL DEFAULT 0"),
-    ] {
+    for (column, definition) in [("is_pinned", "INTEGER NOT NULL DEFAULT 0")] {
         if !note_columns.iter().any(|existing| existing == column) {
             conn.execute(
                 &format!("ALTER TABLE notes ADD COLUMN {} {}", column, definition),
@@ -964,6 +1024,69 @@ fn init_database(conn: &Connection) -> Result<(), AppError> {
             )
             .map_err(AppError::db)?;
         }
+    }
+    conn.execute_batch(
+        "CREATE TABLE IF NOT EXISTS tags (
+           id TEXT PRIMARY KEY,
+           name TEXT NOT NULL COLLATE NOCASE UNIQUE,
+           created_at TEXT NOT NULL,
+           updated_at TEXT NOT NULL
+         );
+         CREATE TABLE IF NOT EXISTS note_tags (
+           note_id TEXT NOT NULL REFERENCES notes(id) ON DELETE CASCADE,
+           tag_id TEXT NOT NULL REFERENCES tags(id) ON DELETE CASCADE,
+           created_at TEXT NOT NULL,
+           PRIMARY KEY(note_id, tag_id)
+         );
+         CREATE INDEX IF NOT EXISTS idx_note_tags_tag ON note_tags(tag_id, note_id);",
+    )
+    .map_err(AppError::db)?;
+    if note_columns.iter().any(|column| column == "tags_json") {
+        let legacy_tags = {
+            let mut statement = conn
+                .prepare("SELECT id,tags_json FROM notes")
+                .map_err(AppError::db)?;
+            let tags = statement
+                .query_map([], |row| {
+                    Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
+                })
+                .map_err(AppError::db)?
+                .collect::<Result<Vec<_>, _>>()
+                .map_err(AppError::db)?;
+            tags
+        };
+        for (note_id, raw) in legacy_tags {
+            let values = serde_json::from_str::<Vec<String>>(&raw).map_err(|_| {
+                AppError::invalid(
+                    "legacy_tags_invalid",
+                    "旧标签数据无法解析，已停止迁移以避免丢失",
+                )
+            })?;
+            for name in normalize_tags(&values) {
+                let tag_id = conn
+                    .query_row(
+                        "SELECT id FROM tags WHERE name=?1 COLLATE NOCASE",
+                        params![name],
+                        |row| row.get::<_, String>(0),
+                    )
+                    .optional()
+                    .map_err(AppError::db)?
+                    .unwrap_or_else(|| Uuid::new_v4().to_string());
+                let timestamp = now();
+                conn.execute(
+                    "INSERT OR IGNORE INTO tags(id,name,created_at,updated_at) VALUES(?1,?2,?3,?3)",
+                    params![tag_id, name, timestamp],
+                )
+                .map_err(AppError::db)?;
+                conn.execute(
+                    "INSERT OR IGNORE INTO note_tags(note_id,tag_id,created_at) VALUES(?1,?2,?3)",
+                    params![note_id, tag_id, timestamp],
+                )
+                .map_err(AppError::db)?;
+            }
+        }
+        conn.execute("ALTER TABLE notes DROP COLUMN tags_json", [])
+            .map_err(AppError::db)?;
     }
     conn.execute_batch(
         "CREATE INDEX IF NOT EXISTS idx_notes_pinned_updated ON notes(is_pinned, updated_at DESC);
@@ -1069,13 +1192,32 @@ fn init_database(conn: &Connection) -> Result<(), AppError> {
             .map_err(AppError::db)?;
         }
     }
-    let count: i64 = conn
-        .query_row("SELECT COUNT(*) FROM notebooks", [], |r| r.get(0))
+    let uncategorized = conn
+        .query_row(
+            "SELECT id FROM notebooks WHERE name='未分类' ORDER BY created_at LIMIT 1",
+            [],
+            |row| row.get::<_, String>(0),
+        )
+        .optional()
         .map_err(AppError::db)?;
-    if count == 0 {
+    let uncategorized_id = if let Some(id) = uncategorized {
+        id
+    } else {
         let t = now();
-        conn.execute("INSERT INTO notebooks (id,name,description,created_at,updated_at) VALUES (?1,?2,'',?3,?3)", params![Uuid::new_v4().to_string(), "未分类", t]).map_err(AppError::db)?;
-    }
+        let id = Uuid::new_v4().to_string();
+        conn.execute("INSERT INTO notebooks (id,parent_id,name,description,created_at,updated_at) VALUES (?1,NULL,?2,'',?3,?3)", params![id, "未分类", t]).map_err(AppError::db)?;
+        id
+    };
+    conn.execute(
+        "UPDATE notebooks SET parent_id=NULL WHERE id=?1",
+        params![uncategorized_id],
+    )
+    .map_err(AppError::db)?;
+    conn.execute(
+        "UPDATE notes SET notebook_id=?1 WHERE notebook_id IS NULL",
+        params![uncategorized_id],
+    )
+    .map_err(AppError::db)?;
     Ok(())
 }
 
@@ -1222,8 +1364,6 @@ fn ensure_memory_files(state: &AppState) -> Result<PathBuf, AppError> {
 }
 
 fn note_from_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<NoteDto> {
-    let tags_json: String = row.get(7)?;
-    let tags = serde_json::from_str(&tags_json).unwrap_or_default();
     Ok(NoteDto {
         id: row.get(0)?,
         notebook_id: row.get(1)?,
@@ -1232,11 +1372,27 @@ fn note_from_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<NoteDto> {
         content_html: row.get(4)?,
         content_text: row.get(5)?,
         content_markdown: row.get(6)?,
-        tags,
-        pinned: row.get::<_, i64>(8)? != 0,
-        deleted_at: row.get(9)?,
-        created_at: row.get(10)?,
-        updated_at: row.get(11)?,
+        pinned: row.get::<_, i64>(7)? != 0,
+        deleted_at: row.get(8)?,
+        created_at: row.get(9)?,
+        updated_at: row.get(10)?,
+    })
+}
+
+fn backup_note_from_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<BackupNoteDto> {
+    Ok(BackupNoteDto {
+        id: row.get(0)?,
+        notebook_id: row.get(1)?,
+        knowledge_base_id: row.get(2)?,
+        title: row.get(3)?,
+        content_html: row.get(4)?,
+        content_text: row.get(5)?,
+        content_markdown: row.get(6)?,
+        legacy_tags: Vec::new(),
+        pinned: row.get::<_, i64>(7)? != 0,
+        deleted_at: row.get(8)?,
+        created_at: row.get(9)?,
+        updated_at: row.get(10)?,
     })
 }
 
@@ -1249,6 +1405,15 @@ pub(crate) fn normalize_tags(tags: &[String]) -> Vec<String> {
     normalized.sort();
     normalized.dedup();
     normalized.into_iter().take(32).collect()
+}
+
+fn uncategorized_notebook_id(conn: &Connection) -> Result<String, AppError> {
+    conn.query_row(
+        "SELECT id FROM notebooks WHERE name='未分类' ORDER BY created_at LIMIT 1",
+        [],
+        |row| row.get::<_, String>(0),
+    )
+    .map_err(AppError::db)
 }
 
 fn sync_note_links(conn: &Connection, source_note_id: &str) -> Result<(), AppError> {
@@ -1310,6 +1475,67 @@ fn rebuild_note_links(conn: &Connection) -> Result<(), AppError> {
         sync_note_links(conn, &id)?;
     }
     Ok(())
+}
+
+fn validate_notebook_parent(
+    conn: &Connection,
+    notebook_id: &str,
+    parent_id: Option<&str>,
+) -> Result<(), AppError> {
+    let Some(parent_id) = parent_id else {
+        return Ok(());
+    };
+    if parent_id == notebook_id {
+        return Err(AppError::invalid(
+            "invalid_notebook_parent",
+            "笔记本不能移动到自身",
+        ));
+    }
+    let parent_exists = conn
+        .query_row(
+            "SELECT 1 FROM notebooks WHERE id=?1",
+            params![parent_id],
+            |_| Ok(()),
+        )
+        .optional()
+        .map_err(AppError::db)?
+        .is_some();
+    if !parent_exists {
+        return Err(AppError::not_found(
+            "notebook_parent_not_found",
+            "目标笔记本不存在",
+        ));
+    }
+    let parent_is_descendant = conn
+        .query_row(
+            "WITH RECURSIVE descendants(id) AS (
+               SELECT id FROM notebooks WHERE parent_id=?1
+               UNION ALL
+               SELECT child.id FROM notebooks child JOIN descendants d ON child.parent_id=d.id
+             )
+             SELECT EXISTS(SELECT 1 FROM descendants WHERE id=?2)",
+            params![notebook_id, parent_id],
+            |row| row.get::<_, bool>(0),
+        )
+        .map_err(AppError::db)?;
+    if parent_is_descendant {
+        return Err(AppError::invalid(
+            "invalid_notebook_parent",
+            "笔记本不能移动到其子笔记本中",
+        ));
+    }
+    Ok(())
+}
+
+fn normalized_tag_name(value: &str) -> Result<String, AppError> {
+    let name = value.split_whitespace().collect::<Vec<_>>().join(" ");
+    if name.is_empty() || name.chars().count() > 64 {
+        return Err(AppError::invalid(
+            "invalid_tag_name",
+            "标签名称应为 1 到 64 个字符",
+        ));
+    }
+    Ok(name)
 }
 
 pub mod commands {
@@ -1550,7 +1776,6 @@ pub mod commands {
         search: Option<String>,
         deleted: bool,
         knowledge_base_id: Option<String>,
-        tag: Option<String>,
         pinned: Option<bool>,
     ) -> Result<Vec<NoteDto>, AppError> {
         let conn = state
@@ -1558,24 +1783,16 @@ pub mod commands {
             .lock()
             .map_err(|_| AppError::db("database lock poisoned"))?;
         let pattern = format!("%{}%", search.unwrap_or_default());
-        let tag_pattern = tag
-            .filter(|value| !value.trim().is_empty())
-            .map(|value| format!("%\"{}\"%", value.trim().to_lowercase()));
         let sql = if deleted {
-            "SELECT id,notebook_id,knowledge_base_id,title,content_html,content_text,content_markdown,tags_json,is_pinned,deleted_at,created_at,updated_at FROM notes WHERE deleted_at IS NOT NULL AND (?2 IS NULL OR knowledge_base_id=?2) AND (?3 IS NULL OR lower(tags_json) LIKE ?3) AND (?4 IS NULL OR is_pinned=?4) AND (title LIKE ?1 OR content_text LIKE ?1) ORDER BY is_pinned DESC,updated_at DESC"
+            "SELECT id,notebook_id,knowledge_base_id,title,content_html,content_text,content_markdown,is_pinned,deleted_at,created_at,updated_at FROM notes WHERE deleted_at IS NOT NULL AND (?2 IS NULL OR knowledge_base_id=?2) AND (?3 IS NULL OR is_pinned=?3) AND (title LIKE ?1 OR content_text LIKE ?1) ORDER BY is_pinned DESC,updated_at DESC"
         } else {
-            "SELECT id,notebook_id,knowledge_base_id,title,content_html,content_text,content_markdown,tags_json,is_pinned,deleted_at,created_at,updated_at FROM notes WHERE deleted_at IS NULL AND (?2 IS NULL OR knowledge_base_id=?2) AND (?3 IS NULL OR lower(tags_json) LIKE ?3) AND (?4 IS NULL OR is_pinned=?4) AND (title LIKE ?1 OR content_text LIKE ?1) ORDER BY is_pinned DESC,updated_at DESC"
+            "SELECT id,notebook_id,knowledge_base_id,title,content_html,content_text,content_markdown,is_pinned,deleted_at,created_at,updated_at FROM notes WHERE deleted_at IS NULL AND (?2 IS NULL OR knowledge_base_id=?2) AND (?3 IS NULL OR is_pinned=?3) AND (title LIKE ?1 OR content_text LIKE ?1) ORDER BY is_pinned DESC,updated_at DESC"
         };
         let result = conn
             .prepare(sql)
             .map_err(AppError::db)?
             .query_map(
-                params![
-                    pattern,
-                    knowledge_base_id,
-                    tag_pattern,
-                    pinned.map(|value| value as i64)
-                ],
+                params![pattern, knowledge_base_id, pinned.map(|value| value as i64)],
                 note_from_row,
             )
             .map_err(AppError::db)?
@@ -1590,7 +1807,7 @@ pub mod commands {
             .db
             .lock()
             .map_err(|_| AppError::db("database lock poisoned"))?;
-        conn.query_row("SELECT id,notebook_id,knowledge_base_id,title,content_html,content_text,content_markdown,tags_json,is_pinned,deleted_at,created_at,updated_at FROM notes WHERE id=?1", params![id], note_from_row).optional().map_err(AppError::db)?.ok_or_else(|| AppError::not_found("note_not_found", "Note not found"))
+        conn.query_row("SELECT id,notebook_id,knowledge_base_id,title,content_html,content_text,content_markdown,is_pinned,deleted_at,created_at,updated_at FROM notes WHERE id=?1", params![id], note_from_row).optional().map_err(AppError::db)?.ok_or_else(|| AppError::not_found("note_not_found", "Note not found"))
     }
 
     #[tauri::command]
@@ -1743,22 +1960,49 @@ pub mod commands {
             .lock()
             .map_err(|_| AppError::db("database lock poisoned"))?;
         let notes = conn
-            .prepare("SELECT id,notebook_id,knowledge_base_id,title,content_html,content_text,content_markdown,tags_json,is_pinned,deleted_at,created_at,updated_at FROM notes ORDER BY created_at")
+            .prepare("SELECT id,notebook_id,knowledge_base_id,title,content_html,content_text,content_markdown,is_pinned,deleted_at,created_at,updated_at FROM notes ORDER BY created_at")
             .map_err(AppError::db)?
-            .query_map([], note_from_row)
+            .query_map([], backup_note_from_row)
             .map_err(AppError::db)?
             .collect::<Result<Vec<_>, _>>()
             .map_err(AppError::db)?;
         let notebooks = conn
-            .prepare("SELECT id,name,description,created_at,updated_at FROM notebooks ORDER BY created_at")
+            .prepare("SELECT id,parent_id,name,description,created_at,updated_at FROM notebooks ORDER BY created_at")
             .map_err(AppError::db)?
             .query_map([], |row| {
                 Ok(NotebookDto {
                     id: row.get(0)?,
+                    parent_id: row.get(1)?,
+                    name: row.get(2)?,
+                    description: row.get(3)?,
+                    created_at: row.get(4)?,
+                    updated_at: row.get(5)?,
+                })
+            })
+            .map_err(AppError::db)?
+            .collect::<Result<Vec<_>, _>>()
+            .map_err(AppError::db)?;
+        let tags = conn
+            .prepare("SELECT id,name,created_at,updated_at FROM tags ORDER BY name COLLATE NOCASE")
+            .map_err(AppError::db)?
+            .query_map([], |row| {
+                Ok(BackupTagDto {
+                    id: row.get(0)?,
                     name: row.get(1)?,
-                    description: row.get(2)?,
-                    created_at: row.get(3)?,
-                    updated_at: row.get(4)?,
+                    created_at: row.get(2)?,
+                    updated_at: row.get(3)?,
+                })
+            })
+            .map_err(AppError::db)?
+            .collect::<Result<Vec<_>, _>>()
+            .map_err(AppError::db)?;
+        let note_tags = conn
+            .prepare("SELECT note_id,tag_id FROM note_tags ORDER BY note_id,tag_id")
+            .map_err(AppError::db)?
+            .query_map([], |row| {
+                Ok(BackupNoteTagDto {
+                    note_id: row.get(0)?,
+                    tag_id: row.get(1)?,
                 })
             })
             .map_err(AppError::db)?
@@ -1879,10 +2123,12 @@ pub mod commands {
         }
         Ok(WorkspaceBackupDto {
             format: "tiny-note-workspace".into(),
-            version: 2,
+            version: 3,
             exported_at: now(),
             notebooks,
             notes,
+            tags,
+            note_tags,
             knowledge_bases,
             files,
             templates,
@@ -1899,7 +2145,7 @@ pub mod commands {
         request: WorkspaceImportRequest,
     ) -> Result<(), AppError> {
         if request.backup.format != "tiny-note-workspace"
-            || !matches!(request.backup.version, 1 | 2)
+            || !matches!(request.backup.version, 1..=3)
         {
             return Err(AppError::invalid(
                 "unsupported_backup",
@@ -1968,6 +2214,55 @@ pub mod commands {
                 return Err(AppError::invalid(
                     "invalid_backup_reference",
                     "Backup note references unknown metadata",
+                ));
+            }
+        }
+        for notebook in &request.backup.notebooks {
+            if notebook.parent_id.as_ref().is_some_and(|parent_id| {
+                parent_id == &notebook.id
+                    || !request
+                        .backup
+                        .notebooks
+                        .iter()
+                        .any(|candidate| &candidate.id == parent_id)
+            }) {
+                return Err(AppError::invalid(
+                    "invalid_backup_notebook_tree",
+                    "Backup notebook tree contains an invalid parent",
+                ));
+            }
+            let mut cursor = notebook.parent_id.as_deref();
+            let mut visited = HashSet::new();
+            while let Some(parent_id) = cursor {
+                if !visited.insert(parent_id) {
+                    return Err(AppError::invalid(
+                        "invalid_backup_notebook_tree",
+                        "Backup notebook tree contains a cycle",
+                    ));
+                }
+                cursor = request
+                    .backup
+                    .notebooks
+                    .iter()
+                    .find(|candidate| candidate.id == parent_id)
+                    .and_then(|candidate| candidate.parent_id.as_deref());
+            }
+        }
+        for relation in &request.backup.note_tags {
+            if !request
+                .backup
+                .notes
+                .iter()
+                .any(|note| note.id == relation.note_id)
+                || !request
+                    .backup
+                    .tags
+                    .iter()
+                    .any(|tag| tag.id == relation.tag_id)
+            {
+                return Err(AppError::invalid(
+                    "invalid_backup_tag_reference",
+                    "Backup tag relation references unknown metadata",
                 ));
             }
         }
@@ -2056,6 +2351,12 @@ pub mod commands {
             .execute("DELETE FROM note_links", [])
             .map_err(AppError::db)?;
         transaction
+            .execute("DELETE FROM note_tags", [])
+            .map_err(AppError::db)?;
+        transaction
+            .execute("DELETE FROM tags", [])
+            .map_err(AppError::db)?;
+        transaction
             .execute("DELETE FROM notes", [])
             .map_err(AppError::db)?;
         transaction
@@ -2079,11 +2380,46 @@ pub mod commands {
         for notebook in &request.backup.notebooks {
             transaction
                 .execute(
-                    "INSERT INTO notebooks(id,name,description,created_at,updated_at) VALUES(?1,?2,?3,?4,?5)",
+                    "INSERT INTO notebooks(id,parent_id,name,description,created_at,updated_at) VALUES(?1,NULL,?2,?3,?4,?5)",
                     params![notebook.id, notebook.name, notebook.description, notebook.created_at, notebook.updated_at],
                 )
                 .map_err(AppError::db)?;
         }
+        for notebook in &request.backup.notebooks {
+            transaction
+                .execute(
+                    "UPDATE notebooks SET parent_id=?2 WHERE id=?1",
+                    params![notebook.id, notebook.parent_id],
+                )
+                .map_err(AppError::db)?;
+        }
+        let uncategorized_id = request
+            .backup
+            .notebooks
+            .iter()
+            .find(|notebook| notebook.name == "未分类")
+            .map(|notebook| notebook.id.clone())
+            .unwrap_or_else(|| Uuid::new_v4().to_string());
+        if !request
+            .backup
+            .notebooks
+            .iter()
+            .any(|notebook| notebook.id == uncategorized_id)
+        {
+            let timestamp = now();
+            transaction
+                .execute(
+                    "INSERT INTO notebooks(id,parent_id,name,description,created_at,updated_at) VALUES(?1,NULL,'未分类','',?2,?2)",
+                    params![uncategorized_id, timestamp],
+                )
+                .map_err(AppError::db)?;
+        }
+        transaction
+            .execute(
+                "UPDATE notebooks SET parent_id=NULL WHERE id=?1",
+                params![uncategorized_id],
+            )
+            .map_err(AppError::db)?;
         for knowledge_base in &request.backup.knowledge_bases {
             if !matches!(knowledge_base.category.as_str(), "personal" | "local") {
                 return Err(AppError::invalid(
@@ -2111,14 +2447,60 @@ pub mod commands {
                 .map_err(AppError::db)?;
         }
         for note in &request.backup.notes {
-            let tags_json =
-                serde_json::to_string(&normalize_tags(&note.tags)).map_err(AppError::db)?;
+            let notebook_id = note
+                .notebook_id
+                .clone()
+                .unwrap_or_else(|| uncategorized_id.clone());
             transaction
                 .execute(
-                    "INSERT INTO notes(id,notebook_id,knowledge_base_id,title,content_html,content_text,content_markdown,tags_json,is_pinned,deleted_at,created_at,updated_at) VALUES(?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12)",
-                    params![note.id, note.notebook_id, note.knowledge_base_id, note.title, note.content_html, note.content_text, note.content_markdown, tags_json, note.pinned as i64, note.deleted_at, note.created_at, note.updated_at],
+                    "INSERT INTO notes(id,notebook_id,knowledge_base_id,title,content_html,content_text,content_markdown,is_pinned,deleted_at,created_at,updated_at) VALUES(?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11)",
+                    params![note.id, notebook_id, note.knowledge_base_id, note.title, note.content_html, note.content_text, note.content_markdown, note.pinned as i64, note.deleted_at, note.created_at, note.updated_at],
                 )
                 .map_err(AppError::db)?;
+        }
+        for tag in &request.backup.tags {
+            transaction
+                .execute(
+                    "INSERT INTO tags(id,name,created_at,updated_at) VALUES(?1,?2,?3,?4)",
+                    params![tag.id, tag.name, tag.created_at, tag.updated_at],
+                )
+                .map_err(AppError::db)?;
+        }
+        for relation in &request.backup.note_tags {
+            transaction
+                .execute(
+                    "INSERT INTO note_tags(note_id,tag_id,created_at) VALUES(?1,?2,?3)",
+                    params![relation.note_id, relation.tag_id, now()],
+                )
+                .map_err(AppError::db)?;
+        }
+        if request.backup.version < 3 {
+            for note in &request.backup.notes {
+                for name in normalize_tags(&note.legacy_tags) {
+                    let tag_id = transaction
+                        .query_row(
+                            "SELECT id FROM tags WHERE name=?1 COLLATE NOCASE",
+                            params![name],
+                            |row| row.get::<_, String>(0),
+                        )
+                        .optional()
+                        .map_err(AppError::db)?
+                        .unwrap_or_else(|| Uuid::new_v4().to_string());
+                    let timestamp = now();
+                    transaction
+                        .execute(
+                            "INSERT OR IGNORE INTO tags(id,name,created_at,updated_at) VALUES(?1,?2,?3,?3)",
+                            params![tag_id, name, timestamp],
+                        )
+                        .map_err(AppError::db)?;
+                    transaction
+                        .execute(
+                            "INSERT OR IGNORE INTO note_tags(note_id,tag_id,created_at) VALUES(?1,?2,?3)",
+                            params![note.id, tag_id, timestamp],
+                        )
+                        .map_err(AppError::db)?;
+                }
+            }
         }
         for template in &request.backup.templates {
             if !template.builtin {
@@ -2252,7 +2634,7 @@ pub mod commands {
                 .optional()
                 .map_err(AppError::db)?;
             conn.execute(
-                "INSERT INTO notes(id,notebook_id,knowledge_base_id,title,content_html,content_text,content_markdown,tags_json,is_pinned,created_at,updated_at) VALUES(?1,?2,NULL,?3,?4,?5,?6,'[]',0,?7,?7)",
+                "INSERT INTO notes(id,notebook_id,knowledge_base_id,title,content_html,content_text,content_markdown,is_pinned,created_at,updated_at) VALUES(?1,?2,NULL,?3,?4,?5,?6,0,?7,?7)",
                 params![note_id, notebook_id, input.title, input.content_html, input.content_text, input.content_markdown, timestamp],
             )
             .map_err(AppError::db)?;
@@ -2282,9 +2664,11 @@ pub mod commands {
             .db
             .lock()
             .map_err(|_| AppError::db("database lock poisoned"))?;
-        let tags_json =
-            serde_json::to_string(&normalize_tags(&input.tags)).map_err(AppError::db)?;
-        conn.execute("INSERT INTO notes (id,notebook_id,knowledge_base_id,title,content_html,content_text,content_markdown,tags_json,is_pinned,created_at,updated_at) VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?10)", params![id, input.notebook_id, input.knowledge_base_id, title, html, text, markdown, tags_json, input.pinned as i64, t]).map_err(AppError::db)?;
+        let notebook_id = Some(match input.notebook_id {
+            Some(notebook_id) => notebook_id,
+            None => uncategorized_notebook_id(&conn)?,
+        });
+        conn.execute("INSERT INTO notes (id,notebook_id,knowledge_base_id,title,content_html,content_text,content_markdown,is_pinned,created_at,updated_at) VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?9)", params![id, notebook_id, input.knowledge_base_id, title, html, text, markdown, input.pinned as i64, t]).map_err(AppError::db)?;
         rebuild_note_links(&conn)?;
         search::index_note(&conn, &id)?;
         drop(conn);
@@ -2303,9 +2687,11 @@ pub mod commands {
             .map_err(|_| AppError::db("database lock poisoned"))?;
         sync_external_markdown(&conn, &id, &input.content_markdown)?;
         let t = now();
-        let tags_json =
-            serde_json::to_string(&normalize_tags(&input.tags)).map_err(AppError::db)?;
-        let changed = conn.execute("UPDATE notes SET notebook_id=?2,knowledge_base_id=?3,title=?4,content_html=?5,content_text=?6,content_markdown=?7,tags_json=?8,is_pinned=?9,updated_at=?10 WHERE id=?1", params![id, input.notebook_id, input.knowledge_base_id, input.title, input.content_html, input.content_text, input.content_markdown, tags_json, input.pinned as i64, t]).map_err(AppError::db)?;
+        let notebook_id = Some(match input.notebook_id {
+            Some(notebook_id) => notebook_id,
+            None => uncategorized_notebook_id(&conn)?,
+        });
+        let changed = conn.execute("UPDATE notes SET notebook_id=?2,knowledge_base_id=?3,title=?4,content_html=?5,content_text=?6,content_markdown=?7,is_pinned=?8,updated_at=?9 WHERE id=?1", params![id, notebook_id, input.knowledge_base_id, input.title, input.content_html, input.content_text, input.content_markdown, input.pinned as i64, t]).map_err(AppError::db)?;
         if changed == 0 {
             return Err(AppError::not_found("note_not_found", "Note not found"));
         }
@@ -2354,8 +2740,12 @@ pub mod commands {
             .db
             .lock()
             .map_err(|_| AppError::db("database lock poisoned"))?;
-        let tags_json = serde_json::to_string(&source.tags).map_err(AppError::db)?;
-        conn.execute("INSERT INTO notes (id,notebook_id,knowledge_base_id,title,content_html,content_text,content_markdown,tags_json,is_pinned,created_at,updated_at) VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?10)", params![new_id, source.notebook_id, source.knowledge_base_id, title, source.content_html, source.content_text, source.content_markdown, tags_json, source.pinned as i64, t]).map_err(AppError::db)?;
+        conn.execute("INSERT INTO notes (id,notebook_id,knowledge_base_id,title,content_html,content_text,content_markdown,is_pinned,created_at,updated_at) VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?9)", params![new_id, source.notebook_id, source.knowledge_base_id, title, source.content_html, source.content_text, source.content_markdown, source.pinned as i64, t]).map_err(AppError::db)?;
+        conn.execute(
+            "INSERT INTO note_tags(note_id,tag_id,created_at) SELECT ?1,tag_id,?2 FROM note_tags WHERE note_id=?3",
+            params![new_id, t, source.id],
+        )
+        .map_err(AppError::db)?;
         rebuild_note_links(&conn)?;
         search::index_note(&conn, &new_id)?;
         drop(conn);
@@ -2372,10 +2762,14 @@ pub mod commands {
             .db
             .lock()
             .map_err(|_| AppError::db("database lock poisoned"))?;
+        let target = Some(match notebook_id {
+            Some(notebook_id) => notebook_id,
+            None => uncategorized_notebook_id(&conn)?,
+        });
         let changed = conn
             .execute(
                 "UPDATE notes SET notebook_id=?2,updated_at=?3 WHERE id=?1",
-                params![id, notebook_id, now()],
+                params![id, target, now()],
             )
             .map_err(AppError::db)?;
         if changed == 0 {
@@ -2478,17 +2872,16 @@ pub mod commands {
             .lock()
             .map_err(|_| AppError::db("database lock poisoned"))?;
         let result = conn
-            .prepare(
-                "SELECT id,name,description,created_at,updated_at FROM notebooks ORDER BY name",
-            )
+            .prepare("SELECT id,parent_id,name,description,created_at,updated_at FROM notebooks ORDER BY name COLLATE NOCASE")
             .map_err(AppError::db)?
             .query_map([], |r| {
                 Ok(NotebookDto {
                     id: r.get(0)?,
-                    name: r.get(1)?,
-                    description: r.get(2)?,
-                    created_at: r.get(3)?,
-                    updated_at: r.get(4)?,
+                    parent_id: r.get(1)?,
+                    name: r.get(2)?,
+                    description: r.get(3)?,
+                    created_at: r.get(4)?,
+                    updated_at: r.get(5)?,
                 })
             })
             .map_err(AppError::db)?
@@ -2502,16 +2895,22 @@ pub mod commands {
         state: State<'_, AppState>,
         name: String,
         description: Option<String>,
+        parent_id: Option<String>,
     ) -> Result<NotebookDto, AppError> {
+        let name = name.trim();
+        if name.is_empty() || name == "未分类" {
+            return Err(AppError::invalid("invalid_notebook_name", "笔记本名称无效"));
+        }
         let id = Uuid::new_v4().to_string();
         let t = now();
         let conn = state
             .db
             .lock()
             .map_err(|_| AppError::db("database lock poisoned"))?;
+        validate_notebook_parent(&conn, &id, parent_id.as_deref())?;
         conn.execute(
-            "INSERT INTO notebooks VALUES (?1,?2,?3,?4,?4)",
-            params![id, name, description.unwrap_or_default(), t],
+            "INSERT INTO notebooks(id,parent_id,name,description,created_at,updated_at) VALUES (?1,?2,?3,?4,?5,?5)",
+            params![id, parent_id, name, description.unwrap_or_default(), t],
         )
         .map_err(AppError::db)?;
         drop(conn);
@@ -2524,15 +2923,36 @@ pub mod commands {
         id: String,
         name: String,
         description: Option<String>,
+        parent_id: Option<String>,
     ) -> Result<(), AppError> {
+        let name = name.trim();
+        if name.is_empty() || name == "未分类" {
+            return Err(AppError::invalid("invalid_notebook_name", "笔记本名称无效"));
+        }
         let conn = state
             .db
             .lock()
             .map_err(|_| AppError::db("database lock poisoned"))?;
+        let existing_name = conn
+            .query_row(
+                "SELECT name FROM notebooks WHERE id=?1",
+                params![id],
+                |row| row.get::<_, String>(0),
+            )
+            .optional()
+            .map_err(AppError::db)?
+            .ok_or_else(|| AppError::not_found("notebook_not_found", "Notebook not found"))?;
+        if existing_name == "未分类" {
+            return Err(AppError::invalid(
+                "system_notebook_protected",
+                "未分类笔记本不能修改",
+            ));
+        }
+        validate_notebook_parent(&conn, &id, parent_id.as_deref())?;
         let n = conn
             .execute(
-                "UPDATE notebooks SET name=?2,description=?3,updated_at=?4 WHERE id=?1",
-                params![id, name, description.unwrap_or_default(), now()],
+                "UPDATE notebooks SET parent_id=?2,name=?3,description=?4,updated_at=?5 WHERE id=?1",
+                params![id, parent_id, name, description.unwrap_or_default(), now()],
             )
             .map_err(AppError::db)?;
         if n == 0 {
@@ -2546,26 +2966,78 @@ pub mod commands {
     }
 
     #[tauri::command]
-    pub fn notebook_delete(state: State<'_, AppState>, id: String) -> Result<(), AppError> {
+    pub fn notebook_move(
+        state: State<'_, AppState>,
+        id: String,
+        parent_id: Option<String>,
+    ) -> Result<(), AppError> {
         let conn = state
             .db
             .lock()
             .map_err(|_| AppError::db("database lock poisoned"))?;
-        let fallback: String = conn
+        let name = conn
             .query_row(
-                "SELECT id FROM notebooks WHERE name='未分类' LIMIT 1",
-                [],
-                |r| r.get(0),
+                "SELECT name FROM notebooks WHERE id=?1",
+                params![id],
+                |row| row.get::<_, String>(0),
             )
-            .map_err(AppError::db)?;
+            .optional()
+            .map_err(AppError::db)?
+            .ok_or_else(|| AppError::not_found("notebook_not_found", "Notebook not found"))?;
+        if name == "未分类" {
+            return Err(AppError::invalid(
+                "system_notebook_protected",
+                "未分类笔记本不能移动",
+            ));
+        }
+        validate_notebook_parent(&conn, &id, parent_id.as_deref())?;
         conn.execute(
-            "UPDATE notes SET notebook_id=?2 WHERE notebook_id=?1",
-            params![id, fallback],
+            "UPDATE notebooks SET parent_id=?2,updated_at=?3 WHERE id=?1",
+            params![id, parent_id, now()],
         )
         .map_err(AppError::db)?;
-        let n = conn
+        Ok(())
+    }
+
+    #[tauri::command]
+    pub fn notebook_delete(state: State<'_, AppState>, id: String) -> Result<(), AppError> {
+        let mut conn = state
+            .db
+            .lock()
+            .map_err(|_| AppError::db("database lock poisoned"))?;
+        let (name, parent_id) = conn
+            .query_row(
+                "SELECT name,parent_id FROM notebooks WHERE id=?1",
+                params![id],
+                |row| Ok((row.get::<_, String>(0)?, row.get::<_, Option<String>>(1)?)),
+            )
+            .optional()
+            .map_err(AppError::db)?
+            .ok_or_else(|| AppError::not_found("notebook_not_found", "Notebook not found"))?;
+        if name == "未分类" {
+            return Err(AppError::invalid(
+                "system_notebook_protected",
+                "未分类笔记本不能删除",
+            ));
+        }
+        let fallback = uncategorized_notebook_id(&conn)?;
+        let transaction = conn.transaction().map_err(AppError::db)?;
+        transaction
+            .execute(
+                "UPDATE notebooks SET parent_id=?2,updated_at=?3 WHERE parent_id=?1",
+                params![id, parent_id, now()],
+            )
+            .map_err(AppError::db)?;
+        transaction
+            .execute(
+                "UPDATE notes SET notebook_id=?2,updated_at=?3 WHERE notebook_id=?1",
+                params![id, fallback, now()],
+            )
+            .map_err(AppError::db)?;
+        let n = transaction
             .execute("DELETE FROM notebooks WHERE id=?1", params![id])
             .map_err(AppError::db)?;
+        transaction.commit().map_err(AppError::db)?;
         if n == 0 {
             Err(AppError::not_found(
                 "notebook_not_found",
@@ -2574,6 +3046,243 @@ pub mod commands {
         } else {
             Ok(())
         }
+    }
+
+    #[tauri::command]
+    pub fn tag_list(state: State<'_, AppState>) -> Result<Vec<TagDto>, AppError> {
+        let conn = state
+            .db
+            .lock()
+            .map_err(|_| AppError::db("database lock poisoned"))?;
+        let result = conn
+            .prepare(
+                "SELECT t.id,t.name,COUNT(n.id),t.created_at,t.updated_at
+             FROM tags t
+             LEFT JOIN note_tags nt ON nt.tag_id=t.id
+             LEFT JOIN notes n ON n.id=nt.note_id AND n.deleted_at IS NULL
+             GROUP BY t.id ORDER BY t.name COLLATE NOCASE",
+            )
+            .map_err(AppError::db)?
+            .query_map([], |row| {
+                Ok(TagDto {
+                    id: row.get(0)?,
+                    name: row.get(1)?,
+                    note_count: row.get::<_, i64>(2)? as u64,
+                    created_at: row.get(3)?,
+                    updated_at: row.get(4)?,
+                })
+            })
+            .map_err(AppError::db)?
+            .collect::<Result<Vec<_>, _>>()
+            .map_err(AppError::db);
+        result
+    }
+
+    #[tauri::command]
+    pub fn tag_create(state: State<'_, AppState>, name: String) -> Result<TagDto, AppError> {
+        let name = normalized_tag_name(&name)?;
+        let id = Uuid::new_v4().to_string();
+        let timestamp = now();
+        let conn = state
+            .db
+            .lock()
+            .map_err(|_| AppError::db("database lock poisoned"))?;
+        conn.execute(
+            "INSERT INTO tags(id,name,created_at,updated_at) VALUES(?1,?2,?3,?3)",
+            params![id, name, timestamp],
+        )
+        .map_err(AppError::db)?;
+        drop(conn);
+        tag_list(state)?
+            .into_iter()
+            .find(|tag| tag.id == id)
+            .ok_or_else(|| AppError::not_found("tag_not_found", "Tag not found"))
+    }
+
+    #[tauri::command]
+    pub fn tag_update(
+        state: State<'_, AppState>,
+        id: String,
+        name: String,
+    ) -> Result<TagDto, AppError> {
+        let name = normalized_tag_name(&name)?;
+        let conn = state
+            .db
+            .lock()
+            .map_err(|_| AppError::db("database lock poisoned"))?;
+        let changed = conn
+            .execute(
+                "UPDATE tags SET name=?2,updated_at=?3 WHERE id=?1",
+                params![id, name, now()],
+            )
+            .map_err(AppError::db)?;
+        if changed == 0 {
+            return Err(AppError::not_found("tag_not_found", "Tag not found"));
+        }
+        drop(conn);
+        tag_list(state)?
+            .into_iter()
+            .find(|tag| tag.id == id)
+            .ok_or_else(|| AppError::not_found("tag_not_found", "Tag not found"))
+    }
+
+    #[tauri::command]
+    pub fn tag_delete(state: State<'_, AppState>, id: String) -> Result<(), AppError> {
+        let conn = state
+            .db
+            .lock()
+            .map_err(|_| AppError::db("database lock poisoned"))?;
+        let changed = conn
+            .execute("DELETE FROM tags WHERE id=?1", params![id])
+            .map_err(AppError::db)?;
+        if changed == 0 {
+            Err(AppError::not_found("tag_not_found", "Tag not found"))
+        } else {
+            Ok(())
+        }
+    }
+
+    #[tauri::command]
+    pub fn note_tag_list(
+        state: State<'_, AppState>,
+        note_id: String,
+    ) -> Result<Vec<TagDto>, AppError> {
+        let conn = state
+            .db
+            .lock()
+            .map_err(|_| AppError::db("database lock poisoned"))?;
+        let result = conn
+            .prepare(
+                "SELECT t.id,t.name,COUNT(n.id),t.created_at,t.updated_at
+             FROM tags t JOIN note_tags selected ON selected.tag_id=t.id AND selected.note_id=?1
+             LEFT JOIN note_tags all_links ON all_links.tag_id=t.id
+             LEFT JOIN notes n ON n.id=all_links.note_id AND n.deleted_at IS NULL
+             GROUP BY t.id ORDER BY t.name COLLATE NOCASE",
+            )
+            .map_err(AppError::db)?
+            .query_map(params![note_id], |row| {
+                Ok(TagDto {
+                    id: row.get(0)?,
+                    name: row.get(1)?,
+                    note_count: row.get::<_, i64>(2)? as u64,
+                    created_at: row.get(3)?,
+                    updated_at: row.get(4)?,
+                })
+            })
+            .map_err(AppError::db)?
+            .collect::<Result<Vec<_>, _>>()
+            .map_err(AppError::db);
+        result
+    }
+
+    #[tauri::command]
+    pub fn tag_note_list(
+        state: State<'_, AppState>,
+        tag_id: Option<String>,
+        untagged: bool,
+    ) -> Result<Vec<NoteDto>, AppError> {
+        let conn = state
+            .db
+            .lock()
+            .map_err(|_| AppError::db("database lock poisoned"))?;
+        let columns = "n.id,n.notebook_id,n.knowledge_base_id,n.title,n.content_html,n.content_text,n.content_markdown,n.is_pinned,n.deleted_at,n.created_at,n.updated_at";
+        let sql = if untagged {
+            format!("SELECT {columns} FROM notes n WHERE n.deleted_at IS NULL AND NOT EXISTS(SELECT 1 FROM note_tags nt WHERE nt.note_id=n.id) ORDER BY n.is_pinned DESC,n.updated_at DESC")
+        } else {
+            format!("SELECT {columns} FROM notes n JOIN note_tags nt ON nt.note_id=n.id WHERE n.deleted_at IS NULL AND nt.tag_id=?1 ORDER BY n.is_pinned DESC,n.updated_at DESC")
+        };
+        let mut statement = conn.prepare(&sql).map_err(AppError::db)?;
+        let notes = if untagged {
+            statement
+                .query_map([], note_from_row)
+                .map_err(AppError::db)?
+                .collect::<Result<Vec<_>, _>>()
+                .map_err(AppError::db)?
+        } else {
+            let tag_id =
+                tag_id.ok_or_else(|| AppError::invalid("tag_required", "Tag id is required"))?;
+            statement
+                .query_map(params![tag_id], note_from_row)
+                .map_err(AppError::db)?
+                .collect::<Result<Vec<_>, _>>()
+                .map_err(AppError::db)?
+        };
+        Ok(notes)
+    }
+
+    fn update_note_tag_links(
+        state: State<'_, AppState>,
+        tag_id: String,
+        note_ids: Vec<String>,
+        add: bool,
+    ) -> Result<(), AppError> {
+        let mut conn = state
+            .db
+            .lock()
+            .map_err(|_| AppError::db("database lock poisoned"))?;
+        let tag_exists = conn
+            .query_row(
+                "SELECT 1 FROM tags WHERE id=?1",
+                params![tag_id],
+                |_| Ok(()),
+            )
+            .optional()
+            .map_err(AppError::db)?
+            .is_some();
+        if !tag_exists {
+            return Err(AppError::not_found("tag_not_found", "Tag not found"));
+        }
+        let unique_note_ids = note_ids.into_iter().collect::<HashSet<_>>();
+        let transaction = conn.transaction().map_err(AppError::db)?;
+        for note_id in unique_note_ids {
+            if add {
+                let note_exists = transaction
+                    .query_row(
+                        "SELECT 1 FROM notes WHERE id=?1 AND deleted_at IS NULL",
+                        params![note_id],
+                        |_| Ok(()),
+                    )
+                    .optional()
+                    .map_err(AppError::db)?
+                    .is_some();
+                if !note_exists {
+                    return Err(AppError::not_found("note_not_found", "Note not found"));
+                }
+                transaction
+                    .execute(
+                        "INSERT OR IGNORE INTO note_tags(note_id,tag_id,created_at) VALUES(?1,?2,?3)",
+                        params![note_id, tag_id, now()],
+                    )
+                    .map_err(AppError::db)?;
+            } else {
+                transaction
+                    .execute(
+                        "DELETE FROM note_tags WHERE note_id=?1 AND tag_id=?2",
+                        params![note_id, tag_id],
+                    )
+                    .map_err(AppError::db)?;
+            }
+        }
+        transaction.commit().map_err(AppError::db)?;
+        Ok(())
+    }
+
+    #[tauri::command]
+    pub fn tag_note_add(
+        state: State<'_, AppState>,
+        tag_id: String,
+        note_ids: Vec<String>,
+    ) -> Result<(), AppError> {
+        update_note_tag_links(state, tag_id, note_ids, true)
+    }
+
+    #[tauri::command]
+    pub fn tag_note_remove(
+        state: State<'_, AppState>,
+        tag_id: String,
+        note_ids: Vec<String>,
+    ) -> Result<(), AppError> {
+        update_note_tag_links(state, tag_id, note_ids, false)
     }
 
     pub(crate) fn safe_path(root: &Path, relative: &str) -> Result<PathBuf, AppError> {
@@ -3300,7 +4009,7 @@ pub mod commands {
             .map_err(AppError::db)?;
         transaction.commit().map_err(AppError::db)?;
         search::index_note(&conn, &proposal.note_id)?;
-        conn.query_row("SELECT id,notebook_id,knowledge_base_id,title,content_html,content_text,content_markdown,tags_json,is_pinned,deleted_at,created_at,updated_at FROM notes WHERE id=?1", params![proposal.note_id], note_from_row).map_err(AppError::db)
+        conn.query_row("SELECT id,notebook_id,knowledge_base_id,title,content_html,content_text,content_markdown,is_pinned,deleted_at,created_at,updated_at FROM notes WHERE id=?1", params![proposal.note_id], note_from_row).map_err(AppError::db)
     }
 
     #[tauri::command]
@@ -3366,7 +4075,7 @@ pub mod commands {
         transaction.commit().map_err(AppError::db)?;
         rebuild_note_links(&conn)?;
         search::index_note(&conn, &revision.note_id)?;
-        conn.query_row("SELECT id,notebook_id,knowledge_base_id,title,content_html,content_text,content_markdown,tags_json,is_pinned,deleted_at,created_at,updated_at FROM notes WHERE id=?1", params![revision.note_id], note_from_row).map_err(AppError::db)
+        conn.query_row("SELECT id,notebook_id,knowledge_base_id,title,content_html,content_text,content_markdown,is_pinned,deleted_at,created_at,updated_at FROM notes WHERE id=?1", params![revision.note_id], note_from_row).map_err(AppError::db)
     }
 
     #[tauri::command]
@@ -4942,7 +5651,16 @@ pub fn run() {
             commands::notebook_list,
             commands::notebook_create,
             commands::notebook_update,
+            commands::notebook_move,
             commands::notebook_delete,
+            commands::tag_list,
+            commands::tag_create,
+            commands::tag_update,
+            commands::tag_delete,
+            commands::note_tag_list,
+            commands::tag_note_list,
+            commands::tag_note_add,
+            commands::tag_note_remove,
             commands::knowledge_base_list,
             commands::knowledge_base_create,
             commands::knowledge_base_update,
@@ -5283,18 +6001,108 @@ mod tests {
                 .unwrap();
             assert_eq!(markdown_columns, 1, "missing content_markdown on {table}");
         }
-        for column in ["tags_json", "is_pinned"] {
+        let pinned_column: i64 = c
+            .query_row(
+                "SELECT COUNT(*) FROM pragma_table_info('notes') WHERE name='is_pinned'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(pinned_column, 1, "missing is_pinned on notes");
+        let legacy_tags_column: i64 = c
+            .query_row(
+                "SELECT COUNT(*) FROM pragma_table_info('notes') WHERE name='tags_json'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(legacy_tags_column, 0);
+        for table in ["tags", "note_tags"] {
             let count: i64 = c
                 .query_row(
-                    &format!(
-                        "SELECT COUNT(*) FROM pragma_table_info('notes') WHERE name='{column}'"
-                    ),
-                    [],
+                    "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name=?1",
+                    params![table],
                     |row| row.get(0),
                 )
                 .unwrap();
-            assert_eq!(count, 1, "missing {column} on notes");
+            assert_eq!(count, 1, "missing normalized tag table {table}");
         }
+    }
+
+    #[test]
+    fn migration_normalizes_legacy_tags_and_uncategorized_notes() {
+        let c = Connection::open_in_memory().unwrap();
+        c.execute_batch(
+            "CREATE TABLE notebooks (
+                id TEXT PRIMARY KEY,
+                name TEXT NOT NULL,
+                description TEXT NOT NULL DEFAULT '',
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL
+            );
+            CREATE TABLE notes (
+                id TEXT PRIMARY KEY,
+                notebook_id TEXT,
+                title TEXT NOT NULL,
+                content_html TEXT NOT NULL,
+                content_text TEXT NOT NULL,
+                tags_json TEXT NOT NULL DEFAULT '[]',
+                deleted_at TEXT,
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL
+            );
+            INSERT INTO notes(id,notebook_id,title,content_html,content_text,tags_json,created_at,updated_at)
+            VALUES('legacy-note',NULL,'旧笔记','','','[\"项目\",\"项目\",\"工作\"]','2026-01-01','2026-01-01');",
+        )
+        .unwrap();
+
+        init_database(&c).unwrap();
+
+        let tag_count: i64 = c
+            .query_row("SELECT COUNT(*) FROM tags", [], |row| row.get(0))
+            .unwrap();
+        let relation_count: i64 = c
+            .query_row("SELECT COUNT(*) FROM note_tags", [], |row| row.get(0))
+            .unwrap();
+        let notebook_name: String = c
+            .query_row(
+                "SELECT b.name FROM notes n JOIN notebooks b ON b.id=n.notebook_id WHERE n.id='legacy-note'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        let legacy_column: i64 = c
+            .query_row(
+                "SELECT COUNT(*) FROM pragma_table_info('notes') WHERE name='tags_json'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+
+        assert_eq!(tag_count, 2);
+        assert_eq!(relation_count, 2);
+        assert_eq!(notebook_name, "未分类");
+        assert_eq!(legacy_column, 0);
+    }
+
+    #[test]
+    fn notebook_parent_validation_rejects_self_and_descendant_cycles() {
+        let c = Connection::open_in_memory().unwrap();
+        init_database(&c).unwrap();
+        c.execute(
+            "INSERT INTO notebooks(id,parent_id,name,description,created_at,updated_at) VALUES('parent',NULL,'父级','','2026-01-01','2026-01-01')",
+            [],
+        )
+        .unwrap();
+        c.execute(
+            "INSERT INTO notebooks(id,parent_id,name,description,created_at,updated_at) VALUES('child','parent','子级','','2026-01-01','2026-01-01')",
+            [],
+        )
+        .unwrap();
+
+        assert!(validate_notebook_parent(&c, "parent", Some("parent")).is_err());
+        assert!(validate_notebook_parent(&c, "parent", Some("child")).is_err());
+        assert!(validate_notebook_parent(&c, "child", None).is_ok());
     }
     #[test]
     fn note_and_revision_rows_preserve_markdown_alongside_html_and_text() {
@@ -5308,7 +6116,7 @@ mod tests {
         .unwrap();
         let note = c
             .query_row(
-                "SELECT id,notebook_id,knowledge_base_id,title,content_html,content_text,content_markdown,tags_json,is_pinned,deleted_at,created_at,updated_at FROM notes WHERE id='markdown-note'",
+                "SELECT id,notebook_id,knowledge_base_id,title,content_html,content_text,content_markdown,is_pinned,deleted_at,created_at,updated_at FROM notes WHERE id='markdown-note'",
                 [],
                 note_from_row,
             )
@@ -5316,7 +6124,6 @@ mod tests {
         assert_eq!(note.content_html, "<h1>指南</h1>");
         assert_eq!(note.content_text, "指南");
         assert_eq!(note.content_markdown, "# 指南");
-        assert_eq!(note.tags, Vec::<String>::new());
         assert!(!note.pinned);
 
         c.execute(

@@ -2,7 +2,7 @@
 
 最后更新：2026-08-26
 
-SQLite 核心表：`notebooks`、`notes`、`knowledge_bases`、`model_providers`、`model_profiles`、`settings`、`chat_conversations`、`chat_messages`。`notes.title` 是由正文首个非空内容行派生、最多 50 个字符的列表、搜索和文件名元数据，并随正文原子保存，不再由独立标题输入框维护。即时编辑的首块以 Friday 同构的 TipTap `noteTitle` 节点和 `data-note-title` 属性持久化；正文原子保存三种表示：`content_markdown` 是 Markdown 模式中的用户源码（即时编辑产生正文变更后可规范化为语义等价写法），`content_html` 是经过白名单清洗的 TipTap 渲染内容，`content_text` 是搜索与 AI 使用的纯文本。`notes.tags_json` 保存规范化的小写标签，`notes.is_pinned` 保存置顶状态；标签和置顶参与列表筛选及排序。旧库通过 `PRAGMA table_info` 检测后执行兼容迁移，Markdown 初始默认空字符串。
+SQLite 核心表：`notebooks`、`notes`、`tags`、`note_tags`、`knowledge_bases`、`model_providers`、`model_profiles`、`settings`、`chat_conversations`、`chat_messages`。`notebooks.parent_id` 是可空自关联，构成多级笔记本树；Rust 写入前拒绝自身或后代作为父级。每篇笔记必须直属一个笔记本，历史空归属和未指定归属统一迁移到根级系统笔记本“未分类”。`notes.title` 是由正文首个非空内容行派生、最多 50 个字符的列表、搜索和文件名元数据，并随正文原子保存，不再由独立标题输入框维护。即时编辑的首块以 Friday 同构的 TipTap `noteTitle` 节点和 `data-note-title` 属性持久化；正文原子保存三种表示：`content_markdown` 是 Markdown 模式中的用户源码（即时编辑产生正文变更后可规范化为语义等价写法），`content_html` 是经过白名单清洗的 TipTap 渲染内容，`content_text` 是搜索与 AI 使用的纯文本。`notes.is_pinned` 保存置顶状态。标签由大小写不敏感唯一的 `tags` 保存，`note_tags(note_id, tag_id)` 保存多对多关系并在任一端删除时级联清理；旧库的 `notes.tags_json` 在校验迁移成功后删除，避免双重数据源。
 
 `note_revisions` 同样保存 `content_markdown`、`content_html` 和 `content_text`，因此 AI 应用前快照与版本恢复不会丢失源码。复制、导入、Agent 创建笔记及 AI 应用必须在一次逻辑操作中同步三种表示。旧记录保持可读，Markdown 在首次实际源码编辑或保存时延迟回填。
 
@@ -24,6 +24,6 @@ MCP 服务配置保存在应用数据目录的 `agent/mcp.json`，包含直接�
 
 模板保存在 `note_templates`，内置模板使用 `builtin=1` 并禁止删除，自定义模板可导入/导出。笔记间的 `[[笔记标题]]` 引用解析为 `note_links`，保存出链和入链，笔记正文或标题变化后同步重算。
 
-工作区备份是版本化 JSON：笔记、笔记本、知识库元数据、知识库文件以 Base64 保存、模板、链接和界面设置均可恢复；模型 API Key、Agent 凭据和运行时缓存明确排除在备份之外。恢复是用户确认后的全量替换，并在完成后重建搜索索引。
+工作区备份是版本化 JSON。v3 保存笔记本父子关系、标签实体和笔记标签关联，以及笔记、知识库元数据、Base64 知识库文件、模板、链接和界面设置；导入继续接受 v1/v2，并把旧笔记的 `tags` 数组转换为 v3 关系。模型 API Key、Agent 凭据和运行时缓存明确排除在备份之外。恢复是用户确认后的全量替换，并在完成后重建搜索索引。
 
 模型服务采用一对多结构：`model_providers` 保存连接名称、厂商、Base URL、API Key 与端点协议，`model_profiles.provider_id` 关联其下的多个模型。端点协议白名单为 `openaiChat`、`openaiResponses`、`anthropicMessages`。旧的扁平模型记录会按“厂商 + Base URL + Key + 端点协议”无损归并，同一连接只保留一份凭据；旧配置默认 `openaiChat`，避免改变请求行为。模型列表 DTO 为兼容调用方返回展开后的连接元数据以及 `providerId`、`connectionName`、`apiKeyConfigured`，但不会返回明文 Key；Rust 请求层通过关联表直接读取。
