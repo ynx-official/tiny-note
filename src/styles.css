@@ -198,7 +198,7 @@ body, button, input, select, textarea { font-family: -apple-system, BlinkMacSyst
 .external-note-actions { flex:none; display:flex; align-items:center; gap:6px; }
 .external-note-import { flex:none; min-height:30px; padding:5px 11px; border:1px solid var(--line); border-radius:6px; background:var(--surface); color:var(--text-primary); font-size:12px; font-weight:600; }
 .external-note-import:hover { border-color:var(--text-tertiary); background:var(--bg-hover); }
-.external-note-dismiss { width:30px; height:30px; display:inline-flex; align-items:center; justify-content:center; padding:0; border:1px solid transparent; border-radius:6px; color:var(--text-secondary); }
+.external-note-dismiss { min-height:30px; padding:5px 9px; border:1px solid transparent; border-radius:6px; color:var(--text-secondary); font-size:12px; font-weight:500; }
 .external-note-dismiss:hover { border-color:var(--line); background:var(--bg-hover); color:var(--text-primary); }
 .external-note-import:focus-visible,.external-note-dismiss:focus-visible { outline:2px solid var(--accent-color); outline-offset:2px; }
 .editor-content { box-sizing:border-box; padding:0 40px 40px; }

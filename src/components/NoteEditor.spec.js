@@ -113,7 +113,7 @@ describe('NoteEditor article modes', () => {
     expect(wrapper.get('.external-note-banner').text()).toContain('外部文件')
     expect(wrapper.get('.external-note-banner').text()).toContain('outside.md')
     expect(wrapper.get('.external-note-banner').text()).toContain('不会出现在笔记列表')
-    expect(wrapper.get('.external-note-dismiss').attributes('aria-label')).toBe('关闭外部文件提示')
+    expect(wrapper.findAll('.external-note-actions button').map(button => button.text().trim())).toEqual(['不再提醒', '导入到笔记'])
     expect(wrapper.get('.editor-mode-trigger').text()).toBe('')
     expect(wrapper.get('.editor-mode-trigger').attributes('aria-label')).toContain('Markdown')
 

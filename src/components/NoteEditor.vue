@@ -1397,8 +1397,8 @@ defineExpose({ saveLatestContent: () => flushLatestContent({ save: true }) })
     <div v-if="showExternalNoteBanner" class="external-note-banner" role="status" :title="note.externalPath">
       <div class="external-note-message"><FileText :size="16" aria-hidden="true" /><span><strong>外部文件</strong><small>{{ externalFileName }} · 修改会保存到源文件，不会出现在笔记列表</small></span></div>
       <div class="external-note-actions">
+        <button type="button" class="external-note-dismiss" title="以后不再提示此文章" @click="dismissExternalNoteBanner">不再提醒</button>
         <button type="button" class="external-note-import" @click="importExternalSource">导入到笔记</button>
-        <button type="button" class="external-note-dismiss" aria-label="关闭外部文件提示" title="不再提示此文章" @click="dismissExternalNoteBanner"><X :size="15" aria-hidden="true" /></button>
       </div>
     </div>
     <div v-if="noteLinks.length" class="note-metadata">
