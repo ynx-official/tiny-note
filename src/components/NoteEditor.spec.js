@@ -108,6 +108,7 @@ describe('NoteEditor article modes', () => {
     await wrapper.get('.external-note-import').trigger('click')
     await flushPromises()
     expect(wrapper.emitted('import-external')).toEqual([[external]])
+    wrapper.unmount()
   })
 
   it('offers separate print, PDF, and HTML actions instead of a combined print/PDF command', async () => {

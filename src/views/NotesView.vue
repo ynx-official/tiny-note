@@ -419,11 +419,6 @@ const tocHeadings = computed(() => {
     .filter(heading => heading.text)
 })
 function toggleToc() {
-  if (sidebarCollapsed.value) {
-    sidebarCollapsed.value = false
-    window.setTimeout(() => { tocVisible.value = true }, 280)
-    return
-  }
   tocVisible.value = !tocVisible.value
 }
 function closeToc() { tocVisible.value = false }
