@@ -1,4 +1,5 @@
 import { sanitizeEditorHtml } from './noteMarkdown'
+import { renderMermaidDiagram } from './mermaidRenderer'
 
 const DEFAULT_EXPORT_TITLE = '未命名笔记'
 const WINDOWS_RESERVED_FILENAME = /^(?:con|prn|aux|nul|com[1-9]|lpt[1-9])(?:\..*)?$/i
@@ -138,6 +139,24 @@ const NOTE_EXPORT_ARTICLE_CSS = `
   font-size: 13px;
   overflow-wrap: anywhere;
 }
+.tiny-note-export-mermaid {
+  margin: 1.2em 0;
+  padding: 16px;
+  break-inside: avoid-page;
+  border: 1px solid #e5e3df;
+  border-radius: 8px;
+  background: #ffffff;
+  overflow: hidden;
+}
+.tiny-note-export-mermaid svg { display: block; width: 100%; max-width: 100%; height: auto; margin: 0 auto; }
+.tiny-note-export-mermaid-error {
+  margin: 1em 0 -0.5em;
+  padding: 8px 10px;
+  border-radius: 6px;
+  color: #a61e1e;
+  background: #fff1f0;
+  font-size: 12px;
+}
 .tiny-note-export-body a { color: #0075de; text-decoration: underline; text-underline-offset: 2px; }
 .tiny-note-export-body hr { margin: 1.6em 0; border: 0; border-top: 1px solid #e5e3df; }
 .tiny-note-export-body mark { padding: 0.05em 0.18em; border-radius: 3px; }
@@ -205,10 +224,59 @@ function normalizeSnapshot(note = {}) {
   return { title, contentHtml }
 }
 
-function articleMarkup(note = {}) {
+async function renderSnapshotMermaid(note, {
+  documentRef = globalThis.document,
+  renderMermaid = renderMermaidDiagram
+} = {}) {
   const snapshot = normalizeSnapshot(note)
+  const container = documentRef.createElement('div')
+  container.innerHTML = snapshot.contentHtml
+  const blocks = [...container.querySelectorAll('pre > code.language-mermaid')]
+
+  for (const code of blocks) {
+    const pre = code.parentElement
+    try {
+      const result = await renderMermaid(code.textContent || '', { theme: 'light' })
+      const figure = documentRef.createElement('figure')
+      figure.className = 'tiny-note-export-mermaid'
+      figure.setAttribute('role', 'img')
+      figure.setAttribute('aria-label', 'Mermaid 图表')
+      figure.innerHTML = result.svg
+      pre.replaceWith(figure)
+    } catch {
+      const warning = documentRef.createElement('div')
+      warning.className = 'tiny-note-export-mermaid-error'
+      warning.textContent = '图表渲染失败，已保留 Mermaid 源码'
+      pre.before(warning)
+    }
+  }
+
+  return { ...snapshot, contentHtml: container.innerHTML }
+}
+
+function articleMarkupFromSnapshot(snapshot) {
   const content = snapshot.contentHtml.trim() || '<p class="tiny-note-export-empty">暂无正文</p>'
   return `<article class="tiny-note-export-document"><header><h1 class="tiny-note-export-title">${escapeHtml(snapshot.title)}</h1></header><main class="tiny-note-export-body">${content}</main></article>`
+}
+
+function articleMarkup(note = {}) {
+  return articleMarkupFromSnapshot(normalizeSnapshot(note))
+}
+
+function buildPreparedNoteExportHtml(snapshot, lang) {
+  const safeLang = /^[a-z]{2,3}(?:-[a-z\d]{2,8})*$/i.test(lang) ? lang : 'zh-CN'
+  return `<!doctype html>
+<html lang="${safeLang}">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>${escapeHtml(snapshot.title)}</title>
+<style>${NOTE_EXPORT_CSS}</style>
+</head>
+<body class="tiny-note-export-page">
+${articleMarkupFromSnapshot(snapshot)}
+</body>
+</html>`
 }
 
 export function createSafeExportFilename(title, extension) {
@@ -227,19 +295,7 @@ export function createSafeExportFilename(title, extension) {
 
 export function buildNoteExportHtml(note = {}, { lang = 'zh-CN' } = {}) {
   const snapshot = normalizeSnapshot(note)
-  const safeLang = /^[a-z]{2,3}(?:-[a-z\d]{2,8})*$/i.test(lang) ? lang : 'zh-CN'
-  return `<!doctype html>
-<html lang="${safeLang}">
-<head>
-<meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>${escapeHtml(snapshot.title)}</title>
-<style>${NOTE_EXPORT_CSS}</style>
-</head>
-<body class="tiny-note-export-page">
-${articleMarkup(snapshot)}
-</body>
-</html>`
+  return buildPreparedNoteExportHtml(snapshot, lang)
 }
 
 export function downloadBlob(blob, filename, { documentRef = globalThis.document, urlApi = globalThis.URL, schedule = setTimeout } = {}) {
@@ -263,10 +319,15 @@ export function downloadBlob(blob, filename, { documentRef = globalThis.document
   schedule(cleanup, 0)
 }
 
-export function downloadNoteHtml(note, { download = downloadBlob, lang = 'zh-CN' } = {}) {
-  const snapshot = normalizeSnapshot(note)
+export async function downloadNoteHtml(note, {
+  download = downloadBlob,
+  lang = 'zh-CN',
+  documentRef = globalThis.document,
+  renderMermaid = renderMermaidDiagram
+} = {}) {
+  const snapshot = await renderSnapshotMermaid(note, { documentRef, renderMermaid })
   const filename = createSafeExportFilename(snapshot.title, 'html')
-  const blob = new globalThis.Blob([buildNoteExportHtml(snapshot, { lang })], { type: 'text/html;charset=utf-8' })
+  const blob = new globalThis.Blob([buildPreparedNoteExportHtml(snapshot, lang)], { type: 'text/html;charset=utf-8' })
   download(blob, filename)
   return filename
 }
@@ -458,15 +519,16 @@ export async function exportNotePdf(note, {
   pdfFactory = loadHtml2Pdf,
   download = downloadBlob,
   documentRef = globalThis.document,
-  embedRemoteImage = embedRemoteImageAsDataUrl
+  embedRemoteImage = embedRemoteImageAsDataUrl,
+  renderMermaid = renderMermaidDiagram
 } = {}) {
-  const snapshot = normalizeSnapshot(note)
+  const snapshot = await renderSnapshotMermaid(note, { documentRef, renderMermaid })
   const filename = createSafeExportFilename(snapshot.title, 'pdf')
   const stage = documentRef.createElement('div')
   stage.className = 'tiny-note-pdf-stage'
   stage.setAttribute('aria-hidden', 'true')
   stage.style.cssText = 'position:absolute;left:0;top:0;z-index:-2147483647;width:174mm;pointer-events:none;background:#fff;'
-  stage.innerHTML = `<style>${NOTE_EXPORT_ARTICLE_CSS}.tiny-note-pdf-stage .tiny-note-export-document{width:174mm;max-width:none;margin:0;padding:0;}</style>${articleMarkup(snapshot)}`
+  stage.innerHTML = `<style>${NOTE_EXPORT_ARTICLE_CSS}.tiny-note-pdf-stage .tiny-note-export-document{width:174mm;max-width:none;margin:0;padding:0;}</style>${articleMarkupFromSnapshot(snapshot)}`
   documentRef.body.appendChild(stage)
 
   try {
@@ -496,7 +558,7 @@ export async function exportNotePdf(note, {
       enableLinks: true,
       pagebreak: {
         mode: ['css', 'legacy'],
-        avoid: ['tr', 'pre', 'img', 'blockquote', 'li', 'p', 'h1', 'h2', 'h3', 'h4', 'h5', 'h6', '.tiny-note-pdf-heading-group']
+        avoid: ['tr', 'pre', 'img', 'blockquote', 'li', 'p', 'h1', 'h2', 'h3', 'h4', 'h5', 'h6', '.tiny-note-pdf-heading-group', '.tiny-note-export-mermaid']
       },
       image: { type: 'jpeg', quality: 0.98 },
       html2canvas: {

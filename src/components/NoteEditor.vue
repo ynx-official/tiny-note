@@ -804,7 +804,7 @@ async function runArticleExport(format) {
     if (!snapshot) return
     if (format === 'html') {
       let artifact
-      downloadNoteHtml(snapshot, { lang: locale.value, download: (blob, filename) => { artifact = { blob, filename } } })
+      await downloadNoteHtml(snapshot, { lang: locale.value, download: (blob, filename) => { artifact = { blob, filename } } })
       const result = await saveExportBlob(artifact.blob, artifact.filename, { appStore })
       if (result.cancelled) return
       if (result.path) showExportSuccess(result)

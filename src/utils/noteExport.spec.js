@@ -3,6 +3,7 @@ import {
   buildNoteExportHtml,
   calculatePdfRenderScale,
   createSafeExportFilename,
+  downloadNoteHtml,
   downloadBlob,
   exportNotePdf,
   printNote
@@ -20,6 +21,48 @@ afterEach(() => {
 })
 
 describe('note export documents', () => {
+  it('embeds rendered Mermaid SVG in standalone HTML instead of exporting its source block', async () => {
+    const download = vi.fn()
+    const renderMermaid = vi.fn().mockResolvedValue({ svg: '<svg viewBox="0 0 100 50"><text>渲染完成</text></svg>' })
+
+    await downloadNoteHtml({
+      title: '流程图',
+      contentHtml: '<p>说明</p><pre><code class="language-mermaid">flowchart LR\nA --&gt; B</code></pre>'
+    }, { download, renderMermaid, documentRef: window.document })
+
+    expect(renderMermaid).toHaveBeenCalledWith('flowchart LR\nA --> B', { theme: 'light' })
+    const blob = download.mock.calls[0][0]
+    const html = await new Promise((resolve, reject) => {
+      const reader = new window.FileReader()
+      reader.onload = () => resolve(reader.result)
+      reader.onerror = () => reject(reader.error)
+      reader.readAsText(blob)
+    })
+    expect(html).toContain('class="tiny-note-export-mermaid"')
+    expect(html).toContain('<svg viewBox="0 0 100 50">')
+    expect(html).toContain('渲染完成')
+    expect(html).not.toContain('class="language-mermaid"')
+  })
+
+  it('keeps Mermaid source visible when export rendering fails', async () => {
+    const download = vi.fn()
+    await downloadNoteHtml({
+      title: '坏图表',
+      contentHtml: '<pre><code class="language-mermaid">flowchart broken</code></pre>'
+    }, {
+      download,
+      renderMermaid: vi.fn().mockRejectedValue(new Error('syntax error')),
+      documentRef: window.document
+    })
+
+    const html = await new Promise(resolve => {
+      const reader = new window.FileReader()
+      reader.onload = () => resolve(reader.result)
+      reader.readAsText(download.mock.calls[0][0])
+    })
+    expect(html).toContain('图表渲染失败，已保留 Mermaid 源码')
+    expect(html).toContain('flowchart broken')
+  })
   it('builds a standalone UTF-8 HTML document from a sanitized article snapshot', () => {
     const html = buildNoteExportHtml(unsafeNote)
 
@@ -89,6 +132,22 @@ describe('note export documents', () => {
     expect(outputPdf).toHaveBeenCalledWith('blob')
     expect(download).toHaveBeenCalledWith(pdfBlob, '方案 & 复盘.pdf')
     expect(window.document.querySelector('.tiny-note-pdf-stage')).toBeNull()
+  })
+
+  it('renders Mermaid diagrams before handing the article to the PDF renderer', async () => {
+    const outputPdf = vi.fn().mockResolvedValue(new window.Blob(['%PDF'], { type: 'application/pdf' }))
+    const from = vi.fn(() => ({ outputPdf }))
+    const pdfFactory = vi.fn(async () => () => ({ set: () => ({ from }) }))
+    const renderMermaid = vi.fn().mockResolvedValue({ svg: '<svg viewBox="0 0 80 40"><text>PDF 图表</text></svg>' })
+
+    await exportNotePdf({
+      title: 'PDF 流程图',
+      contentHtml: '<pre><code class="language-mermaid">flowchart TD\nA --&gt; B</code></pre>'
+    }, { pdfFactory, download: vi.fn(), documentRef: window.document, renderMermaid })
+
+    const article = from.mock.calls[0][0]
+    expect(article.querySelector('.tiny-note-export-mermaid svg')?.textContent).toContain('PDF 图表')
+    expect(article.querySelector('code.language-mermaid')).toBeNull()
   })
 
   it('prints only the standalone article snapshot and cleans it after printing', async () => {
