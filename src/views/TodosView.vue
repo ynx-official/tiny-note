@@ -1,60 +1,315 @@
 <script setup>
-import { computed, nextTick, onMounted, onUnmounted, reactive, ref, watch } from 'vue'
+import { computed, nextTick, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { storeToRefs } from 'pinia'
-import { Bell, CalendarClock, Check, CheckCircle2, ChevronRight, Circle, Inbox, ListTodo, LoaderCircle, Plus, Save, Trash2, X } from 'lucide-vue-next'
+import { useI18n } from 'vue-i18n'
+import { Bell, CalendarClock, Check, CheckCircle2, ChevronDown, ChevronRight, Circle, Inbox, ListTodo, LoaderCircle, Menu, Plus, SortAsc, Trash2, X } from 'lucide-vue-next'
 import { useTodosStore } from '../stores/todos'
-import { ensureReminderPermission, normalizedReminder, reminderSummary, toDateTimeLocal, fromDateTimeLocal } from '../services/reminders'
-import { formatDate } from '../utils/calendar'
+import { ensureReminderPermission, fromDateTimeLocal, normalizedReminder, reminderSummary, toDateTimeLocal } from '../services/reminders'
+import { defaultQuickDue, filterTodoViewItems, groupTodos, TODO_FILTERS, TODO_SORTS, todoCounts } from '../utils/todos'
+import { localDateValue } from '../utils/dateTime'
 import ReminderEditor from '../components/ReminderEditor.vue'
+import DateTimePicker from '../components/DateTimePicker.vue'
+import TodoQuickScheduler from '../components/TodoQuickScheduler.vue'
 
-const store = useTodosStore(); const route = useRoute(); const router = useRouter(); const { sorted, loading, error } = storeToRefs(store)
-const filter = ref('inbox'); const selectedId = ref(''); const quickTitle = ref(''); const quickInput = ref(null); const saving = ref(false); const formError = ref('')
-const form = reactive({ title: '', notes: '', dueAt: '', priority: 'none', reminder: { enabled: false, mode: 'at', triggerAt: '', offsetMinutes: 10, intervalMinutes: 10 } })
-const todayString = () => formatDate(new Date())
-const sevenDays = () => { const date = new Date(); date.setDate(date.getDate() + 7); return date }
+const emptyReminder = () => ({ enabled: false, mode: 'at', triggerAt: '', offsetMinutes: 10, intervalMinutes: 10 })
+const store = useTodosStore()
+const route = useRoute()
+const router = useRouter()
+const { t, locale } = useI18n()
+const { loading, error } = storeToRefs(store)
+const initialFilter = TODO_FILTERS.includes(String(route.query.filter)) ? String(route.query.filter) : 'inbox'
+const filter = ref(initialFilter)
+const sortMode = ref('due')
+const sortOpen = ref(false)
+const navOpen = ref(false)
+const selectedId = ref('')
+const quickTitle = ref('')
+const quickDueAt = ref(defaultQuickDue(initialFilter))
+const quickReminder = ref(emptyReminder())
+const quickInput = ref(null)
+const quickSaving = ref(false)
+const quickError = ref('')
+const collapsedGroups = ref(new Set())
+const suppressFormWatch = ref(false)
+const dirty = ref(false)
+const saveState = ref('idle')
+const saveError = ref('')
+const permissionWarning = ref('')
+const form = reactive({ title: '', notes: '', dueAt: '', priority: 'none', reminder: emptyReminder() })
+let saveTimer
+let editVersion = 0
+let lastQueuedVersion = 0
+let saveQueue = Promise.resolve(true)
+
+const counts = computed(() => todoCounts(store.todos))
 const navItems = computed(() => [
-  { key: 'inbox', label: '收集箱', icon: Inbox, count: store.todos.filter(item => !item.completedAt).length },
-  { key: 'today', label: '今天', icon: CalendarClock, count: store.todos.filter(item => !item.completedAt && item.dueAt && formatDate(new Date(item.dueAt)) === todayString()).length },
-  { key: 'upcoming', label: '未来 7 天', icon: ChevronRight, count: store.todos.filter(item => !item.completedAt && item.dueAt && new Date(item.dueAt) > new Date() && new Date(item.dueAt) <= sevenDays()).length },
-  { key: 'completed', label: '已完成', icon: CheckCircle2, count: store.todos.filter(item => item.completedAt).length }
+  { key: 'today', label: t('todoToday'), icon: CalendarClock, count: counts.value.today },
+  { key: 'upcoming', label: t('todoRecent7'), icon: ChevronRight, count: counts.value.upcoming },
+  { key: 'inbox', label: t('todoInbox'), icon: Inbox, count: counts.value.inbox }
 ])
-const visible = computed(() => sorted.value.filter(item => {
-  if (filter.value === 'completed') return Boolean(item.completedAt)
-  if (item.completedAt) return false
-  if (filter.value === 'today') return item.dueAt && formatDate(new Date(item.dueAt)) === todayString()
-  if (filter.value === 'upcoming') return item.dueAt && new Date(item.dueAt) > new Date() && new Date(item.dueAt) <= sevenDays()
-  return true
-}))
+const completedNav = computed(() => ({ key: 'completed', label: t('todoCompleted'), icon: CheckCircle2, count: counts.value.completed }))
+const heading = computed(() => [...navItems.value, completedNav.value].find(item => item.key === filter.value)?.label || t('todoInbox'))
+const headingCount = computed(() => filter.value === 'completed' ? counts.value.completed : counts.value[filter.value] || 0)
+const visible = computed(() => filterTodoViewItems(store.todos, filter.value))
+const groups = computed(() => groupTodos(visible.value, filter.value, new Date(), sortMode.value))
 const selected = computed(() => store.byId(selectedId.value))
-const overdueCount = computed(() => visible.value.filter(item => item.dueAt && new Date(item.dueAt) < new Date() && formatDate(new Date(item.dueAt)) !== todayString()).length)
-const heading = computed(() => navItems.value.find(item => item.key === filter.value)?.label || '收集箱')
+const sortOptions = computed(() => [
+  { key: 'due', label: t('todoSortDue') },
+  { key: 'priority', label: t('todoSortPriority') },
+  { key: 'created', label: t('todoSortCreated') }
+])
+const saveLabel = computed(() => saveState.value === 'saving' ? t('todoSaving') : saveState.value === 'error' ? t('todoSaveFailed') : saveState.value === 'saved' ? t('todoSaved') : '')
 
-function fill(item) { if (!item) return; Object.assign(form, { title: item.title, notes: item.notes || '', dueAt: toDateTimeLocal(item.dueAt), priority: item.priority || 'none', reminder: item.reminder ? { enabled: item.reminder.enabled, mode: item.reminder.mode, triggerAt: toDateTimeLocal(item.reminder.triggerAt), offsetMinutes: item.reminder.offsetMinutes || 10, intervalMinutes: item.reminder.intervalMinutes || 10 } : { enabled: false, mode: 'at', triggerAt: '', offsetMinutes: 10, intervalMinutes: 10 } }); formError.value = '' }
-function select(item) { selectedId.value = item?.id || ''; if (item) { fill(item); router.replace({ query: { ...route.query, id: item.id } }) } else router.replace({ query: {} }) }
-watch(selected, fill)
-watch(() => route.query.id, id => { if (id && store.byId(id)) select(store.byId(id)) })
-async function quickAdd() { const title = quickTitle.value.trim(); if (!title) return; const item = await store.create({ title, notes: '', dueAt: null, priority: 'none', reminder: null }); quickTitle.value = ''; select(item); await nextTick(); quickInput.value?.focus() }
-async function save() { if (!selected.value) return; try { saving.value = true; formError.value = ''; const dueAt = fromDateTimeLocal(form.dueAt); const reminder = normalizedReminder(form.reminder, { hasAnchor: Boolean(dueAt) }); if (reminder && !(await ensureReminderPermission())) throw new Error('未获得系统通知权限，无法启用提醒'); const item = await store.update(selected.value.id, { title: form.title, notes: form.notes, dueAt, priority: form.priority, reminder }); fill(item) } catch (reason) { formError.value = reason?.message || String(reason) } finally { saving.value = false } }
-async function toggle(item) { await store.setCompleted(item.id, !item.completedAt); if (selectedId.value === item.id) fill(store.byId(item.id)) }
-async function remove() { if (!selected.value || !window.confirm('确定永久删除这个待办吗？')) return; const id = selected.value.id; await store.remove(id); if (selectedId.value === id) select(null) }
-function formatDue(value) { if (!value) return '无截止时间'; const date = new Date(value); const day = formatDate(date); const time = date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }); if (day === todayString()) return `今天 ${time}`; return `${date.toLocaleDateString()} ${time}` }
+function groupLabel(key) { return t({ overdue: 'todoOverdue', today: 'todoToday', later: 'todoLater', undated: 'todoUndated', completed: 'todoCompleted' }[key]) }
+function resetQuickDraft() { quickDueAt.value = defaultQuickDue(filter.value); quickReminder.value = emptyReminder(); quickError.value = '' }
+function fillForm(item) {
+  if (!item) return
+  suppressFormWatch.value = true
+  clearTimeout(saveTimer)
+  Object.assign(form, {
+    title: item.title,
+    notes: item.notes || '',
+    dueAt: toDateTimeLocal(item.dueAt),
+    priority: item.priority || 'none',
+    reminder: item.reminder ? {
+      enabled: item.reminder.enabled,
+      mode: item.reminder.mode,
+      triggerAt: toDateTimeLocal(item.reminder.triggerAt),
+      offsetMinutes: item.reminder.offsetMinutes || 10,
+      intervalMinutes: item.reminder.intervalMinutes || 10
+    } : emptyReminder()
+  })
+  dirty.value = false
+  saveState.value = 'idle'
+  saveError.value = ''
+  permissionWarning.value = ''
+  editVersion += 1
+  nextTick(() => { suppressFormWatch.value = false })
+}
+function snapshotForm(version) {
+  return { id: selectedId.value, version, title: form.title, notes: form.notes, dueAt: form.dueAt, priority: form.priority, reminder: { ...form.reminder } }
+}
+async function persistSnapshot(snapshot) {
+  if (!snapshot.id) return true
+  if (!snapshot.title.trim()) {
+    if (snapshot.version === editVersion) { saveState.value = 'error'; saveError.value = t('todoTitleRequired') }
+    return false
+  }
+  try {
+    if (snapshot.version === editVersion) { saveState.value = 'saving'; saveError.value = ''; permissionWarning.value = '' }
+    const dueAt = fromDateTimeLocal(snapshot.dueAt)
+    let reminder = normalizedReminder(snapshot.reminder, { hasAnchor: Boolean(dueAt) })
+    if (reminder && !(await ensureReminderPermission())) {
+      reminder = null
+      if (snapshot.id === selectedId.value && snapshot.version === editVersion) {
+        suppressFormWatch.value = true
+        form.reminder = { ...snapshot.reminder, enabled: false }
+        permissionWarning.value = t('todoReminderPermissionDenied')
+        await nextTick(); suppressFormWatch.value = false
+      }
+    }
+    await store.update(snapshot.id, { title: snapshot.title.trim(), notes: snapshot.notes, dueAt, priority: snapshot.priority, reminder })
+    if (snapshot.id === selectedId.value && snapshot.version === editVersion) {
+      dirty.value = false
+      saveState.value = 'saved'
+      saveError.value = ''
+    }
+    return true
+  } catch (reason) {
+    if (snapshot.id === selectedId.value && snapshot.version === editVersion) {
+      saveState.value = 'error'
+      saveError.value = reason?.message || String(reason)
+    }
+    return false
+  }
+}
+function queueSave(version = editVersion) {
+  if (version <= lastQueuedVersion) return saveQueue
+  lastQueuedVersion = version
+  const snapshot = snapshotForm(version)
+  saveQueue = saveQueue.then(() => persistSnapshot(snapshot), () => persistSnapshot(snapshot))
+  return saveQueue
+}
+function scheduleSave() {
+  if (suppressFormWatch.value || !selectedId.value) return
+  dirty.value = true
+  saveState.value = 'dirty'
+  saveError.value = ''
+  editVersion += 1
+  const version = editVersion
+  clearTimeout(saveTimer)
+  saveTimer = window.setTimeout(() => queueSave(version), 500)
+}
+async function flushAutoSave() {
+  clearTimeout(saveTimer)
+  if (!dirty.value) return saveQueue
+  return queueSave(editVersion)
+}
+async function select(item) {
+  if (item?.id === selectedId.value) return
+  if (selectedId.value && !(await flushAutoSave())) return
+  selectedId.value = item?.id || ''
+  if (item) fillForm(item)
+  await router.replace({ query: { filter: filter.value, ...(item ? { id: item.id } : {}) } })
+}
+async function clearSelection() {
+  clearTimeout(saveTimer)
+  selectedId.value = ''
+  dirty.value = false
+  await router.replace({ query: { filter: filter.value } })
+}
+async function changeFilter(key) {
+  if (key === filter.value) { navOpen.value = false; return }
+  if (selectedId.value && !(await flushAutoSave())) return
+  filter.value = key
+  navOpen.value = false
+  selectedId.value = ''
+  resetQuickDraft()
+  await router.replace({ query: { filter: key } })
+  await nextTick(); quickInput.value?.focus()
+}
+async function quickAdd() {
+  const title = quickTitle.value.trim()
+  if (!title || quickSaving.value) return
+  try {
+    quickSaving.value = true
+    quickError.value = ''
+    const dueAt = fromDateTimeLocal(quickDueAt.value)
+    const reminder = normalizedReminder(quickReminder.value, { hasAnchor: Boolean(dueAt) })
+    if (reminder && !(await ensureReminderPermission())) throw new Error(t('todoReminderPermissionDenied'))
+    await store.create({ title, notes: '', dueAt, priority: 'none', reminder })
+    quickTitle.value = ''
+    resetQuickDraft()
+    await nextTick(); quickInput.value?.focus()
+  } catch (reason) { quickError.value = reason?.message || String(reason) }
+  finally { quickSaving.value = false }
+}
+async function toggle(item) {
+  if (item.id === selectedId.value && !(await flushAutoSave())) return
+  const completed = !item.completedAt
+  await store.setCompleted(item.id, completed)
+  if (item.id === selectedId.value) {
+    if (visible.value.some(value => value.id === item.id)) fillForm(store.byId(item.id))
+    else await clearSelection()
+  }
+}
+async function remove() {
+  if (!selected.value || !window.confirm(t('todoDeleteConfirm'))) return
+  clearTimeout(saveTimer)
+  const id = selected.value.id
+  await store.remove(id)
+  if (selectedId.value === id) await clearSelection()
+}
+function setSort(key) { if (TODO_SORTS.includes(key)) sortMode.value = key; sortOpen.value = false }
+function toggleGroup(key) {
+  const next = new Set(collapsedGroups.value)
+  if (next.has(key)) next.delete(key); else next.add(key)
+  collapsedGroups.value = next
+}
+function formatDue(value) {
+  if (!value) return t('todoNoDue')
+  const date = new Date(value)
+  const time = new Intl.DateTimeFormat(locale.value, { hour: '2-digit', minute: '2-digit' }).format(date)
+  if (localDateValue(date) === localDateValue()) return `${t('todoToday')} ${time}`
+  return new Intl.DateTimeFormat(locale.value, { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' }).format(date)
+}
 function isOverdue(item) { return !item.completedAt && item.dueAt && new Date(item.dueAt) < new Date() }
-function handleKey(event) { if (event.key === 'Escape' && selectedId.value && window.innerWidth < 980) select(null) }
-onMounted(async () => { window.addEventListener('keydown', handleKey); await store.load(); if (route.query.id && store.byId(route.query.id)) select(store.byId(route.query.id)); else if (visible.value[0]) select(visible.value[0]) })
-onUnmounted(() => window.removeEventListener('keydown', handleKey))
+function handleDocumentClick(event) { if (!event.target?.closest?.('.todo-sort-wrap')) sortOpen.value = false }
+function handleKey(event) {
+  if (event.key !== 'Escape') return
+  if (sortOpen.value) sortOpen.value = false
+  else if (navOpen.value) navOpen.value = false
+  else if (selectedId.value && window.innerWidth < 1180) clearSelection()
+}
+
+watch(form, scheduleSave, { deep: true })
+onMounted(async () => {
+  window.addEventListener('keydown', handleKey)
+  document.addEventListener('pointerdown', handleDocumentClick)
+  await store.load()
+  const routeItem = route.query.id && store.byId(String(route.query.id))
+  if (routeItem) { selectedId.value = routeItem.id; fillForm(routeItem) }
+})
+onBeforeUnmount(() => {
+  clearTimeout(saveTimer)
+  if (dirty.value) queueSave(editVersion)
+  window.removeEventListener('keydown', handleKey)
+  document.removeEventListener('pointerdown', handleDocumentClick)
+})
 </script>
 
 <template>
   <section class="todos-page">
-    <aside class="todo-smart-lists"><header><ListTodo :size="18" /><strong>待办</strong></header><nav><button v-for="item in navItems" :key="item.key" :class="{ active: filter === item.key }" @click="filter = item.key"><component :is="item.icon" :size="16" /><span>{{ item.label }}</span><small>{{ item.count }}</small></button></nav><footer><span>本地待办</span><small>数据仅保存在此设备</small></footer></aside>
-    <main class="todo-list-pane"><header><div><h1>{{ heading }}</h1><small v-if="overdueCount">{{ overdueCount }} 项已逾期</small></div><button title="新建待办" @click="quickInput?.focus()"><Plus :size="18" /></button></header><form v-if="filter !== 'completed'" class="todo-quick" @submit.prevent="quickAdd"><Plus :size="17" /><input ref="quickInput" v-model="quickTitle" placeholder="添加待办，按 Enter 保存"><button :disabled="!quickTitle.trim()">添加</button></form><div v-if="loading" class="todo-state"><LoaderCircle class="spin" :size="19" />正在读取待办…</div><div v-else-if="error" class="todo-state error">{{ error }}<button @click="store.load()">重试</button></div><div v-else-if="!visible.length" class="todo-empty"><CheckCircle2 :size="32" /><strong>{{ filter === 'completed' ? '还没有已完成待办' : '这里已经清空了' }}</strong><span>{{ filter === 'inbox' ? '记录下一件需要完成的事情。' : '当前筛选下没有待办。' }}</span></div><div v-else class="todo-rows"><article v-for="item in visible" :key="item.id" :class="{ active: selectedId === item.id, completed: item.completedAt }"><button class="todo-check" :aria-label="item.completedAt ? '取消完成' : '标记完成'" @click="toggle(item)"><Check v-if="item.completedAt" :size="14" /><Circle v-else :size="18" /></button><button class="todo-row-main" @click="select(item)"><strong>{{ item.title }}</strong><span><small :class="{ overdue: isOverdue(item) }">{{ formatDue(item.dueAt) }}</small><small v-if="item.reminder?.enabled"><Bell :size="11" />{{ reminderSummary(item.reminder) }}</small></span></button><i :class="`p-${item.priority}`"></i></article></div></main>
-    <aside class="todo-detail" :class="{ open: selected }"><template v-if="selected"><header><div><small>待办详情</small><strong :class="{ completed: selected.completedAt }">{{ selected.title }}</strong></div><button class="detail-close" @click="select(null)"><X :size="18" /></button></header><form @submit.prevent="save"><label>标题<input v-model="form.title" required></label><label>备注<textarea v-model="form.notes" rows="6" placeholder="补充说明…"></textarea></label><label>截止时间<input v-model="form.dueAt" type="datetime-local"></label><label>优先级<select v-model="form.priority"><option value="none">无</option><option value="low">低</option><option value="medium">中</option><option value="high">高</option></select></label><ReminderEditor v-model="form.reminder" :has-anchor="Boolean(form.dueAt)" /><p v-if="selected.reminder && !selected.reminder.enabled" class="stopped">该提醒已停止；重新保存提醒设置可再次启用。</p><p v-if="formError" class="form-error">{{ formError }}</p><div class="detail-buttons"><button type="button" @click="toggle(selected)"><CheckCircle2 :size="15" />{{ selected.completedAt ? '恢复待办' : '标记完成' }}</button><button class="save" :disabled="saving"><Save :size="15" />{{ saving ? '保存中…' : '保存' }}</button></div></form><footer><button @click="remove"><Trash2 :size="15" />永久删除</button><small>创建于 {{ new Date(selected.createdAt).toLocaleString() }}</small></footer></template><div v-else class="detail-placeholder"><ListTodo :size="34" /><span>选择一个待办查看详情</span></div></aside>
+    <button v-if="navOpen" class="todo-nav-backdrop" :aria-label="t('close')" @click="navOpen = false"></button>
+    <aside class="todo-smart-lists" :class="{ open: navOpen }">
+      <header><ListTodo :size="20" /><strong>{{ t('todos') }}</strong><button class="nav-close" :aria-label="t('close')" @click="navOpen = false"><X :size="18" /></button></header>
+      <nav class="smart-nav">
+        <button v-for="item in navItems" :key="item.key" :class="{ active: filter === item.key }" @click="changeFilter(item.key)"><component :is="item.icon" :size="18" /><span>{{ item.label }}</span><small>{{ item.count }}</small></button>
+      </nav>
+      <div class="nav-spacer"><span>{{ t('todoSmartLists') }}</span><small>{{ t('todoSmartListsHint') }}</small></div>
+      <nav class="smart-nav nav-bottom">
+        <button :class="{ active: filter === completedNav.key }" @click="changeFilter(completedNav.key)"><component :is="completedNav.icon" :size="18" /><span>{{ completedNav.label }}</span><small>{{ completedNav.count }}</small></button>
+      </nav>
+    </aside>
+
+    <main class="todo-list-pane">
+      <header class="todo-list-header">
+        <div class="todo-heading"><button class="nav-trigger" :aria-label="t('todoOpenNavigation')" @click="navOpen = true"><Menu :size="21" /></button><div><h1>{{ heading }}</h1><small>{{ headingCount }} {{ t('todoItems') }}</small></div></div>
+        <div class="todo-list-actions"><div class="todo-sort-wrap"><button :title="t('todoSort')" :aria-expanded="sortOpen" @click.stop="sortOpen = !sortOpen"><SortAsc :size="20" /></button><div v-if="sortOpen" class="todo-sort-menu" role="menu"><button v-for="option in sortOptions" :key="option.key" type="button" role="menuitemradio" :aria-checked="sortMode === option.key" @click="setSort(option.key)"><Check v-if="sortMode === option.key" :size="14" /><span>{{ option.label }}</span></button></div></div></div>
+      </header>
+
+      <form v-if="filter !== 'completed'" class="todo-quick" @submit.prevent="quickAdd">
+        <Plus :size="22" /><input ref="quickInput" v-model="quickTitle" :placeholder="t('todoQuickPlaceholder')" :aria-label="t('todoQuickPlaceholder')">
+        <TodoQuickScheduler v-model:due-at="quickDueAt" v-model:reminder="quickReminder" :locale="locale" :disabled="quickSaving" />
+        <button class="quick-submit" :disabled="!quickTitle.trim() || quickSaving">{{ quickSaving ? t('todoAdding') : t('add') }}</button>
+      </form>
+      <p v-if="quickError" class="quick-error" role="alert">{{ quickError }}</p>
+
+      <div v-if="loading" class="todo-state"><LoaderCircle class="spin" :size="20" />{{ t('todoLoading') }}</div>
+      <div v-else-if="error" class="todo-state error">{{ error }}<button @click="store.load()">{{ t('refresh') }}</button></div>
+      <div v-else-if="!visible.length" class="todo-empty"><CheckCircle2 :size="38" /><strong>{{ filter === 'completed' ? t('todoNoCompleted') : t('todoEmpty') }}</strong><span>{{ t('todoEmptyHint') }}</span></div>
+      <div v-else class="todo-groups">
+        <section v-for="group in groups" :key="group.key" class="todo-group">
+          <button class="todo-group-heading" :aria-expanded="!collapsedGroups.has(group.key)" @click="toggleGroup(group.key)"><ChevronDown :size="17" :class="{ collapsed: collapsedGroups.has(group.key) }" /><strong>{{ groupLabel(group.key) }}</strong><span>{{ group.items.length }}</span></button>
+          <div v-if="!collapsedGroups.has(group.key)" class="todo-rows">
+            <article v-for="item in group.items" :key="item.id" :class="{ active: selectedId === item.id, completed: item.completedAt }">
+              <button class="todo-check" type="button" :aria-label="item.completedAt ? t('todoRestore') : t('todoMarkCompleted')" :aria-pressed="Boolean(item.completedAt)" @click="toggle(item)"><span class="todo-checkbox" :class="{ checked: item.completedAt }"><Check v-if="item.completedAt" :size="13" :stroke-width="3" /></span></button>
+              <button class="todo-row-main" @click="select(item)"><span class="todo-row-title"><strong>{{ item.title }}</strong><span class="todo-priority-dot" :class="`p-${item.priority}`"></span></span><span v-if="item.notes" class="todo-notes">{{ item.notes }}</span><span class="todo-meta"><small :class="{ overdue: isOverdue(item) }">{{ formatDue(item.dueAt) }}</small><small v-if="item.reminder?.enabled"><Bell :size="12" />{{ reminderSummary(item.reminder, locale) }}</small></span></button>
+            </article>
+          </div>
+        </section>
+      </div>
+    </main>
+
+    <aside class="todo-detail" :class="{ open: selected }">
+      <template v-if="selected">
+        <header><div><small>{{ t('todoDetail') }}</small><span class="save-status" :class="saveState">{{ saveLabel }}</span></div><button class="detail-close" :aria-label="t('close')" @click="select(null)"><X :size="19" /></button></header>
+        <form class="todo-detail-form" @submit.prevent>
+          <label class="detail-title"><span class="sr-only">{{ t('todoTitle') }}</span><textarea v-model="form.title" rows="2" :placeholder="t('todoTitle')"></textarea></label>
+          <label class="detail-notes"><span>{{ t('todoNotes') }}</span><textarea v-model="form.notes" rows="6" :placeholder="t('todoNotesPlaceholder')"></textarea></label>
+          <div class="detail-property"><span><CalendarClock :size="16" />{{ t('todoDue') }}</span><DateTimePicker v-model="form.dueAt" :locale="locale" :placeholder="t('todoSetDue')" /></div>
+          <label class="detail-property"><span><Circle :size="16" />{{ t('todoPriority') }}</span><select v-model="form.priority"><option value="none">{{ t('todoPriorityNone') }}</option><option value="low">{{ t('todoPriorityLow') }}</option><option value="medium">{{ t('todoPriorityMedium') }}</option><option value="high">{{ t('todoPriorityHigh') }}</option></select></label>
+          <ReminderEditor v-model="form.reminder" :has-anchor="Boolean(form.dueAt)" :locale="locale" />
+          <p v-if="selected.reminder && !selected.reminder.enabled" class="stopped">{{ t('todoReminderStopped') }}</p><p v-if="permissionWarning" class="permission-warning">{{ permissionWarning }}</p><p v-if="saveError" class="form-error" role="alert">{{ saveError }}</p>
+        </form>
+        <footer><button class="complete-action" @click="toggle(selected)"><CheckCircle2 :size="16" />{{ selected.completedAt ? t('todoRestore') : t('todoMarkCompleted') }}</button><button class="delete-action" @click="remove"><Trash2 :size="16" />{{ t('todoDeletePermanent') }}</button></footer>
+      </template>
+      <div v-else class="detail-placeholder"><ListTodo :size="42" /><strong>{{ t('todoSelect') }}</strong><span>{{ t('todoSelectHint') }}</span></div>
+    </aside>
   </section>
 </template>
 
 <style scoped>
-.todos-page{height:100%;min-height:0;display:grid;grid-template-columns:190px minmax(360px,1fr) 350px;background:var(--bg);color:var(--text)}.todo-smart-lists,.todo-detail{background:var(--panel);min-height:0}.todo-smart-lists{border-right:1px solid var(--line);display:flex;flex-direction:column;padding:16px 10px}.todo-smart-lists header{display:flex;align-items:center;gap:8px;padding:4px 9px 16px}.todo-smart-lists nav{display:grid;gap:3px}.todo-smart-lists nav button{border:0;border-radius:7px;background:transparent;color:var(--text);display:grid;grid-template-columns:20px 1fr auto;gap:8px;align-items:center;padding:9px;text-align:left}.todo-smart-lists nav button:hover,.todo-smart-lists nav button.active{background:var(--hover)}.todo-smart-lists nav button.active{color:var(--accent);font-weight:600}.todo-smart-lists nav small{color:var(--muted)}.todo-smart-lists footer{margin-top:auto;display:grid;gap:3px;padding:10px;color:var(--muted);font-size:11px}.todo-list-pane{min-width:0;min-height:0;display:flex;flex-direction:column}.todo-list-pane>header{height:70px;display:flex;align-items:center;justify-content:space-between;padding:0 22px;border-bottom:1px solid var(--line)}.todo-list-pane h1{font-size:21px;margin:0}.todo-list-pane header small{color:#dc2626}.todo-list-pane header button{border:0;background:transparent;color:var(--text);padding:8px}.todo-quick{margin:14px 18px;display:flex;align-items:center;gap:8px;border:1px solid var(--line);border-radius:9px;background:var(--panel);padding:5px 7px 5px 11px}.todo-quick input{min-width:0;flex:1;border:0;outline:0;background:transparent;color:var(--text);padding:8px;font:inherit}.todo-quick button{border:0;border-radius:6px;background:var(--accent);color:#fff;padding:7px 12px}.todo-quick button:disabled{opacity:.45}.todo-state,.todo-empty,.detail-placeholder{height:100%;display:grid;place-content:center;justify-items:center;gap:9px;color:var(--muted)}.todo-state{display:flex}.todo-state.error{color:#dc2626}.todo-rows{overflow:auto;padding:0 12px 18px}.todo-rows article{position:relative;display:grid;grid-template-columns:34px 1fr 5px;align-items:center;border-bottom:1px solid var(--line);border-radius:7px;padding:4px 8px}.todo-rows article:hover,.todo-rows article.active{background:var(--hover)}.todo-rows article.completed{opacity:.62}.todo-check,.todo-row-main{border:0;background:transparent;color:var(--text)}.todo-check{width:30px;height:38px;display:grid;place-items:center}.todo-check svg:first-child{border-radius:50%;background:var(--accent);color:#fff;padding:2px}.todo-row-main{text-align:left;padding:10px 4px;min-width:0}.todo-row-main>strong{display:block;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.todo-row-main>span{display:flex;gap:12px;margin-top:5px}.todo-row-main small{display:flex;align-items:center;gap:3px;color:var(--muted)}.todo-row-main small.overdue{color:#dc2626}.todo-rows i{width:4px;height:28px;border-radius:4px}.p-high{background:#e53935}.p-medium{background:#fb8c00}.p-low{background:#1e88e5}.p-none{background:transparent}.todo-detail{border-left:1px solid var(--line);display:flex;flex-direction:column;min-width:0}.todo-detail>header{height:70px;display:flex;align-items:center;justify-content:space-between;padding:0 18px;border-bottom:1px solid var(--line)}.todo-detail>header div{min-width:0;display:grid;gap:4px}.todo-detail>header small{color:var(--muted)}.todo-detail>header strong{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.detail-close{display:none;border:0;background:transparent;color:var(--text)}.todo-detail form{display:grid;gap:15px;padding:18px;overflow:auto}.todo-detail label{display:grid;gap:6px;font-size:12px;color:var(--muted)}.todo-detail input,.todo-detail textarea,.todo-detail select{box-sizing:border-box;width:100%;border:1px solid var(--line);border-radius:7px;background:var(--bg);color:var(--text);padding:9px;font:inherit}.detail-buttons{display:flex;justify-content:space-between;gap:8px}.detail-buttons button{border:1px solid var(--line);border-radius:7px;background:var(--bg);color:var(--text);padding:8px 10px;display:flex;align-items:center;gap:6px}.detail-buttons .save{background:var(--accent);border-color:var(--accent);color:#fff}.todo-detail>footer{margin-top:auto;padding:14px 18px;border-top:1px solid var(--line);display:flex;align-items:center;justify-content:space-between}.todo-detail>footer button{border:0;background:transparent;color:#dc2626;display:flex;align-items:center;gap:5px}.todo-detail>footer small{color:var(--muted)}.stopped,.form-error{margin:0;font-size:11px;color:var(--muted)}.form-error{color:#dc2626}.completed{text-decoration:line-through}.spin{animation:spin 1s linear infinite}@keyframes spin{to{transform:rotate(360deg)}}
-@media(max-width:1100px){.todos-page{grid-template-columns:160px minmax(340px,1fr) 310px}}
-@media(max-width:880px){.todos-page{grid-template-columns:150px 1fr}.todo-detail{position:absolute;z-index:40;right:0;top:0;bottom:0;width:min(390px,calc(100% - 80px));transform:translateX(105%);box-shadow:-15px 0 40px #0003;transition:transform .18s}.todo-detail.open{transform:translateX(0)}.detail-close{display:block}.todo-list-pane{min-width:0}}
+.todos-page{position:relative;height:100%;min-height:0;display:grid;grid-template-columns:clamp(160px,18vw,220px) minmax(320px,1fr) clamp(270px,28vw,360px);background:var(--bg);color:var(--text);overflow:hidden}.todo-smart-lists,.todo-detail{box-sizing:border-box;background:var(--panel);min-height:0}.todo-smart-lists{border-right:1px solid var(--line);display:flex;flex-direction:column;padding:12px 9px}.todo-smart-lists>header{height:32px;display:flex;align-items:center;gap:8px;padding:0 9px 11px}.todo-smart-lists>header strong{font-size:15px}.nav-close{display:none;margin-left:auto;border:0;background:transparent;color:var(--muted)}.smart-nav{display:grid;gap:3px}.smart-nav button{height:38px;border:0;border-radius:8px;background:transparent;color:var(--text);display:grid;grid-template-columns:20px 1fr auto;gap:8px;align-items:center;padding:0 10px;text-align:left;font:inherit;font-size:13px}.smart-nav button:hover,.smart-nav button.active{background:var(--hover)}.smart-nav button.active{font-weight:650}.smart-nav button small{color:var(--muted);font-variant-numeric:tabular-nums}.nav-spacer{margin:14px 4px 0;padding-top:13px;border-top:1px solid var(--line);display:grid;gap:6px;color:var(--muted)}.nav-spacer span{display:block;padding:0 6px;font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.05em}.nav-spacer small{display:block;margin:0 4px;padding:9px 10px;border-radius:8px;background:color-mix(in srgb,var(--hover),transparent 25%);font-size:10px;line-height:1.45}.nav-bottom{margin-top:auto;padding-top:11px;border-top:1px solid var(--line)}
+.todo-list-pane{min-width:0;min-height:0;display:flex;flex-direction:column;background:var(--bg)}.todos-page .todo-list-header{box-sizing:border-box;height:58px;flex:none;display:flex;align-items:center;justify-content:space-between;padding:0 18px;border:0}.todo-heading{display:flex;align-items:center;gap:9px;min-width:0}.todo-heading>div{display:flex;align-items:baseline;gap:7px;min-width:0}.todos-page .todo-heading h1{margin:0;font-size:20px;line-height:1.2;white-space:nowrap}.todos-page .todo-heading small{color:var(--muted)!important;font-size:10px}.nav-trigger{display:none}.todo-list-actions button,.nav-trigger{width:32px;height:32px;border:0;border-radius:7px;background:transparent;color:var(--text);place-items:center;padding:0}.todo-list-actions button{display:grid}.todo-list-actions button:hover,.nav-trigger:hover{background:var(--hover)}.todo-sort-wrap{position:relative}.todo-sort-menu{position:absolute;z-index:60;right:0;top:38px;width:165px;padding:5px;border:1px solid var(--line);border-radius:9px;background:var(--panel);box-shadow:0 12px 35px #0005}.todo-sort-menu button{width:100%;height:34px;display:grid;grid-template-columns:20px 1fr;text-align:left}.todo-sort-menu span{justify-self:start}
+.todo-quick{position:relative;box-sizing:border-box;flex:none;margin:6px 18px 10px;min-height:48px;display:flex;align-items:center;gap:8px;border:1px solid var(--line);border-radius:10px;background:var(--panel);padding:0 8px 0 13px;transition:.16s}.todo-quick:focus-within{border-color:var(--accent);box-shadow:0 0 0 2px color-mix(in srgb,var(--accent),transparent 75%)}.todo-quick>svg{color:var(--muted)}.todo-quick>input{min-width:80px;flex:1;border:0;outline:0;background:transparent;color:var(--text);font:inherit;font-size:13px}.todo-quick>input::placeholder{color:var(--muted)}.quick-submit{height:32px;border:0;border-radius:7px;background:var(--accent);color:#fff;padding:0 10px;font:inherit;font-size:11px;font-weight:650}.quick-submit:disabled{opacity:.4}.quick-error{margin:-4px 20px 7px;color:#dc4c4c;font-size:11px}.todo-state,.todo-empty,.detail-placeholder{height:100%;display:grid;place-content:center;justify-items:center;gap:8px;color:var(--muted)}.todo-state{display:flex;align-items:center}.todo-state.error{color:#dc4c4c}.todo-state.error button{border:0;background:transparent;color:var(--accent)}.todo-empty strong,.detail-placeholder strong{color:var(--text)}.todo-empty span,.detail-placeholder span{font-size:11px}
+.todo-groups{min-height:0;overflow:auto;padding:2px 18px 22px}.todo-group+.todo-group{margin-top:7px}.todo-group-heading{width:100%;height:30px;display:flex;align-items:center;gap:5px;border:0;background:transparent;color:var(--text);padding:0 2px;font:inherit;text-align:left}.todo-group-heading svg{transition:.15s}.todo-group-heading svg.collapsed{transform:rotate(-90deg)}.todo-group-heading strong{font-size:13px}.todo-group-heading span{margin-left:2px;color:var(--muted);font-size:11px}.todo-rows article{display:grid;grid-template-columns:36px minmax(0,1fr);align-items:start;border-bottom:1px solid var(--line);transition:.12s}.todo-rows article:hover,.todo-rows article.active{background:var(--hover)}.todo-rows article.active{box-shadow:inset 3px 0 0 var(--accent)}.todo-rows article.completed{opacity:.58}.todos-page .todo-check,.todos-page .todo-row-main{border:0;background:transparent;color:var(--text)}.todos-page .todo-check{width:36px;height:40px;display:grid;place-items:center;padding:0;border-radius:6px;cursor:pointer}.todo-checkbox{box-sizing:border-box;width:17px;height:17px;display:grid;place-items:center;border:1.5px solid color-mix(in srgb,var(--muted),transparent 20%);border-radius:5px;background:transparent;color:#fff;transition:border-color .14s,background-color .14s,box-shadow .14s}.todo-check:hover .todo-checkbox{border-color:var(--accent);background:color-mix(in srgb,var(--accent),transparent 90%)}.todo-check:focus-visible{outline:0}.todo-check:focus-visible .todo-checkbox{border-color:var(--accent);box-shadow:0 0 0 3px color-mix(in srgb,var(--accent),transparent 75%)}.todo-checkbox.checked{border-color:var(--accent);background:var(--accent)}.todo-checkbox.checked svg{display:block}.todos-page .todo-row-main{min-width:0;padding:8px 10px 9px 1px;text-align:left;font:inherit;outline:0}.todo-row-title{display:flex;align-items:center;gap:7px}.todo-row-title strong{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:13px}.todo-priority-dot{display:block!important;inline-size:7px!important;block-size:7px!important;min-inline-size:7px;border-radius:50%!important}.p-high{background:#d95461}.p-medium{background:#d4944e}.p-low{background:#4e8fb8}.p-none{display:none!important}.todo-notes{display:block;margin-top:3px;color:var(--muted);font-size:11px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.todo-meta{display:flex;align-items:center;gap:10px;margin-top:4px}.todo-meta small{display:flex;align-items:center;gap:4px;color:var(--muted);font-size:10px}.todo-meta small.overdue{color:#dc4c4c}.todo-rows article.completed .todo-row-title strong{text-decoration:line-through}
+.todo-detail{min-width:0;border-left:1px solid var(--line);display:flex;flex-direction:column}.todo-detail>header{height:68px;flex:none;display:flex;align-items:center;justify-content:space-between;padding:0 18px;border-bottom:1px solid var(--line)}.todo-detail>header>div{display:grid;gap:3px}.todo-detail>header small{color:var(--muted)}.save-status{min-height:15px;font-size:11px;color:var(--muted)}.save-status.error{color:#dc4c4c}.save-status.saved{color:#36a27a}.detail-close{display:none;width:34px;height:34px;border:0;border-radius:8px;background:transparent;color:var(--muted)}.todo-detail-form{min-height:0;overflow:auto;display:grid;align-content:start;gap:16px;padding:20px}.todo-detail-form textarea,.todo-detail-form select{box-sizing:border-box;width:100%;border:1px solid transparent;border-radius:8px;background:transparent;color:var(--text);padding:8px;font:inherit;resize:none}.todo-detail-form textarea:hover,.todo-detail-form textarea:focus,.todo-detail-form select:hover,.todo-detail-form select:focus{outline:0;border-color:var(--line);background:var(--bg)}.detail-title textarea{font-size:20px;font-weight:650;line-height:1.35}.detail-notes{display:grid;gap:5px}.detail-notes>span{color:var(--muted);font-size:11px}.detail-notes textarea{line-height:1.55}.detail-property{display:grid;grid-template-columns:105px minmax(0,1fr);align-items:center;gap:10px}.detail-property>span{display:flex;align-items:center;gap:7px;color:var(--muted);font-size:12px}.detail-property select{border-color:var(--line);background:var(--bg)}.todo-detail>footer{margin-top:auto;display:flex;justify-content:space-between;gap:8px;padding:14px 18px;border-top:1px solid var(--line)}.todo-detail>footer button{border:0;border-radius:8px;background:transparent;padding:8px;color:var(--muted);display:flex;align-items:center;gap:6px;font:inherit;font-size:12px}.todo-detail>footer button:hover{background:var(--hover);color:var(--text)}.todo-detail>footer .delete-action{color:#dc4c4c}.stopped,.permission-warning,.form-error{margin:0;font-size:11px;color:var(--muted)}.permission-warning{color:#b7791f}.form-error{color:#dc4c4c}.todo-nav-backdrop{display:none}.sr-only{position:absolute;width:1px;height:1px;padding:0;margin:-1px;overflow:hidden;clip:rect(0,0,0,0);white-space:nowrap;border:0}.spin{animation:spin 1s linear infinite}@keyframes spin{to{transform:rotate(360deg)}}
+@media(max-width:760px){.todos-page{grid-template-columns:minmax(155px,190px) minmax(320px,1fr)}.todo-detail{position:absolute;z-index:80;right:0;top:0;bottom:0;width:min(360px,calc(100% - 64px));transform:translateX(103%);box-shadow:-18px 0 48px #0005;transition:transform .18s}.todo-detail.open{transform:translateX(0)}.detail-close{display:grid;place-items:center}}
+@media(max-width:620px){.todos-page{grid-template-columns:1fr}.todo-smart-lists{position:absolute;z-index:100;left:0;top:0;bottom:0;width:min(230px,calc(100% - 48px));transform:translateX(-103%);box-shadow:18px 0 45px #0005;transition:transform .18s}.todo-smart-lists.open{transform:translateX(0)}.nav-close{display:grid;place-items:center}.nav-trigger{display:grid}.todo-nav-backdrop{position:absolute;z-index:90;inset:0;display:block;border:0;background:#0007}.todos-page .todo-list-header{padding:0 13px}.todo-quick{margin-inline:13px}.todo-groups{padding-inline:13px}}
+@media(max-width:590px){.todo-heading h1{font-size:21px}.todo-heading small{display:none}.todo-quick{min-height:54px;flex-wrap:wrap;padding-block:8px}.todo-quick>input{min-width:calc(100% - 38px)}.quick-scheduler{margin-left:31px}.quick-submit{margin-left:auto}.todo-groups{padding-inline:10px}.todo-detail{width:100%}.detail-property{grid-template-columns:1fr}.todo-meta{flex-wrap:wrap}}
+.todos-page{box-sizing:border-box;width:100%;max-width:100%;min-width:0;grid-template-columns:clamp(160px,18vw,220px) minmax(0,1fr) clamp(260px,26vw,350px)}
+@media(max-width:760px){.todos-page{grid-template-columns:minmax(155px,190px) minmax(0,1fr)}}
+@media(max-width:620px){.todos-page{grid-template-columns:minmax(0,1fr)}}
 </style>

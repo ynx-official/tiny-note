@@ -1,17 +1,8 @@
 import { defineStore } from 'pinia'
 import { invoke } from '../services/tauri'
+import { sortTodos } from '../utils/todos'
 
-const PRIORITY_ORDER = { high: 3, medium: 2, low: 1, none: 0 }
-
-export function sortTodos(items) {
-  return [...items].sort((a, b) => {
-    if (Boolean(a.completedAt) !== Boolean(b.completedAt)) return a.completedAt ? 1 : -1
-    if (Boolean(a.dueAt) !== Boolean(b.dueAt)) return a.dueAt ? -1 : 1
-    if (a.dueAt !== b.dueAt) return String(a.dueAt).localeCompare(String(b.dueAt))
-    if (PRIORITY_ORDER[a.priority] !== PRIORITY_ORDER[b.priority]) return PRIORITY_ORDER[b.priority] - PRIORITY_ORDER[a.priority]
-    return String(b.createdAt).localeCompare(String(a.createdAt))
-  })
-}
+export { sortTodos } from '../utils/todos'
 
 export const useTodosStore = defineStore('todos', {
   state: () => ({ todos: [], loading: false, error: '' }),

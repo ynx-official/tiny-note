@@ -66,3 +66,37 @@ Object.assign(messages.en, {
   changeFolder: 'Change folder', clearFolder: 'Clear', exportLocationSaved: 'File save location updated', exportLocationCleared: 'Export location will be chosen each time'
   , exportSucceeded: 'Saved', exportSucceededHint: '“{fileName}” has been saved.', openContainingFolder: 'Show in folder', openExportedFile: 'Open file', maybeLater: 'Maybe later'
 })
+
+Object.assign(messages['zh-CN'], {
+  todoToday: '今天', todoRecent7: '最近 7 天', todoInbox: '收集箱', todoCompleted: '已完成',
+  todoSmartLists: '智能列表', todoSmartListsHint: '待办会根据截止时间自动出现在今天和最近 7 天。',
+  todoOpenNavigation: '打开待办导航', todoItems: '项', todoSort: '排序', todoSortDue: '按截止时间',
+  todoSortPriority: '按优先级', todoSortCreated: '按创建时间', todoQuickPlaceholder: '添加待办，按 Enter 即可创建',
+  todoAdding: '添加中…', todoLoading: '正在读取待办…', todoNoCompleted: '还没有已完成待办',
+  todoEmpty: '这里已经清空了', todoEmptyHint: '记录下一件需要完成的事情。', todoOverdue: '已过期',
+  todoLater: '后续', todoUndated: '无日期', todoNoDue: '无截止时间', todoRestore: '恢复待办',
+  todoMarkCompleted: '标记完成', todoDetail: '待办详情', todoTitle: '待办标题', todoNotes: '备注',
+  todoNotesPlaceholder: '补充说明…', todoDue: '截止时间', todoSetDue: '设置截止日期和时间', todoPriority: '优先级',
+  todoPriorityNone: '无', todoPriorityLow: '低', todoPriorityMedium: '中', todoPriorityHigh: '高',
+  todoReminderStopped: '该提醒已停止；重新编辑提醒设置可再次启用。', todoReminderPermissionDenied: '未获得系统通知权限，提醒没有启用。',
+  todoDeletePermanent: '永久删除', todoDeleteConfirm: '确定永久删除这个待办吗？', todoSelect: '选择一个待办',
+  todoSelectHint: '在右侧查看和编辑完整信息', todoSaving: '正在保存…', todoSaved: '已保存',
+  todoSaveFailed: '保存失败', todoTitleRequired: '待办标题不能为空'
+})
+
+Object.assign(messages.en, {
+  todoToday: 'Today', todoRecent7: 'Next 7 days', todoInbox: 'Inbox', todoCompleted: 'Completed',
+  todoSmartLists: 'Smart lists', todoSmartListsHint: 'Todos appear in Today and Next 7 days automatically based on their due time.',
+  todoOpenNavigation: 'Open todo navigation', todoItems: 'items', todoSort: 'Sort', todoSortDue: 'Due date',
+  todoSortPriority: 'Priority', todoSortCreated: 'Date created', todoQuickPlaceholder: 'Add a todo and press Enter',
+  todoAdding: 'Adding…', todoLoading: 'Loading todos…', todoNoCompleted: 'No completed todos yet',
+  todoEmpty: 'All clear', todoEmptyHint: 'Capture the next thing you need to do.', todoOverdue: 'Overdue',
+  todoLater: 'Later', todoUndated: 'No date', todoNoDue: 'No due date', todoRestore: 'Restore todo',
+  todoMarkCompleted: 'Mark complete', todoDetail: 'Todo details', todoTitle: 'Todo title', todoNotes: 'Notes',
+  todoNotesPlaceholder: 'Add notes…', todoDue: 'Due date', todoSetDue: 'Set due date and time', todoPriority: 'Priority',
+  todoPriorityNone: 'None', todoPriorityLow: 'Low', todoPriorityMedium: 'Medium', todoPriorityHigh: 'High',
+  todoReminderStopped: 'This reminder is stopped. Edit its settings to enable it again.', todoReminderPermissionDenied: 'Notification permission was not granted, so the reminder was not enabled.',
+  todoDeletePermanent: 'Delete permanently', todoDeleteConfirm: 'Permanently delete this todo?', todoSelect: 'Select a todo',
+  todoSelectHint: 'View and edit its details here', todoSaving: 'Saving…', todoSaved: 'Saved',
+  todoSaveFailed: 'Save failed', todoTitleRequired: 'A title is required'
+})

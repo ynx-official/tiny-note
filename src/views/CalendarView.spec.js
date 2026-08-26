@@ -12,6 +12,8 @@ describe('CalendarView', () => {
     const wrapper = mount(CalendarView, { global: { plugins: [createPinia(), router] } })
     await flushPromises()
     expect(wrapper.findAll('.month-cell')).toHaveLength(42)
+    expect(wrapper.findAll('.month-week')).toHaveLength(6)
+    expect(wrapper.find('.month-weekdays').text()).toMatch(/^周日/)
     await wrapper.find('.calendar-view-switch > button').trigger('click')
     const year = wrapper.findAll('.calendar-view-menu button').find(button => button.text().includes('年'))
     await year.trigger('click')
