@@ -19,6 +19,8 @@ const unsafeNote = {
 afterEach(() => {
   window.document.body.innerHTML = ''
   window.document.body.className = ''
+  delete window.document.fullscreenElement
+  delete window.document.exitFullscreen
   vi.restoreAllMocks()
 })
 
@@ -71,6 +73,9 @@ describe('note export documents', () => {
     const dialog = window.document.querySelector('[data-mermaid-dialog]')
     const viewport = dialog.querySelector('[data-mermaid-viewport]')
     const canvas = dialog.querySelector('[data-mermaid-canvas]')
+    expect(dialog.querySelector('[data-mermaid-action="zoom-out"]')).toBeNull()
+    expect(dialog.querySelector('[data-mermaid-action="zoom-in"]')).toBeNull()
+    expect(dialog.querySelector('[data-mermaid-action="actual"]')).toBeNull()
     Object.defineProperties(viewport, {
       clientWidth: { configurable: true, value: 400 },
       clientHeight: { configurable: true, value: 240 },
@@ -86,12 +91,9 @@ describe('note export documents', () => {
     viewport.releasePointerCapture = vi.fn()
 
     dialog.querySelector('[data-mermaid-action="fit"]').click()
-    dialog.querySelector('[data-mermaid-action="zoom-in"]').click()
-    expect(dialog.dataset.mermaidScaleValue).toBe('1.25')
-    expect(dialog.querySelector('[data-mermaid-scale]').textContent).toBe('125%')
-
     viewport.dispatchEvent(new window.WheelEvent('wheel', { deltaY: -100, clientX: 200, clientY: 100, bubbles: true, cancelable: true }))
-    expect(dialog.dataset.mermaidScaleValue).toBe('1.4')
+    expect(dialog.dataset.mermaidScaleValue).toBe('1.15')
+    expect(dialog.querySelector('[data-mermaid-scale]').textContent).toBe('115%')
 
     viewport.scrollLeft = 100
     viewport.scrollTop = 60
@@ -111,6 +113,41 @@ describe('note export documents', () => {
     window.document.dispatchEvent(new window.KeyboardEvent('keydown', { key: 'Escape', bubbles: true }))
     expect(window.document.querySelector('[data-mermaid-dialog]')).toBeNull()
     expect(window.document.activeElement).toBe(expand)
+  })
+
+  it('lets the focused diagram enter screen fullscreen and exits fullscreen before closing on Escape', async () => {
+    window.document.body.innerHTML = `
+      <figure data-mermaid-viewer>
+        <button data-mermaid-action="expand">放大查看</button>
+        <div data-mermaid-preview><svg viewBox="0 0 400 200"></svg></div>
+      </figure>`
+    initializeExportMermaidViewers(window.document, createMermaidViewportKernel())
+    window.document.querySelector('[data-mermaid-action="expand"]').click()
+
+    const dialog = window.document.querySelector('[data-mermaid-dialog]')
+    const panel = dialog.querySelector('.tiny-note-export-mermaid-dialog-panel')
+    const fullscreenButton = dialog.querySelector('[data-mermaid-action="screen-fullscreen"]')
+    Object.defineProperty(window.document, 'fullscreenElement', { configurable: true, writable: true, value: null })
+    panel.requestFullscreen = vi.fn(async () => {
+      window.document.fullscreenElement = panel
+      window.document.dispatchEvent(new window.Event('fullscreenchange'))
+    })
+    window.document.exitFullscreen = vi.fn(async () => {
+      window.document.fullscreenElement = null
+      window.document.dispatchEvent(new window.Event('fullscreenchange'))
+    })
+
+    fullscreenButton.click()
+    await vi.waitFor(() => expect(panel.requestFullscreen).toHaveBeenCalledOnce())
+    expect(fullscreenButton.getAttribute('aria-label')).toBe('退出全屏')
+
+    window.document.dispatchEvent(new window.KeyboardEvent('keydown', { key: 'Escape', bubbles: true }))
+    await vi.waitFor(() => expect(window.document.exitFullscreen).toHaveBeenCalledOnce())
+    expect(window.document.querySelector('[data-mermaid-dialog]')).not.toBeNull()
+    expect(fullscreenButton.getAttribute('aria-label')).toBe('进入全屏')
+
+    window.document.dispatchEvent(new window.KeyboardEvent('keydown', { key: 'Escape', bubbles: true }))
+    expect(window.document.querySelector('[data-mermaid-dialog]')).toBeNull()
   })
 
   it('keeps Mermaid source visible when export rendering fails', async () => {

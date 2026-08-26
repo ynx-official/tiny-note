@@ -189,6 +189,14 @@ const NOTE_EXPORT_ARTICLE_CSS = `
   background: #ffffff;
   box-shadow: rgba(15, 15, 15, 0.2) 0 24px 48px -8px;
 }
+.tiny-note-export-mermaid-dialog-panel:fullscreen {
+  width: 100%;
+  height: 100%;
+  max-width: none;
+  max-height: none;
+  border: 0;
+  border-radius: 0;
+}
 .tiny-note-export-mermaid-dialog-header {
   display: flex;
   align-items: center;
@@ -356,11 +364,9 @@ export function initializeExportMermaidViewers(documentRef, viewportKernel) {
 <header class="tiny-note-export-mermaid-dialog-header">
 <div><span class="tiny-note-export-mermaid-dialog-title">Mermaid 图表</span><span class="tiny-note-export-mermaid-dialog-hint">按住左键拖动 · 滚轮指向缩放</span></div>
 <div class="tiny-note-export-mermaid-toolbar" role="toolbar" aria-label="图表缩放控制">
-<button type="button" data-mermaid-action="zoom-out" title="缩小" aria-label="缩小图表">−</button>
 <output class="tiny-note-export-mermaid-scale" data-mermaid-scale aria-live="polite">100%</output>
 <button type="button" data-mermaid-action="fit" title="适合宽度">适合宽度</button>
-<button type="button" data-mermaid-action="actual" title="原始比例">100%</button>
-<button type="button" data-mermaid-action="zoom-in" title="放大" aria-label="放大图表">+</button>
+<button type="button" data-mermaid-action="screen-fullscreen" title="进入全屏" aria-label="进入全屏">全屏</button>
 <button type="button" data-mermaid-action="close" title="关闭" aria-label="关闭图表">×</button>
 </div>
 </header>
@@ -371,6 +377,8 @@ export function initializeExportMermaidViewers(documentRef, viewportKernel) {
       const viewport = dialog.querySelector('[data-mermaid-viewport]')
       const canvas = dialog.querySelector('[data-mermaid-canvas]')
       const scaleOutput = dialog.querySelector('[data-mermaid-scale]')
+      const panel = dialog.querySelector('.tiny-note-export-mermaid-dialog-panel')
+      const fullscreenButton = dialog.querySelector('[data-mermaid-action="screen-fullscreen"]')
       const svg = previewSvg.cloneNode(true)
       canvas.appendChild(svg)
       documentRef.body.appendChild(dialog)
@@ -391,8 +399,6 @@ export function initializeExportMermaidViewers(documentRef, viewportKernel) {
         canvas.style.width = `${Math.round(naturalWidth * zoom) / 100}px`
         dialog.dataset.mermaidScaleValue = String(zoom / 100)
         scaleOutput.textContent = `${zoom}%`
-        dialog.querySelector('[data-mermaid-action="zoom-out"]').disabled = zoom <= MINIMUM_ZOOM
-        dialog.querySelector('[data-mermaid-action="zoom-in"]').disabled = zoom >= MAXIMUM_ZOOM
       }
       const setZoom = nextZoom => {
         zoom = nextZoom
@@ -419,15 +425,38 @@ export function initializeExportMermaidViewers(documentRef, viewportKernel) {
         viewport.scrollLeft = 0
         viewport.scrollTop = 0
       }
-      const actual = () => {
-        zoom = 100
-        fitMode = false
-        apply()
-        viewport.scrollLeft = 0
-        viewport.scrollTop = 0
+      const updateFullscreenState = () => {
+        const active = documentRef.fullscreenElement === panel
+        fullscreenButton.setAttribute('aria-label', active ? '退出全屏' : '进入全屏')
+        fullscreenButton.setAttribute('title', active ? '退出全屏' : '进入全屏')
+        fullscreenButton.textContent = active ? '退出全屏' : '全屏'
+        if (fitMode) fit()
       }
-      const close = () => {
+      const enterScreenFullscreen = async () => {
+        if (typeof panel.requestFullscreen !== 'function') {
+          fullscreenButton.setAttribute('title', '当前浏览器不支持全屏')
+          return
+        }
+        try {
+          await panel.requestFullscreen()
+          updateFullscreenState()
+          viewport.focus?.({ preventScroll: true })
+        } catch {
+          fullscreenButton.setAttribute('title', '无法进入全屏')
+        }
+      }
+      const exitScreenFullscreen = async () => {
+        if (documentRef.fullscreenElement !== panel || typeof documentRef.exitFullscreen !== 'function') return
+        try { await documentRef.exitFullscreen() } catch { /* The browser may have already exited fullscreen. */ }
+        updateFullscreenState()
+      }
+      const toggleScreenFullscreen = () => documentRef.fullscreenElement === panel
+        ? exitScreenFullscreen()
+        : enterScreenFullscreen()
+      const close = async () => {
+        if (documentRef.fullscreenElement === panel) await exitScreenFullscreen()
         documentRef.removeEventListener('keydown', handleDocumentKeydown)
+        documentRef.removeEventListener('fullscreenchange', updateFullscreenState)
         windowRef?.removeEventListener('resize', handleResize)
         dialog.remove()
         documentRef.body.classList.remove('tiny-note-export-mermaid-open')
@@ -443,7 +472,8 @@ export function initializeExportMermaidViewers(documentRef, viewportKernel) {
       const handleDocumentKeydown = event => {
         if (event.key === 'Escape') {
           event.preventDefault()
-          close()
+          if (documentRef.fullscreenElement === panel) void exitScreenFullscreen()
+          else void close()
           return
         }
         if (event.key === '+' || event.key === '=') zoomBy(1)
@@ -467,11 +497,9 @@ export function initializeExportMermaidViewers(documentRef, viewportKernel) {
 
       dialog.addEventListener('click', event => {
         const action = event.target.closest?.('[data-mermaid-action]')?.dataset.mermaidAction
-        if (action === 'zoom-in') zoomBy(1)
-        else if (action === 'zoom-out') zoomBy(-1)
-        else if (action === 'fit') fit()
-        else if (action === 'actual') actual()
-        else if (action === 'close') close()
+        if (action === 'fit') fit()
+        else if (action === 'screen-fullscreen') void toggleScreenFullscreen()
+        else if (action === 'close') void close()
       })
       viewport.addEventListener('wheel', async event => {
         event.preventDefault()
@@ -531,6 +559,7 @@ export function initializeExportMermaidViewers(documentRef, viewportKernel) {
       viewport.addEventListener('pointerup', endDrag)
       viewport.addEventListener('pointercancel', endDrag)
       documentRef.addEventListener('keydown', handleDocumentKeydown)
+      documentRef.addEventListener('fullscreenchange', updateFullscreenState)
       windowRef?.addEventListener('resize', handleResize)
       fit()
       dialog.querySelector('[data-mermaid-action="close"]').focus()
