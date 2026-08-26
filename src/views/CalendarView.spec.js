@@ -19,4 +19,20 @@ describe('CalendarView', () => {
     await year.trigger('click')
     expect(wrapper.findAll('.calendar-year > button')).toHaveLength(12)
   })
+  it('renders active and completed items with distinct status treatments', async () => {
+    const now = new Date()
+    const date = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`
+    const event = { startDate: date, endDate: date, startTime: '09:00', endTime: '10:00', allDay: false, description: '', color: '#1E88E5', priority: 'important', reminder: null, createdAt: now.toISOString(), updatedAt: now.toISOString() }
+    localStorage.setItem('tiny-note-browser-state', JSON.stringify({ calendarEvents: [{ ...event, id: 'active', title: '未完成事项', completed: false }, { ...event, id: 'done', title: '已完成事项', completed: true }], todos: [], reminders: [] }))
+    const router = createRouter({ history: createMemoryHistory(), routes: [{ path: '/calendar', component: CalendarView }, { path: '/calendar/:id', component: { template: '<div />' } }, { path: '/todos', component: { template: '<div />' } }] })
+    await router.push('/calendar'); await router.isReady()
+    const wrapper = mount(CalendarView, { global: { plugins: [createPinia(), router] } })
+    await flushPromises()
+    const active = wrapper.get('.month-item[data-status="active"]')
+    const completed = wrapper.get('.month-item[data-status="completed"]')
+    expect(active.classes()).not.toContain('completed')
+    expect(active.find('.item-check svg').exists()).toBe(false)
+    expect(completed.classes()).toContain('completed')
+    expect(completed.find('.item-check svg').exists()).toBe(true)
+  })
 })

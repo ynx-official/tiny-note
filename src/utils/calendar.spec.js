@@ -19,6 +19,10 @@ describe('calendar helpers', () => {
     expect(result[0].kind).toBe('todo')
     expect(source[0].kind).toBeUndefined()
   })
+  it('projects todo date ranges as all-day multi-day items', () => {
+    const [result] = todoCalendarItems([{ id: 'range', title: '专注工作', startAt: '2026-08-26T00:00:00', dueAt: '2026-08-29T23:59:00', completedAt: null }])
+    expect(result).toMatchObject({ startDate: '2026-08-26', endDate: '2026-08-29', startTime: '', endTime: '', allDay: true })
+  })
   it('splits multi-day items into continuous weekly segments', () => {
     const rows = monthWeekRows(2026, 7, [{ id: 'long', kind: 'event', title: '跨日', startDate: '2026-08-05', endDate: '2026-08-10' }])
     expect(rows[1].segments[0]).toMatchObject({ startColumn: 4, span: 4, continuesAfter: true })

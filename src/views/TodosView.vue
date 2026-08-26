@@ -8,8 +8,6 @@ import { useTodosStore } from '../stores/todos'
 import { ensureReminderPermission, fromDateTimeLocal, normalizedReminder, reminderSummary, toDateTimeLocal } from '../services/reminders'
 import { defaultQuickDue, filterTodoViewItems, groupTodos, TODO_FILTERS, TODO_SORTS, todoCounts } from '../utils/todos'
 import { localDateValue } from '../utils/dateTime'
-import ReminderEditor from '../components/ReminderEditor.vue'
-import DateTimePicker from '../components/DateTimePicker.vue'
 import TodoQuickScheduler from '../components/TodoQuickScheduler.vue'
 
 const emptyReminder = () => ({ enabled: false, mode: 'at', triggerAt: '', offsetMinutes: 10, intervalMinutes: 10 })
@@ -25,6 +23,7 @@ const sortOpen = ref(false)
 const navOpen = ref(false)
 const selectedId = ref('')
 const quickTitle = ref('')
+const quickStartAt = ref('')
 const quickDueAt = ref(defaultQuickDue(initialFilter))
 const quickReminder = ref(emptyReminder())
 const quickInput = ref(null)
@@ -36,7 +35,7 @@ const dirty = ref(false)
 const saveState = ref('idle')
 const saveError = ref('')
 const permissionWarning = ref('')
-const form = reactive({ title: '', notes: '', dueAt: '', priority: 'none', reminder: emptyReminder() })
+const form = reactive({ title: '', notes: '', startAt: '', dueAt: '', priority: 'none', reminder: emptyReminder() })
 let saveTimer
 let editVersion = 0
 let lastQueuedVersion = 0
@@ -62,7 +61,7 @@ const sortOptions = computed(() => [
 const saveLabel = computed(() => saveState.value === 'saving' ? t('todoSaving') : saveState.value === 'error' ? t('todoSaveFailed') : saveState.value === 'saved' ? t('todoSaved') : '')
 
 function groupLabel(key) { return t({ overdue: 'todoOverdue', today: 'todoToday', later: 'todoLater', undated: 'todoUndated', completed: 'todoCompleted' }[key]) }
-function resetQuickDraft() { quickDueAt.value = defaultQuickDue(filter.value); quickReminder.value = emptyReminder(); quickError.value = '' }
+function resetQuickDraft() { quickStartAt.value = ''; quickDueAt.value = defaultQuickDue(filter.value); quickReminder.value = emptyReminder(); quickError.value = '' }
 function fillForm(item) {
   if (!item) return
   suppressFormWatch.value = true
@@ -70,6 +69,7 @@ function fillForm(item) {
   Object.assign(form, {
     title: item.title,
     notes: item.notes || '',
+    startAt: toDateTimeLocal(item.startAt),
     dueAt: toDateTimeLocal(item.dueAt),
     priority: item.priority || 'none',
     reminder: item.reminder ? {
@@ -88,7 +88,7 @@ function fillForm(item) {
   nextTick(() => { suppressFormWatch.value = false })
 }
 function snapshotForm(version) {
-  return { id: selectedId.value, version, title: form.title, notes: form.notes, dueAt: form.dueAt, priority: form.priority, reminder: { ...form.reminder } }
+  return { id: selectedId.value, version, title: form.title, notes: form.notes, startAt: form.startAt, dueAt: form.dueAt, priority: form.priority, reminder: { ...form.reminder } }
 }
 async function persistSnapshot(snapshot) {
   if (!snapshot.id) return true
@@ -98,7 +98,12 @@ async function persistSnapshot(snapshot) {
   }
   try {
     if (snapshot.version === editVersion) { saveState.value = 'saving'; saveError.value = ''; permissionWarning.value = '' }
+    const startAt = fromDateTimeLocal(snapshot.startAt)
     const dueAt = fromDateTimeLocal(snapshot.dueAt)
+    if (startAt && (!dueAt || new Date(startAt) >= new Date(dueAt))) {
+      if (snapshot.version === editVersion) { saveState.value = 'error'; saveError.value = t('todoRangeInvalid') }
+      return false
+    }
     let reminder = normalizedReminder(snapshot.reminder, { hasAnchor: Boolean(dueAt) })
     if (reminder && !(await ensureReminderPermission())) {
       reminder = null
@@ -109,7 +114,7 @@ async function persistSnapshot(snapshot) {
         await nextTick(); suppressFormWatch.value = false
       }
     }
-    await store.update(snapshot.id, { title: snapshot.title.trim(), notes: snapshot.notes, dueAt, priority: snapshot.priority, reminder })
+    await store.update(snapshot.id, { title: snapshot.title.trim(), notes: snapshot.notes, startAt, dueAt, priority: snapshot.priority, reminder })
     if (snapshot.id === selectedId.value && snapshot.version === editVersion) {
       dirty.value = false
       saveState.value = 'saved'
@@ -175,10 +180,11 @@ async function quickAdd() {
   try {
     quickSaving.value = true
     quickError.value = ''
+    const startAt = fromDateTimeLocal(quickStartAt.value)
     const dueAt = fromDateTimeLocal(quickDueAt.value)
     const reminder = normalizedReminder(quickReminder.value, { hasAnchor: Boolean(dueAt) })
     if (reminder && !(await ensureReminderPermission())) throw new Error(t('todoReminderPermissionDenied'))
-    await store.create({ title, notes: '', dueAt, priority: 'none', reminder })
+    await store.create({ title, notes: '', startAt, dueAt, priority: 'none', reminder })
     quickTitle.value = ''
     resetQuickDraft()
     await nextTick(); quickInput.value?.focus()
@@ -207,12 +213,19 @@ function toggleGroup(key) {
   if (next.has(key)) next.delete(key); else next.add(key)
   collapsedGroups.value = next
 }
-function formatDue(value) {
+function formatDue(value, startValue = '') {
   if (!value) return t('todoNoDue')
   const date = new Date(value)
-  const time = new Intl.DateTimeFormat(locale.value, { hour: '2-digit', minute: '2-digit' }).format(date)
-  if (localDateValue(date) === localDateValue()) return `${t('todoToday')} ${time}`
-  return new Intl.DateTimeFormat(locale.value, { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' }).format(date)
+  const prefix = localDateValue(date) === localDateValue() ? t('todoToday') : new Intl.DateTimeFormat(locale.value, { month: 'short', day: 'numeric' }).format(date)
+  if (!startValue) {
+    const time = new Intl.DateTimeFormat(locale.value, { hour: '2-digit', minute: '2-digit' }).format(date)
+    return `${prefix} ${time}`
+  }
+  const start = new Date(startValue)
+  if (Number.isNaN(start.getTime())) return prefix
+  if (localDateValue(start) === localDateValue(date)) return prefix
+  const format = new Intl.DateTimeFormat(locale.value, { month: 'short', day: 'numeric' })
+  return `${format.format(start)} – ${format.format(date)}`
 }
 function isOverdue(item) { return !item.completedAt && item.dueAt && new Date(item.dueAt) < new Date() }
 function handleDocumentClick(event) { if (!event.target?.closest?.('.todo-sort-wrap')) sortOpen.value = false }
@@ -261,7 +274,7 @@ onBeforeUnmount(() => {
 
       <form v-if="filter !== 'completed'" class="todo-quick" @submit.prevent="quickAdd">
         <Plus :size="22" /><input ref="quickInput" v-model="quickTitle" :placeholder="t('todoQuickPlaceholder')" :aria-label="t('todoQuickPlaceholder')">
-        <TodoQuickScheduler v-model:due-at="quickDueAt" v-model:reminder="quickReminder" :locale="locale" :disabled="quickSaving" />
+        <TodoQuickScheduler v-model:start-at="quickStartAt" v-model:due-at="quickDueAt" v-model:reminder="quickReminder" :locale="locale" :disabled="quickSaving" />
         <button class="quick-submit" :disabled="!quickTitle.trim() || quickSaving">{{ quickSaving ? t('todoAdding') : t('add') }}</button>
       </form>
       <p v-if="quickError" class="quick-error" role="alert">{{ quickError }}</p>
@@ -275,7 +288,7 @@ onBeforeUnmount(() => {
           <div v-if="!collapsedGroups.has(group.key)" class="todo-rows">
             <article v-for="item in group.items" :key="item.id" :class="{ active: selectedId === item.id, completed: item.completedAt }">
               <button class="todo-check" type="button" :aria-label="item.completedAt ? t('todoRestore') : t('todoMarkCompleted')" :aria-pressed="Boolean(item.completedAt)" @click="toggle(item)"><span class="todo-checkbox" :class="{ checked: item.completedAt }"><Check v-if="item.completedAt" :size="13" :stroke-width="3" /></span></button>
-              <button class="todo-row-main" @click="select(item)"><span class="todo-row-title"><strong>{{ item.title }}</strong><span class="todo-priority-dot" :class="`p-${item.priority}`"></span></span><span v-if="item.notes" class="todo-notes">{{ item.notes }}</span><span class="todo-meta"><small :class="{ overdue: isOverdue(item) }">{{ formatDue(item.dueAt) }}</small><small v-if="item.reminder?.enabled"><Bell :size="12" />{{ reminderSummary(item.reminder, locale) }}</small></span></button>
+              <button class="todo-row-main" @click="select(item)"><span class="todo-row-title"><strong>{{ item.title }}</strong><span class="todo-priority-dot" :class="`p-${item.priority}`"></span></span><span v-if="item.notes" class="todo-notes">{{ item.notes }}</span><span class="todo-meta"><small :class="{ overdue: isOverdue(item) }">{{ formatDue(item.dueAt, item.startAt) }}</small><small v-if="item.reminder?.enabled"><Bell :size="12" />{{ reminderSummary(item.reminder, locale) }}</small></span></button>
             </article>
           </div>
         </section>
@@ -288,9 +301,8 @@ onBeforeUnmount(() => {
         <form class="todo-detail-form" @submit.prevent>
           <label class="detail-title"><span class="sr-only">{{ t('todoTitle') }}</span><textarea v-model="form.title" rows="2" :placeholder="t('todoTitle')"></textarea></label>
           <label class="detail-notes"><span>{{ t('todoNotes') }}</span><textarea v-model="form.notes" rows="6" :placeholder="t('todoNotesPlaceholder')"></textarea></label>
-          <div class="detail-property"><span><CalendarClock :size="16" />{{ t('todoDue') }}</span><DateTimePicker v-model="form.dueAt" :locale="locale" :placeholder="t('todoSetDue')" /></div>
+          <div class="detail-property"><span><CalendarClock :size="16" />{{ t('todoSchedule') }}</span><TodoQuickScheduler v-model:start-at="form.startAt" v-model:due-at="form.dueAt" v-model:reminder="form.reminder" :locale="locale" /></div>
           <label class="detail-property"><span><Circle :size="16" />{{ t('todoPriority') }}</span><select v-model="form.priority"><option value="none">{{ t('todoPriorityNone') }}</option><option value="low">{{ t('todoPriorityLow') }}</option><option value="medium">{{ t('todoPriorityMedium') }}</option><option value="high">{{ t('todoPriorityHigh') }}</option></select></label>
-          <ReminderEditor v-model="form.reminder" :has-anchor="Boolean(form.dueAt)" :locale="locale" />
           <p v-if="selected.reminder && !selected.reminder.enabled" class="stopped">{{ t('todoReminderStopped') }}</p><p v-if="permissionWarning" class="permission-warning">{{ permissionWarning }}</p><p v-if="saveError" class="form-error" role="alert">{{ saveError }}</p>
         </form>
         <footer><button class="complete-action" @click="toggle(selected)"><CheckCircle2 :size="16" />{{ selected.completedAt ? t('todoRestore') : t('todoMarkCompleted') }}</button><button class="delete-action" @click="remove"><Trash2 :size="16" />{{ t('todoDeletePermanent') }}</button></footer>

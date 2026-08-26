@@ -482,6 +482,8 @@ pub struct WorkspaceBackupDto {
     #[serde(default)]
     pub calendar_events: Vec<planner::CalendarEventDto>,
     #[serde(default)]
+    pub todo_lists: Vec<planner::TodoListDto>,
+    #[serde(default)]
     pub todos: Vec<planner::TodoDto>,
     #[serde(default)]
     pub reminders: Vec<planner::ReminderDto>,
@@ -2149,7 +2151,7 @@ pub mod commands {
                 .unwrap_or(false),
         };
         let (image_generations, image_assets) = image_generation::backup_data(&state, &conn)?;
-        let (calendar_events, todos, reminders) = planner::export_data(&conn)?;
+        let (calendar_events, todo_lists, todos, reminders) = planner::export_data(&conn)?;
         drop(conn);
 
         let mut files = Vec::new();
@@ -2184,7 +2186,7 @@ pub mod commands {
         }
         Ok(WorkspaceBackupDto {
             format: "tiny-note-workspace".into(),
-            version: 4,
+            version: 5,
             exported_at: now(),
             notebooks,
             notes,
@@ -2198,6 +2200,7 @@ pub mod commands {
             image_generations,
             image_assets,
             calendar_events,
+            todo_lists,
             todos,
             reminders,
         })
@@ -2209,7 +2212,7 @@ pub mod commands {
         request: WorkspaceImportRequest,
     ) -> Result<(), AppError> {
         if request.backup.format != "tiny-note-workspace"
-            || !matches!(request.backup.version, 1..=4)
+            || !matches!(request.backup.version, 1..=5)
         {
             return Err(AppError::invalid(
                 "unsupported_backup",
@@ -2450,6 +2453,9 @@ pub mod commands {
         transaction
             .execute("DELETE FROM todos", [])
             .map_err(AppError::db)?;
+        transaction
+            .execute("DELETE FROM todo_lists", [])
+            .map_err(AppError::db)?;
         for notebook in &request.backup.notebooks {
             transaction
                 .execute(
@@ -2623,6 +2629,7 @@ pub mod commands {
             planner::import_data(
                 &transaction,
                 &request.backup.calendar_events,
+                &request.backup.todo_lists,
                 &request.backup.todos,
                 &request.backup.reminders,
             )?;
@@ -5858,6 +5865,10 @@ pub fn run() {
             planner::calendar_event_create,
             planner::calendar_event_update,
             planner::calendar_event_delete,
+            planner::todo_custom_list_list,
+            planner::todo_custom_list_create,
+            planner::todo_custom_list_update,
+            planner::todo_custom_list_delete,
             planner::todo_list,
             planner::todo_get,
             planner::todo_create,

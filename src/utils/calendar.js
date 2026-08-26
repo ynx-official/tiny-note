@@ -98,7 +98,13 @@ export function localDateTime(date, time = '00:00') {
 
 export function todoCalendarItems(todos) {
   const colors = { high: '#C45A67', medium: '#B18B62', low: '#4E83A8', none: '#4B8F78' }
-  return todos.filter(item => item.dueAt).map(item => ({ ...item, kind: 'todo', startDate: formatDate(new Date(item.dueAt)), endDate: formatDate(new Date(item.dueAt)), startTime: new Date(item.dueAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', hour12: false }), endTime: '', allDay: false, completed: Boolean(item.completedAt), color: colors[item.priority] || colors.none }))
+  return todos.filter(item => item.dueAt).map(item => {
+    const due = new Date(item.dueAt)
+    const start = item.startAt ? new Date(item.startAt) : due
+    const time = date => date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', hour12: false })
+    const isDateRange = Boolean(item.startAt)
+    return { ...item, kind: 'todo', startDate: formatDate(start), endDate: formatDate(due), startTime: isDateRange ? '' : time(due), endTime: '', allDay: isDateRange, completed: Boolean(item.completedAt), color: colors[item.priority] || colors.none }
+  })
 }
 
 export function monthWeekRows(year, month, items = [], maxVisibleLanes = 4) {

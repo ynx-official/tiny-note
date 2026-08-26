@@ -99,6 +99,10 @@ pub struct TodoDto {
     pub id: String,
     pub title: String,
     pub notes: String,
+    #[serde(default)]
+    pub list_id: Option<String>,
+    #[serde(default)]
+    pub start_at: Option<String>,
     pub due_at: Option<String>,
     pub priority: String,
     pub completed_at: Option<String>,
@@ -113,6 +117,10 @@ pub struct TodoInput {
     pub title: String,
     #[serde(default)]
     pub notes: String,
+    #[serde(default)]
+    pub list_id: Option<String>,
+    #[serde(default)]
+    pub start_at: Option<String>,
     pub due_at: Option<String>,
     #[serde(default = "default_todo_priority")]
     pub priority: String,
@@ -124,13 +132,35 @@ fn default_todo_priority() -> String {
     "none".into()
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TodoListDto {
+    pub id: String,
+    pub name: String,
+    pub color: String,
+    pub created_at: String,
+    pub updated_at: String,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TodoListInput {
+    pub name: String,
+    pub color: String,
+}
+
 #[derive(Debug, Clone)]
 pub struct DueReminder {
     pub title: String,
     pub body: String,
 }
 
-pub type PlannerBackupData = (Vec<CalendarEventDto>, Vec<TodoDto>, Vec<ReminderDto>);
+pub type PlannerBackupData = (
+    Vec<CalendarEventDto>,
+    Vec<TodoListDto>,
+    Vec<TodoDto>,
+    Vec<ReminderDto>,
+);
 
 pub fn init_schema(conn: &Connection) -> Result<(), AppError> {
     conn.execute_batch(
@@ -150,10 +180,19 @@ pub fn init_schema(conn: &Connection) -> Result<(), AppError> {
            updated_at TEXT NOT NULL
          );
          CREATE INDEX IF NOT EXISTS idx_calendar_events_range ON calendar_events(start_date,end_date);
+         CREATE TABLE IF NOT EXISTS todo_lists (
+           id TEXT PRIMARY KEY,
+           name TEXT NOT NULL,
+           color TEXT NOT NULL,
+           created_at TEXT NOT NULL,
+           updated_at TEXT NOT NULL
+         );
          CREATE TABLE IF NOT EXISTS todos (
            id TEXT PRIMARY KEY,
            title TEXT NOT NULL,
            notes TEXT NOT NULL DEFAULT '',
+           list_id TEXT,
+           start_at TEXT,
            due_at TEXT,
            priority TEXT NOT NULL DEFAULT 'none' CHECK(priority IN ('none','low','medium','high')),
            completed_at TEXT,
@@ -179,7 +218,30 @@ pub fn init_schema(conn: &Connection) -> Result<(), AppError> {
          );
          CREATE INDEX IF NOT EXISTS idx_reminders_due ON reminders(enabled,next_fire_at);",
     )
-    .map_err(AppError::db)
+    .map_err(AppError::db)?;
+    let mut todo_columns = conn
+        .prepare("PRAGMA table_info(todos)")
+        .map_err(AppError::db)?;
+    let todo_column_names = todo_columns
+        .query_map([], |row| row.get::<_, String>(1))
+        .map_err(AppError::db)?
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(AppError::db)?;
+    drop(todo_columns);
+    if !todo_column_names.iter().any(|column| column == "start_at") {
+        conn.execute("ALTER TABLE todos ADD COLUMN start_at TEXT", [])
+            .map_err(AppError::db)?;
+    }
+    if !todo_column_names.iter().any(|column| column == "list_id") {
+        conn.execute("ALTER TABLE todos ADD COLUMN list_id TEXT", [])
+            .map_err(AppError::db)?;
+    }
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_todos_list ON todos(list_id,completed_at)",
+        [],
+    )
+    .map_err(AppError::db)?;
+    Ok(())
 }
 
 fn now() -> String {
@@ -226,6 +288,57 @@ fn validate_todo(input: &TodoInput) -> Result<(), AppError> {
     if let Some(due_at) = &input.due_at {
         DateTime::parse_from_rfc3339(due_at)
             .map_err(|_| AppError::invalid("todo_due_invalid", "待办截止时间无效"))?;
+    }
+    if let Some(start_at) = &input.start_at {
+        let start = DateTime::parse_from_rfc3339(start_at)
+            .map_err(|_| AppError::invalid("todo_start_invalid", "待办开始时间无效"))?;
+        let due = input
+            .due_at
+            .as_deref()
+            .ok_or_else(|| AppError::invalid("todo_range_invalid", "时间段需要结束时间"))?;
+        let due = DateTime::parse_from_rfc3339(due)
+            .map_err(|_| AppError::invalid("todo_due_invalid", "待办截止时间无效"))?;
+        if start >= due {
+            return Err(AppError::invalid(
+                "todo_range_invalid",
+                "结束时间需要晚于开始时间",
+            ));
+        }
+    }
+    Ok(())
+}
+
+fn normalized_todo_list(input: &TodoListInput) -> Result<(String, String), AppError> {
+    let name = input.name.trim();
+    if name.is_empty() {
+        return Err(AppError::invalid(
+            "todo_list_name_required",
+            "清单名称不能为空",
+        ));
+    }
+    let color = input.color.trim();
+    if color.len() != 7
+        || !color.starts_with('#')
+        || !color[1..].bytes().all(|value| value.is_ascii_hexdigit())
+    {
+        return Err(AppError::invalid("todo_list_color_invalid", "清单颜色无效"));
+    }
+    Ok((name.into(), color.to_ascii_uppercase()))
+}
+
+fn ensure_todo_list_exists(conn: &Connection, list_id: Option<&str>) -> Result<(), AppError> {
+    let Some(list_id) = list_id else {
+        return Ok(());
+    };
+    let exists = conn
+        .query_row(
+            "SELECT EXISTS(SELECT 1 FROM todo_lists WHERE id=?1)",
+            params![list_id],
+            |row| row.get::<_, bool>(0),
+        )
+        .map_err(AppError::db)?;
+    if !exists {
+        return Err(AppError::not_found("todo_list_not_found", "清单不存在"));
     }
     Ok(())
 }
@@ -413,23 +526,131 @@ fn todo_from_row(conn: &Connection, row: &Row<'_>) -> Result<TodoDto, AppError> 
         id,
         title: row.get(1).map_err(AppError::db)?,
         notes: row.get(2).map_err(AppError::db)?,
-        due_at: row.get(3).map_err(AppError::db)?,
-        priority: row.get(4).map_err(AppError::db)?,
-        completed_at: row.get(5).map_err(AppError::db)?,
-        created_at: row.get(6).map_err(AppError::db)?,
-        updated_at: row.get(7).map_err(AppError::db)?,
+        list_id: row.get(3).map_err(AppError::db)?,
+        start_at: row.get(4).map_err(AppError::db)?,
+        due_at: row.get(5).map_err(AppError::db)?,
+        priority: row.get(6).map_err(AppError::db)?,
+        completed_at: row.get(7).map_err(AppError::db)?,
+        created_at: row.get(8).map_err(AppError::db)?,
+        updated_at: row.get(9).map_err(AppError::db)?,
     })
+}
+
+fn todo_list_from_row(row: &Row<'_>) -> rusqlite::Result<TodoListDto> {
+    Ok(TodoListDto {
+        id: row.get(0)?,
+        name: row.get(1)?,
+        color: row.get(2)?,
+        created_at: row.get(3)?,
+        updated_at: row.get(4)?,
+    })
+}
+
+fn get_todo_list(conn: &Connection, id: &str) -> Result<Option<TodoListDto>, AppError> {
+    conn.query_row(
+        "SELECT id,name,color,created_at,updated_at FROM todo_lists WHERE id=?1",
+        params![id],
+        todo_list_from_row,
+    )
+    .optional()
+    .map_err(AppError::db)
 }
 
 fn get_todo(conn: &Connection, id: &str) -> Result<Option<TodoDto>, AppError> {
     let mut statement = conn
-        .prepare("SELECT id,title,notes,due_at,priority,completed_at,created_at,updated_at FROM todos WHERE id=?1")
+        .prepare("SELECT id,title,notes,list_id,start_at,due_at,priority,completed_at,created_at,updated_at FROM todos WHERE id=?1")
         .map_err(AppError::db)?;
     let mut rows = statement.query(params![id]).map_err(AppError::db)?;
     rows.next()
         .map_err(AppError::db)?
         .map(|row| todo_from_row(conn, row))
         .transpose()
+}
+
+#[tauri::command]
+pub fn todo_custom_list_list(state: State<'_, AppState>) -> Result<Vec<TodoListDto>, AppError> {
+    let conn = state
+        .db
+        .lock()
+        .map_err(|_| AppError::db("database lock poisoned"))?;
+    let lists = conn
+        .prepare(
+            "SELECT id,name,color,created_at,updated_at FROM todo_lists ORDER BY created_at,id",
+        )
+        .map_err(AppError::db)?
+        .query_map([], todo_list_from_row)
+        .map_err(AppError::db)?
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(AppError::db)?;
+    Ok(lists)
+}
+
+#[tauri::command]
+pub fn todo_custom_list_create(
+    state: State<'_, AppState>,
+    input: TodoListInput,
+) -> Result<TodoListDto, AppError> {
+    let (name, color) = normalized_todo_list(&input)?;
+    let id = Uuid::new_v4().to_string();
+    let timestamp = now();
+    let conn = state
+        .db
+        .lock()
+        .map_err(|_| AppError::db("database lock poisoned"))?;
+    conn.execute(
+        "INSERT INTO todo_lists(id,name,color,created_at,updated_at) VALUES(?1,?2,?3,?4,?4)",
+        params![id, name, color, timestamp],
+    )
+    .map_err(AppError::db)?;
+    get_todo_list(&conn, &id)?
+        .ok_or_else(|| AppError::not_found("todo_list_not_found", "清单不存在"))
+}
+
+#[tauri::command]
+pub fn todo_custom_list_update(
+    state: State<'_, AppState>,
+    id: String,
+    input: TodoListInput,
+) -> Result<TodoListDto, AppError> {
+    let (name, color) = normalized_todo_list(&input)?;
+    let conn = state
+        .db
+        .lock()
+        .map_err(|_| AppError::db("database lock poisoned"))?;
+    let changed = conn
+        .execute(
+            "UPDATE todo_lists SET name=?2,color=?3,updated_at=?4 WHERE id=?1",
+            params![id, name, color, now()],
+        )
+        .map_err(AppError::db)?;
+    if changed == 0 {
+        return Err(AppError::not_found("todo_list_not_found", "清单不存在"));
+    }
+    get_todo_list(&conn, &id)?
+        .ok_or_else(|| AppError::not_found("todo_list_not_found", "清单不存在"))
+}
+
+#[tauri::command]
+pub fn todo_custom_list_delete(state: State<'_, AppState>, id: String) -> Result<(), AppError> {
+    let mut conn = state
+        .db
+        .lock()
+        .map_err(|_| AppError::db("database lock poisoned"))?;
+    let transaction = conn.transaction().map_err(AppError::db)?;
+    let timestamp = now();
+    transaction
+        .execute(
+            "UPDATE todos SET list_id=NULL,updated_at=?2 WHERE list_id=?1",
+            params![id, timestamp],
+        )
+        .map_err(AppError::db)?;
+    let changed = transaction
+        .execute("DELETE FROM todo_lists WHERE id=?1", params![id])
+        .map_err(AppError::db)?;
+    if changed == 0 {
+        return Err(AppError::not_found("todo_list_not_found", "清单不存在"));
+    }
+    transaction.commit().map_err(AppError::db)
 }
 
 #[tauri::command]
@@ -550,7 +771,7 @@ pub fn todo_list(state: State<'_, AppState>) -> Result<Vec<TodoDto>, AppError> {
         .db
         .lock()
         .map_err(|_| AppError::db("database lock poisoned"))?;
-    let mut statement = conn.prepare("SELECT id,title,notes,due_at,priority,completed_at,created_at,updated_at FROM todos ORDER BY completed_at IS NOT NULL,due_at IS NULL,due_at,created_at DESC").map_err(AppError::db)?;
+    let mut statement = conn.prepare("SELECT id,title,notes,list_id,start_at,due_at,priority,completed_at,created_at,updated_at FROM todos ORDER BY completed_at IS NOT NULL,due_at IS NULL,due_at,created_at DESC").map_err(AppError::db)?;
     let mut rows = statement.query([]).map_err(AppError::db)?;
     let mut items = Vec::new();
     while let Some(row) = rows.next().map_err(AppError::db)? {
@@ -578,9 +799,10 @@ pub fn todo_create(state: State<'_, AppState>, input: TodoInput) -> Result<TodoD
         .db
         .lock()
         .map_err(|_| AppError::db("database lock poisoned"))?;
+    ensure_todo_list_exists(&conn, input.list_id.as_deref())?;
     conn.execute(
-        "INSERT INTO todos(id,title,notes,due_at,priority,completed_at,created_at,updated_at) VALUES(?1,?2,?3,?4,?5,NULL,?6,?6)",
-        params![id, input.title.trim(), input.notes, input.due_at, input.priority, timestamp],
+        "INSERT INTO todos(id,title,notes,list_id,start_at,due_at,priority,completed_at,created_at,updated_at) VALUES(?1,?2,?3,?4,?5,?6,?7,NULL,?8,?8)",
+        params![id, input.title.trim(), input.notes, input.list_id, input.start_at, input.due_at, input.priority, timestamp],
     ).map_err(AppError::db)?;
     if let Err(error) = replace_reminder(&conn, OWNER_TODO, &id, input.reminder.as_ref(), anchor) {
         let _ = conn.execute("DELETE FROM todos WHERE id=?1", params![id]);
@@ -601,13 +823,16 @@ pub fn todo_update(
         .db
         .lock()
         .map_err(|_| AppError::db("database lock poisoned"))?;
+    ensure_todo_list_exists(&conn, input.list_id.as_deref())?;
     let changed = conn
         .execute(
-            "UPDATE todos SET title=?2,notes=?3,due_at=?4,priority=?5,updated_at=?6 WHERE id=?1",
+            "UPDATE todos SET title=?2,notes=?3,list_id=?4,start_at=?5,due_at=?6,priority=?7,updated_at=?8 WHERE id=?1",
             params![
                 id,
                 input.title.trim(),
                 input.notes,
+                input.list_id,
+                input.start_at,
                 input.due_at,
                 input.priority,
                 now()
@@ -793,7 +1018,17 @@ pub fn export_data(conn: &Connection) -> Result<PlannerBackupData, AppError> {
     drop(event_rows);
     drop(event_statement);
 
-    let mut todo_statement = conn.prepare("SELECT id,title,notes,due_at,priority,completed_at,created_at,updated_at FROM todos ORDER BY created_at").map_err(AppError::db)?;
+    let todo_lists = conn
+        .prepare(
+            "SELECT id,name,color,created_at,updated_at FROM todo_lists ORDER BY created_at,id",
+        )
+        .map_err(AppError::db)?
+        .query_map([], todo_list_from_row)
+        .map_err(AppError::db)?
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(AppError::db)?;
+
+    let mut todo_statement = conn.prepare("SELECT id,title,notes,list_id,start_at,due_at,priority,completed_at,created_at,updated_at FROM todos ORDER BY created_at").map_err(AppError::db)?;
     let mut todo_rows = todo_statement.query([]).map_err(AppError::db)?;
     let mut todos = Vec::new();
     while let Some(row) = todo_rows.next().map_err(AppError::db)? {
@@ -814,26 +1049,52 @@ pub fn export_data(conn: &Connection) -> Result<PlannerBackupData, AppError> {
     for todo in &mut todos {
         todo.reminder = None;
     }
-    Ok((events, todos, reminders))
+    Ok((events, todo_lists, todos, reminders))
 }
 
 pub fn import_data(
     conn: &Connection,
     events: &[CalendarEventDto],
+    todo_lists: &[TodoListDto],
     todos: &[TodoDto],
     reminders: &[ReminderDto],
 ) -> Result<(), AppError> {
+    if todos.iter().any(|todo| {
+        todo.list_id
+            .as_ref()
+            .is_some_and(|list_id| !todo_lists.iter().any(|todo_list| todo_list.id == *list_id))
+    }) {
+        return Err(AppError::invalid(
+            "invalid_backup_todo_list",
+            "备份中的待办清单引用无效",
+        ));
+    }
     conn.execute("DELETE FROM reminders", [])
         .map_err(AppError::db)?;
     conn.execute("DELETE FROM calendar_events", [])
         .map_err(AppError::db)?;
     conn.execute("DELETE FROM todos", [])
         .map_err(AppError::db)?;
+    conn.execute("DELETE FROM todo_lists", [])
+        .map_err(AppError::db)?;
     for event in events {
         conn.execute("INSERT INTO calendar_events(id,title,start_date,end_date,start_time,end_time,all_day,description,color,priority,completed,created_at,updated_at) VALUES(?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13)", params![event.id,event.title,event.start_date,event.end_date,event.start_time,event.end_time,event.all_day as i64,event.description,event.color,event.priority,event.completed as i64,event.created_at,event.updated_at]).map_err(AppError::db)?;
     }
+    for todo_list in todo_lists {
+        conn.execute(
+            "INSERT INTO todo_lists(id,name,color,created_at,updated_at) VALUES(?1,?2,?3,?4,?5)",
+            params![
+                todo_list.id,
+                todo_list.name,
+                todo_list.color,
+                todo_list.created_at,
+                todo_list.updated_at
+            ],
+        )
+        .map_err(AppError::db)?;
+    }
     for todo in todos {
-        conn.execute("INSERT INTO todos(id,title,notes,due_at,priority,completed_at,created_at,updated_at) VALUES(?1,?2,?3,?4,?5,?6,?7,?8)", params![todo.id,todo.title,todo.notes,todo.due_at,todo.priority,todo.completed_at,todo.created_at,todo.updated_at]).map_err(AppError::db)?;
+        conn.execute("INSERT INTO todos(id,title,notes,list_id,start_at,due_at,priority,completed_at,created_at,updated_at) VALUES(?1,?2,?3,?4,?5,?6,?7,?8,?9,?10)", params![todo.id,todo.title,todo.notes,todo.list_id,todo.start_at,todo.due_at,todo.priority,todo.completed_at,todo.created_at,todo.updated_at]).map_err(AppError::db)?;
     }
     for reminder in reminders {
         let valid_owner = if reminder.owner_type == OWNER_EVENT {
@@ -870,6 +1131,8 @@ mod tests {
         let input = TodoInput {
             title: "交报告".into(),
             notes: String::new(),
+            list_id: None,
+            start_at: None,
             due_at: Some((Utc::now() + Duration::hours(2)).to_rfc3339()),
             priority: "high".into(),
             reminder: Some(ReminderInput {
@@ -886,6 +1149,21 @@ mod tests {
         let reminder = get_reminder(&conn, OWNER_TODO, "todo-1").unwrap().unwrap();
         assert_eq!(reminder.mode, "before");
         assert!(reminder.enabled);
+    }
+
+    #[test]
+    fn todo_date_range_requires_an_end_after_the_start() {
+        let now = Utc::now();
+        let input = TodoInput {
+            title: "专注工作".into(),
+            notes: String::new(),
+            list_id: None,
+            start_at: Some((now + Duration::hours(2)).to_rfc3339()),
+            due_at: Some((now + Duration::hours(1)).to_rfc3339()),
+            priority: "none".into(),
+            reminder: None,
+        };
+        assert!(validate_todo(&input).is_err());
     }
 
     #[test]
