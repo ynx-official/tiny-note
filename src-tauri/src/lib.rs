@@ -14,7 +14,12 @@ use std::{
     },
     thread,
 };
-use tauri::{ipc::Channel, Emitter, Manager, State};
+use tauri::{
+    ipc::Channel,
+    menu::{Menu, MenuItem},
+    tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent},
+    Emitter, Manager, State,
+};
 use tauri_plugin_opener::OpenerExt;
 use thiserror::Error;
 use uuid::Uuid;
@@ -27,6 +32,7 @@ mod agent_skills;
 mod background_tasks;
 mod image_generation;
 mod model_endpoint;
+mod planner;
 mod search;
 mod update;
 
@@ -473,6 +479,12 @@ pub struct WorkspaceBackupDto {
     pub image_generations: Vec<image_generation::ImageGenerationDto>,
     #[serde(default)]
     pub image_assets: Vec<image_generation::BackupImageAssetDto>,
+    #[serde(default)]
+    pub calendar_events: Vec<planner::CalendarEventDto>,
+    #[serde(default)]
+    pub todos: Vec<planner::TodoDto>,
+    #[serde(default)]
+    pub reminders: Vec<planner::ReminderDto>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -894,6 +906,7 @@ fn init_database(conn: &Connection) -> Result<(), AppError> {
     agent::init_schema(conn)?;
     background_tasks::init_schema(conn)?;
     image_generation::init_schema(conn)?;
+    planner::init_schema(conn)?;
     let model_columns = {
         let mut statement = conn
             .prepare("PRAGMA table_info(model_profiles)")
@@ -2136,6 +2149,7 @@ pub mod commands {
                 .unwrap_or(false),
         };
         let (image_generations, image_assets) = image_generation::backup_data(&state, &conn)?;
+        let (calendar_events, todos, reminders) = planner::export_data(&conn)?;
         drop(conn);
 
         let mut files = Vec::new();
@@ -2170,7 +2184,7 @@ pub mod commands {
         }
         Ok(WorkspaceBackupDto {
             format: "tiny-note-workspace".into(),
-            version: 3,
+            version: 4,
             exported_at: now(),
             notebooks,
             notes,
@@ -2183,6 +2197,9 @@ pub mod commands {
             settings,
             image_generations,
             image_assets,
+            calendar_events,
+            todos,
+            reminders,
         })
     }
 
@@ -2192,7 +2209,7 @@ pub mod commands {
         request: WorkspaceImportRequest,
     ) -> Result<(), AppError> {
         if request.backup.format != "tiny-note-workspace"
-            || !matches!(request.backup.version, 1..=3)
+            || !matches!(request.backup.version, 1..=4)
         {
             return Err(AppError::invalid(
                 "unsupported_backup",
@@ -2424,6 +2441,15 @@ pub mod commands {
         transaction
             .execute("DELETE FROM image_generations", [])
             .map_err(AppError::db)?;
+        transaction
+            .execute("DELETE FROM reminders", [])
+            .map_err(AppError::db)?;
+        transaction
+            .execute("DELETE FROM calendar_events", [])
+            .map_err(AppError::db)?;
+        transaction
+            .execute("DELETE FROM todos", [])
+            .map_err(AppError::db)?;
         for notebook in &request.backup.notebooks {
             transaction
                 .execute(
@@ -2591,6 +2617,14 @@ pub mod commands {
                 &transaction,
                 &request.backup.image_generations,
                 &request.backup.image_assets,
+            )?;
+        }
+        if request.backup.version >= 4 {
+            planner::import_data(
+                &transaction,
+                &request.backup.calendar_events,
+                &request.backup.todos,
+                &request.backup.reminders,
             )?;
         }
         transaction.commit().map_err(AppError::db)?;
@@ -5663,6 +5697,13 @@ pub fn run() {
         .plugin(tauri_plugin_process::init())
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_opener::init())
+        .plugin(tauri_plugin_notification::init())
+        .on_window_event(|window, event| {
+            if let tauri::WindowEvent::CloseRequested { api, .. } = event {
+                api.prevent_close();
+                let _ = window.hide();
+            }
+        })
         .setup(|app| {
             let state =
                 app_state(app.handle()).map_err(|e| Box::new(e) as Box<dyn std::error::Error>)?;
@@ -5675,6 +5716,46 @@ pub fn run() {
                 &cwd,
             );
             app.manage(pending);
+
+            let show = MenuItem::with_id(app, "show", "打开 Tiny Note", true, None::<&str>)?;
+            let quit = MenuItem::with_id(app, "quit", "彻底退出", true, None::<&str>)?;
+            let menu = Menu::with_items(app, &[&show, &quit])?;
+            let mut tray = TrayIconBuilder::with_id("tiny-note-tray")
+                .menu(&menu)
+                .show_menu_on_left_click(false)
+                .on_menu_event(|app, event| match event.id.as_ref() {
+                    "show" => {
+                        if let Some(window) = app.get_webview_window("main") {
+                            let _ = window.unminimize();
+                            let _ = window.show();
+                            let _ = window.set_focus();
+                        }
+                    }
+                    "quit" => app.exit(0),
+                    _ => {}
+                })
+                .on_tray_icon_event(|tray, event| {
+                    if matches!(
+                        event,
+                        TrayIconEvent::Click {
+                            button: MouseButton::Left,
+                            button_state: MouseButtonState::Up,
+                            ..
+                        }
+                    ) {
+                        let app = tray.app_handle();
+                        if let Some(window) = app.get_webview_window("main") {
+                            let _ = window.unminimize();
+                            let _ = window.show();
+                            let _ = window.set_focus();
+                        }
+                    }
+                });
+            if let Some(icon) = app.default_window_icon() {
+                tray = tray.icon(icon.clone());
+            }
+            tray.build(app)?;
+            planner::start_reminder_scheduler(app.handle().clone());
 
             Ok(())
         })
@@ -5772,6 +5853,18 @@ pub fn run() {
             background_tasks::background_task_cancel,
             background_tasks::background_task_retry,
             background_tasks::background_task_clear_finished,
+            planner::calendar_event_list,
+            planner::calendar_event_get,
+            planner::calendar_event_create,
+            planner::calendar_event_update,
+            planner::calendar_event_delete,
+            planner::todo_list,
+            planner::todo_get,
+            planner::todo_create,
+            planner::todo_update,
+            planner::todo_delete,
+            planner::todo_set_completed,
+            planner::reminder_stop,
             agent::agent_invoke,
             agent::agent_resume,
             agent::agent_respond_input,

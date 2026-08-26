@@ -11,6 +11,7 @@
     "core:window:allow-close",
     "core:webview:allow-print",
     "process:allow-restart",
-    "dialog:allow-open"
+    "dialog:allow-open",
+    "notification:default"
   ]
 }

@@ -8,6 +8,7 @@ export const messages = {
 }
 
 Object.assign(messages['zh-CN'], {
+  calendar: '日历', todos: '待办',
   tags: '标签', untagged: '未添加标签', searchTags: '搜索标签', newTag: '新建标签', renameTag: '重命名标签', deleteTag: '删除标签', addNotes: '添加笔记', removeFromTag: '移除', noTaggedNotes: '暂无笔记', allNotesTagged: '所有笔记都已经添加了标签', batchAddHint: '可以从全部笔记中批量添加', searchNotes: '搜索笔记', noAvailableNotes: '没有可添加的笔记', add: '添加', notebookPath: '所属笔记本',
   assistantCenter: '助手中心', memoryManagement: '记忆管理', usageStatistics: '用量统计',
   assistantName: 'Tiny Note 助手', birthDate: '创建日期', memoryFiles: '记忆文件',
@@ -37,6 +38,7 @@ Object.assign(messages['zh-CN'], {
 })
 
 Object.assign(messages.en, {
+  calendar: 'Calendar', todos: 'Todos',
   tags: 'Tags', untagged: 'Untagged', searchTags: 'Search tags', newTag: 'New tag', renameTag: 'Rename tag', deleteTag: 'Delete tag', addNotes: 'Add notes', removeFromTag: 'Remove', noTaggedNotes: 'No notes', allNotesTagged: 'Every note has a tag', batchAddHint: 'Add notes from your notebook tree', searchNotes: 'Search notes', noAvailableNotes: 'No notes available', add: 'Add', notebookPath: 'Notebook',
   assistantCenter: 'Assistant center', memoryManagement: 'Memory management', usageStatistics: 'Usage statistics',
   assistantName: 'Tiny Note assistant', birthDate: 'Created', memoryFiles: 'Memory files',
