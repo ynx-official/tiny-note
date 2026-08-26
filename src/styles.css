@@ -2217,6 +2217,21 @@ body, button, input, select, textarea { font-family: -apple-system, BlinkMacSyst
 .tree-row:focus-visible { outline:2px solid var(--accent-color); outline-offset:-2px; }
 .tree-row .tree-label { min-width:0; flex:1; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
 .tree-row small { flex:none; color:var(--text-secondary); font-size:11px; font-weight:400; }
+.tree-external-row { padding:0 4px 0 0; gap:2px; }
+.tree-external-row .tree-row-main { min-width:0; height:100%; flex:1; display:flex; align-items:center; gap:7px; padding:0 4px 0 8px; color:inherit; text-align:left; }
+.tree-external-row .tree-row-main .tree-label { min-width:0; flex:1; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.tree-external-row .tree-row-main small { flex:none; color:var(--text-secondary); font-size:11px; font-weight:400; }
+.external-sources-clear { width:26px; height:26px; flex:none; display:grid; place-items:center; border-radius:4px; color:var(--text-tertiary); opacity:0; }
+.tree-external-row:hover .external-sources-clear,.tree-external-row:focus-within .external-sources-clear { opacity:1; }
+.external-sources-clear:hover { color:#dc2626; background:var(--bg-hover); }
+.external-sources-clear:focus-visible { opacity:1; outline:2px solid var(--accent-color); outline-offset:-2px; }
+.external-source-tree { margin:1px 0 3px; }
+.tree-external-source { height:30px; padding-left:30px; color:var(--text-secondary); font-size:13px; font-weight:400; }
+.tree-external-source .external-source-status { width:6px; height:6px; flex:none; border-radius:50%; background:#22a06b; }
+.tree-external-source.unavailable { color:var(--text-tertiary); }
+.tree-external-source.unavailable .external-source-status { background:#dc2626; }
+.external-source-empty { padding:5px 8px 7px 30px; color:var(--text-tertiary); font-size:12px; }
+@media (hover:none) { .external-sources-clear { opacity:1; } }
 .tree-disclosure { width:16px; height:22px; display:grid; place-items:center; flex:none; border:0; padding:0; color:var(--text-secondary); background:transparent; }
 .tree-disclosure span { display:block; font-size:20px; line-height:1; transform:rotate(0); transition:transform .12s ease; }
 .tree-disclosure span.expanded { transform:rotate(90deg); }

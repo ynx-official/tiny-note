@@ -77,17 +77,19 @@ describe('notes store', () => {
     expect(imported.external).not.toBe(true)
     expect(store.visible.map(note => note.id)).toContain(imported.id)
     expect(store.activeId).toBe(imported.id)
+    expect(store.selectedTreeNode).toEqual({ type: 'note', id: imported.id })
   })
 
   it('keeps external-open history separate and can reopen or clear it', async () => {
     const store = useNotesStore()
     await store.load()
+    const quotedMetadata = '> 文档状态：Review\n> 最后更新：2026-08-26\n> 适用对象：研发与测试'
     const external = await store.openExternalMarkdown({
       path: 'C:\\docs\\history.md',
       title: 'history',
-      contentHtml: '<h1>History</h1>',
-      contentText: 'History',
-      contentMarkdown: '# History'
+      contentHtml: '<blockquote><p>旧的合并预览</p></blockquote>',
+      contentText: '旧的合并预览',
+      contentMarkdown: quotedMetadata
     })
 
     await store.loadExternalSources()
@@ -97,6 +99,8 @@ describe('notes store', () => {
     const reopened = await store.openExternalSource(store.externalSources[0])
     expect(reopened.id).toBe(external.id)
     expect(store.activeId).toBe(external.id)
+    expect(reopened.contentMarkdown).toBe(quotedMetadata)
+    expect(reopened.contentHtml.match(/<br>/g)).toHaveLength(2)
 
     await store.clearExternalSources()
     expect(store.externalSources).toEqual([])

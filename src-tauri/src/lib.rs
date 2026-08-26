@@ -113,6 +113,17 @@ pub struct PendingMarkdownFileDto {
     error: Option<String>,
 }
 
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ExternalMarkdownSourceDto {
+    id: String,
+    title: String,
+    path: String,
+    file_name: String,
+    updated_at: String,
+    available: bool,
+}
+
 const MAX_EXTERNAL_MARKDOWN_BYTES: u64 = 10 * 1024 * 1024;
 
 fn is_markdown_path(path: &Path) -> bool {
@@ -275,6 +286,23 @@ fn sync_external_markdown(conn: &Connection, note_id: &str, content: &str) -> Re
     )
     .map_err(AppError::db)?;
     Ok(())
+}
+
+fn clear_external_markdown_records(conn: &Connection) -> Result<u64, AppError> {
+    let count = conn
+        .query_row(
+            "SELECT COUNT(*) FROM external_markdown_sources",
+            [],
+            |row| row.get::<_, i64>(0),
+        )
+        .map_err(AppError::db)?;
+    conn.execute(
+        "DELETE FROM notes WHERE id IN (SELECT note_id FROM external_markdown_sources)",
+        [],
+    )
+    .map_err(AppError::db)?;
+    rebuild_note_links(conn)?;
+    Ok(count.max(0) as u64)
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -2660,6 +2688,87 @@ pub mod commands {
         search::index_note(&conn, &note_id)?;
         drop(conn);
         note_get(state, note_id)
+    }
+
+    #[tauri::command]
+    pub fn external_markdown_list(
+        state: State<'_, AppState>,
+    ) -> Result<Vec<ExternalMarkdownSourceDto>, AppError> {
+        let conn = state
+            .db
+            .lock()
+            .map_err(|_| AppError::db("database lock poisoned"))?;
+        let result = conn
+            .prepare(
+                "SELECT notes.id,notes.title,source.path,notes.updated_at
+             FROM external_markdown_sources source
+             JOIN notes ON notes.id=source.note_id
+             ORDER BY notes.updated_at DESC",
+            )
+            .map_err(AppError::db)?
+            .query_map([], |row| {
+                let path = row.get::<_, String>(2)?;
+                let file_name = Path::new(&path)
+                    .file_name()
+                    .map(|name| name.to_string_lossy().into_owned())
+                    .unwrap_or_else(|| "Markdown 文件".into());
+                Ok(ExternalMarkdownSourceDto {
+                    id: row.get(0)?,
+                    title: row.get(1)?,
+                    available: Path::new(&path).is_file(),
+                    path,
+                    file_name,
+                    updated_at: row.get(3)?,
+                })
+            })
+            .map_err(AppError::db)?
+            .collect::<Result<Vec<_>, _>>()
+            .map_err(AppError::db);
+        result
+    }
+
+    #[tauri::command]
+    pub fn external_markdown_read(
+        state: State<'_, AppState>,
+        pending: State<'_, PendingMarkdownFiles>,
+        id: String,
+    ) -> Result<PendingMarkdownFileDto, AppError> {
+        let path = {
+            let conn = state
+                .db
+                .lock()
+                .map_err(|_| AppError::db("database lock poisoned"))?;
+            conn.query_row(
+                "SELECT path FROM external_markdown_sources WHERE note_id=?1",
+                params![id],
+                |row| row.get::<_, String>(0),
+            )
+            .optional()
+            .map_err(AppError::db)?
+            .ok_or_else(|| AppError::not_found("external_source_not_found", "外部来源记录不存在"))?
+        };
+        let file = pending_markdown_file(PathBuf::from(path));
+        if file.content.is_some() {
+            pending
+                .0
+                .lock()
+                .map_err(|_| AppError::Operation {
+                    code: "pending_file_lock_failed".into(),
+                    message: "无法授权打开外部文件".into(),
+                })?
+                .authorized
+                .insert(PathBuf::from(&file.path));
+        }
+        Ok(file)
+    }
+
+    #[tauri::command]
+    pub fn external_markdown_clear(state: State<'_, AppState>) -> Result<u64, AppError> {
+        let conn = state
+            .db
+            .lock()
+            .map_err(|_| AppError::db("database lock poisoned"))?;
+        clear_external_markdown_records(&conn)
     }
 
     #[tauri::command]
@@ -5649,6 +5758,9 @@ pub fn run() {
             commands::workspace_export,
             commands::workspace_import,
             commands::note_open_external_markdown,
+            commands::external_markdown_list,
+            commands::external_markdown_read,
+            commands::external_markdown_clear,
             commands::note_create,
             commands::note_update,
             commands::note_delete,
@@ -5879,6 +5991,34 @@ mod tests {
             .unwrap();
         assert_eq!(links, 0);
         assert_eq!(external_documents, 0);
+    }
+
+    #[test]
+    fn clearing_external_history_keeps_the_source_file() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("history.md");
+        fs::write(&path, "source stays").unwrap();
+        let conn = Connection::open_in_memory().unwrap();
+        init_database(&conn).unwrap();
+        let timestamp = now();
+        conn.execute(
+            "INSERT INTO notes(id,notebook_id,title,content_html,content_text,content_markdown,created_at,updated_at) VALUES('external-note',NULL,'history','<p>source stays</p>','source stays','source stays',?1,?1)",
+            params![timestamp],
+        )
+        .unwrap();
+        conn.execute(
+            "INSERT INTO external_markdown_sources(note_id,path,content_hash) VALUES('external-note',?1,'hash')",
+            params![path.to_string_lossy()],
+        )
+        .unwrap();
+
+        assert_eq!(clear_external_markdown_records(&conn).unwrap(), 1);
+        assert_eq!(fs::read_to_string(path).unwrap(), "source stays");
+        assert_eq!(
+            conn.query_row("SELECT COUNT(*) FROM notes", [], |row| row.get::<_, i64>(0))
+                .unwrap(),
+            0
+        );
     }
 
     #[test]

@@ -2,7 +2,7 @@
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { useI18n } from 'vue-i18n'
-import { ArrowDownAZ, BookOpen, ChevronRight, Copy, Download, FolderInput, FolderPlus, Pin, PinOff, Plus, RotateCcw, Search, Tags, Trash2 } from 'lucide-vue-next'
+import { ArrowDownAZ, BookOpen, ChevronRight, Copy, Download, FileClock, FolderInput, FolderPlus, Pin, PinOff, Plus, RotateCcw, Search, Tags, Trash2 } from 'lucide-vue-next'
 import { useNotesStore } from '../stores/notes'
 import { useLibraryStore } from '../stores/library'
 import { useTagsStore } from '../stores/tags'
@@ -27,6 +27,7 @@ const newNoteMenu = ref(false)
 const folderItemMenu = ref(null)
 const folderItemMenuStyle = ref({})
 const importInput = ref(null)
+const noteEditorRef = ref(null)
 const tocVisible = ref(false)
 const contextMenu = ref(null)
 const contextMoveOpen = ref(false)
@@ -43,6 +44,7 @@ const contextKnowledgeStyle = ref({ left: '0px', top: '0px' })
 let contextMoveTimer = null
 let contextKnowledgeTimer = null
 const expandedNotebookIds = ref(new Set())
+const externalSourcesOpen = ref(false)
 
 const list = computed(() => showDeleted.value ? store.deleted : store.listed)
 const contextNote = computed(() => contextMenu.value ? list.value.find(note => note.id === contextMenu.value.noteId) || store.notes.find(note => note.id === contextMenu.value.noteId) || store.deleted.find(note => note.id === contextMenu.value.noteId) : null)
@@ -93,7 +95,11 @@ function openRoutedNote() {
   if (!note) return
   showDeleted.value = false
   store.activeId = id
-  store.selectedTreeNode = { type: 'note', id }
+  store.selectedTreeNode = { type: note.external ? 'external-note' : 'note', id }
+  if (note.external) {
+    externalSourcesOpen.value = true
+    return
+  }
   const expanded = new Set(expandedNotebookIds.value)
   const visited = new Set()
   let notebook = store.notebooks.find(book => book.id === note.notebookId)
@@ -123,10 +129,56 @@ async function remove(id) { if (await requestConfirmation({ title: '移入最近
 async function importExternalNote(note) {
   try {
     const imported = await store.importExternal(note)
+    showDeleted.value = false
+    store.selectedNotebook = imported.notebookId || 'all'
+    store.selectedTreeNode = { type: 'note', id: imported.id }
+    await router.replace({ path: '/notes', query: { note: imported.id } })
+    store.activeId = imported.id
     showToast(`已将“${imported.title}”导入笔记`, { tone: 'success' })
   } catch (error) {
     showToast(error?.message || '导入笔记失败，请重试', { tone: 'error' })
   }
+}
+function toggleExternalSources() {
+  showDeleted.value = false
+  externalSourcesOpen.value = !externalSourcesOpen.value
+  store.selectedTreeNode = { type: 'external', id: 'external' }
+}
+async function openExternalSource(source) {
+  try {
+    const note = await store.openExternalSource(source)
+    showDeleted.value = false
+    externalSourcesOpen.value = true
+    store.selectedTreeNode = { type: 'external-note', id: note.id }
+    await router.replace({ path: '/notes', query: { note: note.id } })
+    store.activeId = note.id
+  } catch (error) {
+    showToast(error?.message || '外部文件无法打开', { tone: 'error' })
+  }
+}
+async function clearExternalSources() {
+  if (!store.externalSources.length) return
+  const confirmed = await requestConfirmation({
+    title: '清空外部来源记录',
+    message: '只会清除 Tiny Note 中的打开历史，不会删除磁盘上的源文件。',
+    tone: 'danger',
+    confirmLabel: '清空记录'
+  })
+  if (!confirmed) return
+  if (store.active?.external) {
+    try {
+      if (!await noteEditorRef.value?.saveLatestContent()) return
+    } catch (error) {
+      showToast(error?.message || '外部文件尚未保存，暂时不能清空记录', { tone: 'error' })
+      return
+    }
+  }
+  await store.clearExternalSources()
+  externalSourcesOpen.value = false
+  store.selectedNotebook = 'all'
+  store.selectedTreeNode = { type: 'all', id: 'all' }
+  await router.replace({ path: '/notes' })
+  showToast('已清空外部来源记录', { tone: 'success' })
 }
 async function importFiles(event) {
   for (const file of event.target.files || []) await store.importText(file)
@@ -463,6 +515,18 @@ onBeforeUnmount(() => {
             @drop-node="dropTreeNode"
           />
           <div v-if="!notebookTree.length" class="note-list-empty">{{ query ? '没有匹配的笔记' : t('emptyNotes') }}</div>
+          <div class="tree-row tree-external-row" :class="{ active: store.selectedTreeNode.type === 'external' }">
+            <button type="button" class="tree-row-main" :aria-expanded="externalSourcesOpen" @click="toggleExternalSources">
+              <FileClock :size="16" :stroke-width="1.9" /><span class="tree-label">外部来源</span><small>{{ store.externalSources.length }}</small>
+            </button>
+            <button v-if="store.externalSources.length" type="button" class="external-sources-clear" title="清空外部来源记录" aria-label="清空外部来源记录" @click.stop="clearExternalSources"><Trash2 :size="13" /></button>
+          </div>
+          <div v-if="externalSourcesOpen" class="external-source-tree" role="group" aria-label="外部来源记录">
+            <button v-for="source in store.externalSources" :key="source.id" type="button" class="tree-row tree-external-source" :class="{ active: store.selectedTreeNode.type === 'external-note' && store.selectedTreeNode.id === source.id, unavailable: !source.available }" :title="source.path" @click="openExternalSource(source)">
+              <span class="external-source-status" aria-hidden="true"></span><span class="tree-label">{{ source.fileName }}</span>
+            </button>
+            <div v-if="!store.externalSources.length" class="external-source-empty">暂无外部打开记录</div>
+          </div>
         </div>
         <div v-if="folderItemMenu" class="folder-item-menu notebook-context-menu" :style="folderItemMenuStyle" @click.stop>
           <button class="folder-item-menu-option" @click="createChildNotebook"><FolderPlus :size="13" />新建子笔记本</button>
@@ -535,7 +599,7 @@ onBeforeUnmount(() => {
     <button v-if="sidebarCollapsed" class="sidebar-expand-btn" :title="t('noteSidebarExpand')" @click="sidebarCollapsed = false"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="3" y="3" width="18" height="18" rx="2"/><line x1="15" y1="3" x2="15" y2="21"/></svg></button>
 
     <section class="note-main note-editor-area" :class="{ 'sidebar-collapsed': sidebarCollapsed }">
-      <NoteEditor v-if="!showDeleted" :note="store.active" :toc-visible="tocVisible" :proposal-id="String(route.query.proposal || '')" @proposal-reviewed="clearReviewedProposal" @toggle-toc="toggleToc" @deleted="remove" @import-external="importExternalNote" />
+      <NoteEditor v-if="!showDeleted" ref="noteEditorRef" :note="store.active" :toc-visible="tocVisible" :proposal-id="String(route.query.proposal || '')" @proposal-reviewed="clearReviewedProposal" @toggle-toc="toggleToc" @deleted="remove" @import-external="importExternalNote" />
       <div v-else-if="store.active" class="deleted-card"><h2>{{ store.active.title }}</h2><p>{{ store.active.contentText.slice(0, 300) }}</p><button class="secondary-button" @click="store.restore(store.active.id)">{{ t('restore') }}</button><button class="danger-button" @click="store.remove(store.active.id)">{{ t('delete') }}</button></div>
       <div v-else class="empty-state"><div class="empty-icon">⌁</div><h2>{{ t('recentlyDeleted') }}</h2></div>
     </section>

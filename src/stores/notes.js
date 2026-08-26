@@ -1,13 +1,13 @@
 import { defineStore } from 'pinia'
 import { invoke } from '../services/tauri'
-import { marked } from 'marked'
-import { sanitizeEditorHtml, textFromEditorHtml } from '../utils/noteMarkdown'
+import { markdownToEditorHtml, sanitizeEditorHtml, textFromEditorHtml } from '../utils/noteMarkdown'
 import { showToast } from '../services/appFeedback'
 
 export const useNotesStore = defineStore('notes', {
   state: () => ({
     notes: [],
     deleted: [],
+    externalSources: [],
     notebooks: [],
     templates: [],
     activeId: null,
@@ -30,10 +30,11 @@ export const useNotesStore = defineStore('notes', {
       try {
         await invoke('note_purge_expired')
         const filters = { search: this.search || null, deleted: false, pinned: this.pinnedOnly ? true : null }
-        ;[this.notes, this.deleted, this.notebooks] = await Promise.all([
+        ;[this.notes, this.deleted, this.notebooks, this.externalSources] = await Promise.all([
           invoke('note_list', filters),
           invoke('note_list', { search: '', deleted: true }),
-          invoke('notebook_list')
+          invoke('notebook_list'),
+          invoke('external_markdown_list')
         ])
         if (!this.activeId && this.notes[0]) this.activeId = this.notes[0].id
         if (this.activeId && !this.notes.some(note => note.id === this.activeId) && this.notes[0]) this.activeId = this.notes[0].id
@@ -58,7 +59,7 @@ export const useNotesStore = defineStore('notes', {
       const template = this.templates.find(item => item.id === templateId) || (await this.loadTemplates()).find(item => item.id === templateId)
       if (!template) return this.create()
       const markdown = template.contentMarkdown || ''
-      const html = sanitizeEditorHtml(marked.parse(markdown))
+      const html = sanitizeEditorHtml(markdownToEditorHtml(markdown))
       return this.createFromContent({ title: template.title || template.name, contentHtml: html, contentText: textFromEditorHtml(html), contentMarkdown: markdown })
     },
     async createFromContent({ title = '未命名笔记', contentHtml = '<p></p>', contentText = '', contentMarkdown = '', notebookId, knowledgeBaseId = null, pinned = false } = {}) {
@@ -74,7 +75,7 @@ export const useNotesStore = defineStore('notes', {
       const extension = file.name.split('.').pop()?.toLowerCase()
       const escaped = text.replaceAll('&', '&amp;').replaceAll('<', '&lt;').replaceAll('>', '&gt;').replaceAll('\n', '<br>')
       const isHtmlNote = extension === 'note' && /<\w[\s\S]*>/.test(text)
-      const html = extension === 'md' || extension === 'markdown' ? sanitizeEditorHtml(marked.parse(text)) : isHtmlNote ? sanitizeEditorHtml(text) : '<p>' + escaped + '</p>'
+      const html = extension === 'md' || extension === 'markdown' ? sanitizeEditorHtml(markdownToEditorHtml(text)) : isHtmlNote ? sanitizeEditorHtml(text) : '<p>' + escaped + '</p>'
       const contentMarkdown = isHtmlNote ? '' : text
       const contentText = extension === 'md' || extension === 'markdown' || isHtmlNote ? textFromEditorHtml(html) : text
       return this.createFromContent({ title, contentHtml: html, contentText, contentMarkdown, notebookId: this.selectedNotebook === 'all' ? null : this.selectedNotebook })
@@ -85,17 +86,44 @@ export const useNotesStore = defineStore('notes', {
       if (index >= 0) this.notes[index] = note
       else this.notes.unshift(note)
       this.activeId = note.id
+      await this.loadExternalSources()
       return note
+    },
+    async loadExternalSources() {
+      this.externalSources = await invoke('external_markdown_list') || []
+      return this.externalSources
+    },
+    async openExternalSource(source) {
+      const file = await invoke('external_markdown_read', { id: source.id })
+      if (file.error || typeof file.content !== 'string') throw new Error(file.error || '外部文件读取失败')
+      const contentHtml = sanitizeEditorHtml(markdownToEditorHtml(file.content))
+      return this.openExternalMarkdown({
+        path: file.path,
+        title: source.title || file.fileName.replace(/\.(?:md|markdown)$/i, '') || 'Markdown 文件',
+        contentHtml,
+        contentText: textFromEditorHtml(contentHtml),
+        contentMarkdown: file.content
+      })
+    },
+    async clearExternalSources() {
+      await invoke('external_markdown_clear')
+      const externalIds = new Set(this.notes.filter(note => note.external).map(note => note.id))
+      this.notes = this.notes.filter(note => !note.external)
+      this.externalSources = []
+      if (externalIds.has(this.activeId)) this.activeId = this.notes[0]?.id || null
     },
     async importExternal(note) {
       if (!note?.external) return note
-      return this.createFromContent({
+      const imported = await this.createFromContent({
         title: note.title,
         contentHtml: note.contentHtml,
         contentText: note.contentText,
         contentMarkdown: note.contentMarkdown || '',
         pinned: false
       })
+      this.selectedNotebook = imported.notebookId || 'all'
+      this.selectedTreeNode = { type: 'note', id: imported.id }
+      return imported
     },
     async save(note) {
       this.saving = true

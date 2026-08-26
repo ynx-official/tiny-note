@@ -239,6 +239,7 @@ const NOTE_EXPORT_ARTICLE_CSS = `
 }
 .tiny-note-export-mermaid-viewport {
   position: relative;
+  display: flex;
   flex: 1;
   min-height: 0;
   width: 100%;
@@ -253,7 +254,8 @@ body.tiny-note-export-mermaid-open { overflow: hidden; }
 .tiny-note-export-mermaid-viewport.is-dragging { cursor: grabbing; }
 .tiny-note-export-mermaid-canvas {
   position: relative;
-  margin: 0 auto;
+  flex: 0 0 auto;
+  margin: auto;
 }
 .tiny-note-export-mermaid-canvas svg { display: block; width: 100%; height: auto; max-width: none; margin: 0; }
 .tiny-note-export-mermaid-error {

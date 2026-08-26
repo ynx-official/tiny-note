@@ -1279,6 +1279,7 @@ async function importExternalSource() {
     showToast(message, { tone: 'error' })
   }
 }
+defineExpose({ saveLatestContent: () => flushLatestContent({ save: true }) })
 </script>
 <template>
   <div v-if="note" class="note-editor-shell">

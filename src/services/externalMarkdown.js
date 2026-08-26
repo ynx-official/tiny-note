@@ -1,7 +1,6 @@
 import { listen } from '@tauri-apps/api/event'
-import { marked } from 'marked'
 import { useNotesStore } from '../stores/notes'
-import { sanitizeEditorHtml, textFromEditorHtml } from '../utils/noteMarkdown'
+import { markdownToEditorHtml, sanitizeEditorHtml, textFromEditorHtml } from '../utils/noteMarkdown'
 import { showToast } from './appFeedback'
 import { invoke } from './tauri'
 
@@ -21,7 +20,7 @@ export async function openPendingMarkdownFiles(files, { store, router, notify = 
       continue
     }
 
-    const contentHtml = sanitizeEditorHtml(marked.parse(file.content))
+    const contentHtml = sanitizeEditorHtml(markdownToEditorHtml(file.content))
     lastNote = await store.openExternalMarkdown({
       path: file.path,
       title: noteTitle(file.fileName),

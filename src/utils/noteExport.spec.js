@@ -7,6 +7,7 @@ import {
   downloadBlob,
   exportNotePdf,
   initializeExportMermaidViewers,
+  NOTE_EXPORT_CSS,
   printNote
 } from './noteExport'
 import { createMermaidViewportKernel } from './mermaidViewport'
@@ -25,6 +26,11 @@ afterEach(() => {
 })
 
 describe('note export documents', () => {
+  it('centers a focused Mermaid diagram while keeping oversized diagrams scrollable', () => {
+    expect(NOTE_EXPORT_CSS).toMatch(/\.tiny-note-export-mermaid-viewport\s*\{[^}]*display:\s*flex;/s)
+    expect(NOTE_EXPORT_CSS).toMatch(/\.tiny-note-export-mermaid-canvas\s*\{[^}]*flex:\s*0 0 auto;[^}]*margin:\s*auto;/s)
+  })
+
   it('embeds rendered Mermaid SVG in standalone HTML instead of exporting its source block', async () => {
     const download = vi.fn()
     const renderMermaid = vi.fn().mockResolvedValue({ svg: '<svg viewBox="0 0 100 50"><text>渲染完成</text></svg>' })
