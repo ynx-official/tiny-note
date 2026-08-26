@@ -1422,6 +1422,16 @@ fn sync_note_links(conn: &Connection, source_note_id: &str) -> Result<(), AppErr
         params![source_note_id],
     )
     .map_err(AppError::db)?;
+    let is_external = conn
+        .query_row(
+            "SELECT EXISTS(SELECT 1 FROM external_markdown_sources WHERE note_id=?1)",
+            params![source_note_id],
+            |row| row.get::<_, bool>(0),
+        )
+        .map_err(AppError::db)?;
+    if is_external {
+        return Ok(());
+    }
     let markdown: String = conn
         .query_row(
             "SELECT content_markdown FROM notes WHERE id=?1",
@@ -1442,7 +1452,7 @@ fn sync_note_links(conn: &Connection, source_note_id: &str) -> Result<(), AppErr
         if !target_title.is_empty() {
             if let Some(target_id) = conn
                 .query_row(
-                    "SELECT id FROM notes WHERE deleted_at IS NULL AND lower(title)=lower(?1) AND id<>?2 ORDER BY updated_at DESC LIMIT 1",
+                    "SELECT id FROM notes WHERE deleted_at IS NULL AND lower(title)=lower(?1) AND id<>?2 AND NOT EXISTS(SELECT 1 FROM external_markdown_sources source WHERE source.note_id=notes.id) ORDER BY updated_at DESC LIMIT 1",
                     params![target_title, source_note_id],
                     |row| row.get::<_, String>(0),
                 )
@@ -1465,7 +1475,7 @@ fn rebuild_note_links(conn: &Connection) -> Result<(), AppError> {
     conn.execute("DELETE FROM note_links", [])
         .map_err(AppError::db)?;
     let ids = conn
-        .prepare("SELECT id FROM notes WHERE deleted_at IS NULL")
+        .prepare("SELECT id FROM notes WHERE deleted_at IS NULL AND NOT EXISTS(SELECT 1 FROM external_markdown_sources source WHERE source.note_id=notes.id)")
         .map_err(AppError::db)?
         .query_map([], |row| row.get::<_, String>(0))
         .map_err(AppError::db)?
@@ -1784,9 +1794,9 @@ pub mod commands {
             .map_err(|_| AppError::db("database lock poisoned"))?;
         let pattern = format!("%{}%", search.unwrap_or_default());
         let sql = if deleted {
-            "SELECT id,notebook_id,knowledge_base_id,title,content_html,content_text,content_markdown,is_pinned,deleted_at,created_at,updated_at FROM notes WHERE deleted_at IS NOT NULL AND (?2 IS NULL OR knowledge_base_id=?2) AND (?3 IS NULL OR is_pinned=?3) AND (title LIKE ?1 OR content_text LIKE ?1) ORDER BY is_pinned DESC,updated_at DESC"
+            "SELECT id,notebook_id,knowledge_base_id,title,content_html,content_text,content_markdown,is_pinned,deleted_at,created_at,updated_at FROM notes WHERE deleted_at IS NOT NULL AND NOT EXISTS (SELECT 1 FROM external_markdown_sources source WHERE source.note_id=notes.id) AND (?2 IS NULL OR knowledge_base_id=?2) AND (?3 IS NULL OR is_pinned=?3) AND (title LIKE ?1 OR content_text LIKE ?1) ORDER BY is_pinned DESC,updated_at DESC"
         } else {
-            "SELECT id,notebook_id,knowledge_base_id,title,content_html,content_text,content_markdown,is_pinned,deleted_at,created_at,updated_at FROM notes WHERE deleted_at IS NULL AND (?2 IS NULL OR knowledge_base_id=?2) AND (?3 IS NULL OR is_pinned=?3) AND (title LIKE ?1 OR content_text LIKE ?1) ORDER BY is_pinned DESC,updated_at DESC"
+            "SELECT id,notebook_id,knowledge_base_id,title,content_html,content_text,content_markdown,is_pinned,deleted_at,created_at,updated_at FROM notes WHERE deleted_at IS NULL AND NOT EXISTS (SELECT 1 FROM external_markdown_sources source WHERE source.note_id=notes.id) AND (?2 IS NULL OR knowledge_base_id=?2) AND (?3 IS NULL OR is_pinned=?3) AND (title LIKE ?1 OR content_text LIKE ?1) ORDER BY is_pinned DESC,updated_at DESC"
         };
         let result = conn
             .prepare(sql)
@@ -1960,7 +1970,7 @@ pub mod commands {
             .lock()
             .map_err(|_| AppError::db("database lock poisoned"))?;
         let notes = conn
-            .prepare("SELECT id,notebook_id,knowledge_base_id,title,content_html,content_text,content_markdown,is_pinned,deleted_at,created_at,updated_at FROM notes ORDER BY created_at")
+            .prepare("SELECT id,notebook_id,knowledge_base_id,title,content_html,content_text,content_markdown,is_pinned,deleted_at,created_at,updated_at FROM notes WHERE NOT EXISTS(SELECT 1 FROM external_markdown_sources source WHERE source.note_id=notes.id) ORDER BY created_at")
             .map_err(AppError::db)?
             .query_map([], backup_note_from_row)
             .map_err(AppError::db)?
@@ -3187,9 +3197,9 @@ pub mod commands {
             .map_err(|_| AppError::db("database lock poisoned"))?;
         let columns = "n.id,n.notebook_id,n.knowledge_base_id,n.title,n.content_html,n.content_text,n.content_markdown,n.is_pinned,n.deleted_at,n.created_at,n.updated_at";
         let sql = if untagged {
-            format!("SELECT {columns} FROM notes n WHERE n.deleted_at IS NULL AND NOT EXISTS(SELECT 1 FROM note_tags nt WHERE nt.note_id=n.id) ORDER BY n.is_pinned DESC,n.updated_at DESC")
+            format!("SELECT {columns} FROM notes n WHERE n.deleted_at IS NULL AND NOT EXISTS(SELECT 1 FROM external_markdown_sources source WHERE source.note_id=n.id) AND NOT EXISTS(SELECT 1 FROM note_tags nt WHERE nt.note_id=n.id) ORDER BY n.is_pinned DESC,n.updated_at DESC")
         } else {
-            format!("SELECT {columns} FROM notes n JOIN note_tags nt ON nt.note_id=n.id WHERE n.deleted_at IS NULL AND nt.tag_id=?1 ORDER BY n.is_pinned DESC,n.updated_at DESC")
+            format!("SELECT {columns} FROM notes n JOIN note_tags nt ON nt.note_id=n.id WHERE n.deleted_at IS NULL AND NOT EXISTS(SELECT 1 FROM external_markdown_sources source WHERE source.note_id=n.id) AND nt.tag_id=?1 ORDER BY n.is_pinned DESC,n.updated_at DESC")
         };
         let mut statement = conn.prepare(&sql).map_err(AppError::db)?;
         let notes = if untagged {
@@ -5830,6 +5840,45 @@ mod tests {
             matches!(error, AppError::Operation { ref code, .. } if code == "external_file_changed")
         );
         assert_eq!(fs::read_to_string(path).unwrap(), "changed elsewhere");
+    }
+
+    #[test]
+    fn external_markdown_records_stay_out_of_search_and_note_links() {
+        let conn = Connection::open_in_memory().unwrap();
+        init_database(&conn).unwrap();
+        let timestamp = now();
+        conn.execute(
+            "INSERT INTO notes(id,notebook_id,title,content_html,content_text,content_markdown,created_at,updated_at) VALUES('local-note',NULL,'Local','<p>[[External]]</p>','External','[[External]]',?1,?1)",
+            params![timestamp],
+        )
+        .unwrap();
+        conn.execute(
+            "INSERT INTO notes(id,notebook_id,title,content_html,content_text,content_markdown,created_at,updated_at) VALUES('external-note',NULL,'External','<p>[[Local]]</p>','Local','[[Local]]',?1,?1)",
+            params![timestamp],
+        )
+        .unwrap();
+        conn.execute(
+            "INSERT INTO external_markdown_sources(note_id,path,content_hash) VALUES('external-note','external.md','hash')",
+            [],
+        )
+        .unwrap();
+
+        rebuild_note_links(&conn).unwrap();
+        search::index_note(&conn, "local-note").unwrap();
+        search::index_note(&conn, "external-note").unwrap();
+
+        let links: i64 = conn
+            .query_row("SELECT COUNT(*) FROM note_links", [], |row| row.get(0))
+            .unwrap();
+        let external_documents: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM search_documents WHERE source_id='external-note'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(links, 0);
+        assert_eq!(external_documents, 0);
     }
 
     #[test]

@@ -82,7 +82,7 @@ function ensureBrowserTag(state, name, now) {
   return tag
 }
 function browserTagDto(state, tag) {
-  return { ...tag, noteCount: state.noteTags.filter(link => link.tagId === tag.id && state.notes.some(note => note.id === link.noteId && !note.deletedAt)).length }
+  return { ...tag, noteCount: state.noteTags.filter(link => link.tagId === tag.id && state.notes.some(note => note.id === link.noteId && !note.deletedAt && !note.externalPath)).length }
 }
 function validateBrowserNotebookParent(state, id, parentId) {
   if (!parentId) return
@@ -98,17 +98,17 @@ function validateBrowserNotebookParent(state, id, parentId) {
 function syncBrowserLinks(state, sourceNoteId) {
   state.noteLinks = (state.noteLinks || []).filter(link => link.sourceNoteId !== sourceNoteId)
   const source = state.notes.find(note => note.id === sourceNoteId)
-  if (!source) return
+  if (!source || source.externalPath) return
   const matches = String(source.contentMarkdown || '').matchAll(/\[\[([^\]]+)\]\]/g)
   for (const match of matches) {
     const title = String(match[1] || '').trim()
-    const target = state.notes.find(note => !note.deletedAt && note.id !== sourceNoteId && String(note.title).toLowerCase() === title.toLowerCase())
+    const target = state.notes.find(note => !note.deletedAt && !note.externalPath && note.id !== sourceNoteId && String(note.title).toLowerCase() === title.toLowerCase())
     if (target && !state.noteLinks.some(link => link.sourceNoteId === sourceNoteId && link.targetNoteId === target.id)) state.noteLinks.push({ sourceNoteId, targetNoteId: target.id, targetTitle: target.title })
   }
 }
 function rebuildBrowserLinks(state) {
   state.noteLinks = []
-  state.notes.filter(note => !note.deletedAt).forEach(note => syncBrowserLinks(state, note.id))
+  state.notes.filter(note => !note.deletedAt && !note.externalPath).forEach(note => syncBrowserLinks(state, note.id))
 }
 function bytesToBase64(bytes) {
   let binary = ''
@@ -221,7 +221,7 @@ export async function invoke(command, args = {}) {
   else if (command === 'image_generation_list') result = state.imageGenerations.slice(0, Math.min(500, args.limit || 100)).map(generation => ({ ...generation, assets: generation.assets || [] }))
   else if (command === 'image_asset_read') { const asset = state.imageAssets.find(item => item.id === args.assetId); result = asset ? { ...asset, dataUri: asset.dataUri || browserDemoImageDataUri } : null }
   else if (command === 'image_generation_delete') { const generation = state.imageGenerations.find(item => item.id === args.generationId); state.imageGenerations = state.imageGenerations.filter(item => item.id !== args.generationId); state.imageAssets = state.imageAssets.filter(item => item.generationId !== args.generationId); result = generation ? null : null }
-  else if (command === 'note_list') result = state.notes.filter(n => Boolean(n.deletedAt) === Boolean(args.deleted) && (args.knowledgeBaseId == null || n.knowledgeBaseId === args.knowledgeBaseId) && (args.pinned == null || Boolean(n.pinned) === Boolean(args.pinned)) && (!args.search || `${n.title} ${n.contentText}`.toLowerCase().includes(args.search.toLowerCase()))).sort((a, b) => Number(Boolean(b.pinned)) - Number(Boolean(a.pinned)) || String(b.updatedAt).localeCompare(String(a.updatedAt)))
+  else if (command === 'note_list') result = state.notes.filter(n => !n.externalPath && Boolean(n.deletedAt) === Boolean(args.deleted) && (args.knowledgeBaseId == null || n.knowledgeBaseId === args.knowledgeBaseId) && (args.pinned == null || Boolean(n.pinned) === Boolean(args.pinned)) && (!args.search || `${n.title} ${n.contentText}`.toLowerCase().includes(args.search.toLowerCase()))).sort((a, b) => Number(Boolean(b.pinned)) - Number(Boolean(a.pinned)) || String(b.updatedAt).localeCompare(String(a.updatedAt)))
   else if (command === 'note_get') result = state.notes.find(n => n.id === args.id)
   else if (command === 'note_set_pinned') { const n = state.notes.find(n => n.id === args.id); if (n) Object.assign(n, { pinned: Boolean(args.pinned), updatedAt: now }); result = n }
   else if (command === 'note_link_list') { const links = state.noteLinks.filter(link => link.sourceNoteId === args.noteId || link.targetNoteId === args.noteId); result = links.map(link => ({ ...link, targetTitle: link.sourceNoteId === args.noteId ? link.targetTitle : state.notes.find(note => note.id === link.sourceNoteId)?.title || link.targetTitle })) }
@@ -247,7 +247,7 @@ export async function invoke(command, args = {}) {
   else if (command === 'tag_update') { const tag = state.tags.find(item => item.id === args.id); const name = normalizeTags([args.name])[0]; if (!tag || !name) throw new Error('标签不存在或名称无效'); if (state.tags.some(item => item.id !== tag.id && item.name.toLocaleLowerCase() === name.toLocaleLowerCase())) throw new Error('标签已存在'); Object.assign(tag, { name, updatedAt: now }); result = browserTagDto(state, tag) }
   else if (command === 'tag_delete') { if (!state.tags.some(tag => tag.id === args.id)) throw new Error('标签不存在'); state.tags = state.tags.filter(tag => tag.id !== args.id); state.noteTags = state.noteTags.filter(link => link.tagId !== args.id); result = null }
   else if (command === 'note_tag_list') result = state.noteTags.filter(link => link.noteId === args.noteId).map(link => state.tags.find(tag => tag.id === link.tagId)).filter(Boolean).map(tag => browserTagDto(state, tag)).sort((a, b) => a.name.localeCompare(b.name))
-  else if (command === 'tag_note_list') { const noteIds = new Set(args.untagged ? state.notes.filter(note => !state.noteTags.some(link => link.noteId === note.id)).map(note => note.id) : state.noteTags.filter(link => link.tagId === args.tagId).map(link => link.noteId)); result = state.notes.filter(note => !note.deletedAt && noteIds.has(note.id)).sort((a, b) => Number(Boolean(b.pinned)) - Number(Boolean(a.pinned)) || String(b.updatedAt).localeCompare(String(a.updatedAt))) }
+  else if (command === 'tag_note_list') { const noteIds = new Set(args.untagged ? state.notes.filter(note => !note.externalPath && !state.noteTags.some(link => link.noteId === note.id)).map(note => note.id) : state.noteTags.filter(link => link.tagId === args.tagId).map(link => link.noteId)); result = state.notes.filter(note => !note.deletedAt && !note.externalPath && noteIds.has(note.id)).sort((a, b) => Number(Boolean(b.pinned)) - Number(Boolean(a.pinned)) || String(b.updatedAt).localeCompare(String(a.updatedAt))) }
   else if (command === 'tag_note_add') { if (!state.tags.some(tag => tag.id === args.tagId)) throw new Error('标签不存在'); for (const noteId of new Set(args.noteIds || [])) { if (!state.notes.some(note => note.id === noteId && !note.deletedAt)) throw new Error('笔记不存在'); if (!state.noteTags.some(link => link.noteId === noteId && link.tagId === args.tagId)) state.noteTags.push({ noteId, tagId: args.tagId }) } result = null }
   else if (command === 'tag_note_remove') { const ids = new Set(args.noteIds || []); state.noteTags = state.noteTags.filter(link => link.tagId !== args.tagId || !ids.has(link.noteId)); result = null }
   else if (command === 'knowledge_base_list') result = state.kbs
@@ -352,11 +352,11 @@ export async function invoke(command, args = {}) {
   }
   else if (command === 'context_search') {
     const query = String(args.query || '').toLowerCase()
-    const noteSources = state.notes.filter(note => !note.deletedAt && `${note.title} ${note.contentText}`.toLowerCase().includes(query)).map(note => ({ id: `note:${note.id}`, sourceType: 'note', title: note.title, noteId: note.id, knowledgeBaseId: null, relativePath: null, snippet: note.contentText.slice(0, 160), content: note.contentText.slice(0, 2000), contentHash: '', score: 1, explicit: false, truncated: note.contentText.length > 2000 }))
+    const noteSources = state.notes.filter(note => !note.deletedAt && !note.externalPath && `${note.title} ${note.contentText}`.toLowerCase().includes(query)).map(note => ({ id: `note:${note.id}`, sourceType: 'note', title: note.title, noteId: note.id, knowledgeBaseId: null, relativePath: null, snippet: note.contentText.slice(0, 160), content: note.contentText.slice(0, 2000), contentHash: '', score: 1, explicit: false, truncated: note.contentText.length > 2000 }))
     const fileSources = state.libraryFiles.filter(file => file.kind === 'file' && `${file.relativePath} ${storedFileText(file)}`.toLowerCase().includes(query)).map(file => ({ id: `file:${file.knowledgeBaseId}:${file.relativePath}`, sourceType: 'file', title: entryName(file.relativePath), noteId: null, knowledgeBaseId: file.knowledgeBaseId, relativePath: file.relativePath, snippet: storedFileText(file).slice(0, 160), content: storedFileText(file).slice(0, 2000), contentHash: '', score: 1, explicit: false, truncated: storedFileText(file).length > 2000 }))
     result = { sources: [...noteSources, ...fileSources].slice(0, 6), totalCharacters: 0, truncated: false }
   }
-  else if (command === 'search_index_status' || command === 'search_index_rebuild' || command === 'search_index_retry_failed') result = { documents: state.notes.filter(note => !note.deletedAt).length + state.libraryFiles.filter(file => file.kind === 'file').length, chunks: state.notes.length + state.libraryFiles.length, indexed: state.notes.filter(note => !note.deletedAt).length + state.libraryFiles.filter(file => file.kind === 'file').length, failed: 0, unsupported: 0 }
+  else if (command === 'search_index_status' || command === 'search_index_rebuild' || command === 'search_index_retry_failed') { const indexedNotes = state.notes.filter(note => !note.deletedAt && !note.externalPath); result = { documents: indexedNotes.length + state.libraryFiles.filter(file => file.kind === 'file').length, chunks: indexedNotes.length + state.libraryFiles.length, indexed: indexedNotes.length + state.libraryFiles.filter(file => file.kind === 'file').length, failed: 0, unsupported: 0 } }
   else if (command === 'note_edit_get') result = state.editProposals.find(item => item.id === args.proposalId)
   else if (command === 'note_edit_discard') { const proposal = state.editProposals.find(item => item.id === args.proposalId); if (proposal) proposal.status = 'discarded'; result = null }
   else if (command === 'note_edit_apply') {
@@ -368,7 +368,7 @@ export async function invoke(command, args = {}) {
   else if (command === 'note_revision_list') result = state.noteRevisions.filter(item => item.noteId === args.noteId)
   else if (command === 'note_revision_get') result = state.noteRevisions.find(item => item.id === args.id)
   else if (command === 'note_revision_restore') { const revision = state.noteRevisions.find(item => item.id === args.id); const note = state.notes.find(item => item.id === revision?.noteId); if (revision && note) { state.noteRevisions.unshift({ id: crypto.randomUUID(), noteId: note.id, title: note.title, contentHtml: note.contentHtml, contentText: note.contentText, contentMarkdown: note.contentMarkdown, reason: 'revision_restore', createdAt: now }); Object.assign(note, { title: revision.title, contentHtml: revision.contentHtml, contentText: revision.contentText, contentMarkdown: revision.contentMarkdown, updatedAt: now }); rebuildBrowserLinks(state) } result = note }
-  else if (command === 'workspace_export') result = { format: 'tiny-note-workspace', version: 3, exportedAt: now, notebooks: state.notebooks, notes: state.notes, tags: state.tags.map(({ id, name, createdAt, updatedAt }) => ({ id, name, createdAt, updatedAt })), noteTags: state.noteTags.map(({ noteId, tagId }) => ({ noteId, tagId })), knowledgeBases: state.kbs, files: state.libraryFiles.filter(file => file.kind === 'file').map(file => ({ knowledgeBaseId: file.knowledgeBaseId, relativePath: file.relativePath, contentBase64: file.contentBase64 || bytesToBase64(new globalThis.TextEncoder().encode(file.content || '')) })), templates: state.templates, links: state.noteLinks, imageGenerations: state.imageGenerations, imageAssets: state.imageAssets.map(({ dataUri, ...asset }) => ({ ...asset, contentBase64: String(dataUri || '').split(',')[1] || '' })), settings: state.settings || { theme: 'system', language: 'zh-CN', fimEnabled: false } }
+  else if (command === 'workspace_export') { const exportedNotes = state.notes.filter(note => !note.externalPath); const exportedIds = new Set(exportedNotes.map(note => note.id)); result = { format: 'tiny-note-workspace', version: 3, exportedAt: now, notebooks: state.notebooks, notes: exportedNotes, tags: state.tags.map(({ id, name, createdAt, updatedAt }) => ({ id, name, createdAt, updatedAt })), noteTags: state.noteTags.filter(link => exportedIds.has(link.noteId)).map(({ noteId, tagId }) => ({ noteId, tagId })), knowledgeBases: state.kbs, files: state.libraryFiles.filter(file => file.kind === 'file').map(file => ({ knowledgeBaseId: file.knowledgeBaseId, relativePath: file.relativePath, contentBase64: file.contentBase64 || bytesToBase64(new globalThis.TextEncoder().encode(file.content || '')) })), templates: state.templates, links: state.noteLinks.filter(link => exportedIds.has(link.sourceNoteId) && exportedIds.has(link.targetNoteId)), imageGenerations: state.imageGenerations, imageAssets: state.imageAssets.map(({ dataUri, ...asset }) => ({ ...asset, contentBase64: String(dataUri || '').split(',')[1] || '' })), settings: state.settings || { theme: 'system', language: 'zh-CN', fimEnabled: false } } }
   else if (command === 'workspace_import') {
     if (!args.request?.replaceExisting) throw new Error('恢复工作区前需要确认替换现有数据')
     const backup = args.request.backup

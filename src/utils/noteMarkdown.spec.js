@@ -56,6 +56,26 @@ describe('note Markdown safety and mode helpers', () => {
     expect(html).toContain('<td>&nbsp;</td>')
   })
 
+  it('preserves single line breaks only between consecutive plain blockquote lines', () => {
+    const html = markdownToEditorHtml([
+      '> 文档状态：Review（解释视图）',
+      '> 最后更新：2026-08-26',
+      '> 适用对象：业务负责人、产品、设计、研发、测试及各岗位执行人员',
+      '> 权威依据：[端到端流程](../flow.md)',
+      '> 关联文档：[管理系统 PRD](../prd.md) &#x20;'
+    ].join('\n'))
+    const ordinaryParagraph = markdownToEditorHtml('普通正文第一行\n普通正文第二行')
+    const structuredQuote = markdownToEditorHtml('> - 第一项\n> - 第二项\n> ```text\n> 第一行\n> 第二行\n> ```')
+
+    expect(html).toContain('<blockquote>')
+    expect(html.match(/<br>/g)).toHaveLength(4)
+    expect(html).toContain('<a href="../flow.md">端到端流程</a>')
+    expect(ordinaryParagraph).not.toContain('<br>')
+    expect(structuredQuote).not.toContain('<br>')
+    expect(structuredQuote).toContain('<ul>')
+    expect(structuredQuote).toContain('<pre><code class="language-text">第一行\n第二行')
+  })
+
   it('keeps Mermaid as fenced source while rejecting persisted SVG markup', () => {
     const html = markdownToEditorHtml('```mermaid\nflowchart LR\nA --> B\n```')
 

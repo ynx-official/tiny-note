@@ -229,7 +229,7 @@ fn replace_document(conn: &Connection, document: IndexedDocument<'_>) -> Result<
 pub fn index_note(conn: &Connection, note_id: &str) -> Result<(), AppError> {
     let note = conn
         .query_row(
-            "SELECT title,content_text,deleted_at,updated_at,knowledge_base_id FROM notes WHERE id=?1",
+            "SELECT title,content_text,deleted_at,updated_at,knowledge_base_id FROM notes WHERE id=?1 AND NOT EXISTS(SELECT 1 FROM external_markdown_sources source WHERE source.note_id=notes.id)",
             params![note_id],
             |row| {
                 Ok((
@@ -455,7 +455,7 @@ pub fn rebuild_all(state: &AppState) -> Result<IndexStatusDto, AppError> {
     conn.execute("DELETE FROM search_documents", [])
         .map_err(AppError::db)?;
     let note_ids = conn
-        .prepare("SELECT id FROM notes WHERE deleted_at IS NULL")
+        .prepare("SELECT id FROM notes WHERE deleted_at IS NULL AND NOT EXISTS(SELECT 1 FROM external_markdown_sources source WHERE source.note_id=notes.id)")
         .map_err(AppError::db)?
         .query_map([], |row| row.get::<_, String>(0))
         .map_err(AppError::db)?

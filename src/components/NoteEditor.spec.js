@@ -96,6 +96,20 @@ afterEach(() => {
 })
 
 describe('NoteEditor article modes', () => {
+  it('marks an external source and offers an explicit import action', async () => {
+    const external = { ...note('external-note'), external: true, externalPath: 'C:\\docs\\outside.md' }
+    const wrapper = await mountEditor(external)
+
+    expect(wrapper.get('.external-note-banner').text()).toContain('外部文件')
+    expect(wrapper.get('.external-note-banner').text()).toContain('outside.md')
+    expect(wrapper.get('.external-note-banner').text()).toContain('不会出现在笔记列表')
+    expect(wrapper.get('.editor-mode-trigger').text()).toContain('Markdown')
+
+    await wrapper.get('.external-note-import').trigger('click')
+    await flushPromises()
+    expect(wrapper.emitted('import-external')).toEqual([[external]])
+  })
+
   it('offers separate print, PDF, and HTML actions instead of a combined print/PDF command', async () => {
     const wrapper = await mountEditor()
 

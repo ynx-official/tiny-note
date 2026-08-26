@@ -196,6 +196,14 @@ body, button, input, select, textarea { font-family: -apple-system, BlinkMacSyst
 .toolbar button:hover,.toolbar button.pressed { background:var(--bg-hover); opacity:1; }
 .toolbar .ai-button { background:#292d3a; color:#fff; opacity:1; border-radius:7px; padding:0 11px; }
 .toolbar .ai-button:hover { background:#20232e; }
+.external-note-banner { min-height:44px; flex:0 0 auto; display:flex; align-items:center; justify-content:space-between; gap:16px; padding:7px 40px; border-bottom:1px solid var(--line); background:var(--accent-light); color:var(--text-primary); }
+.external-note-message { min-width:0; display:flex; align-items:center; gap:9px; }
+.external-note-message > span { min-width:0; display:flex; align-items:baseline; gap:8px; }
+.external-note-message strong { flex:none; font-size:13px; font-weight:600; }
+.external-note-message small { overflow:hidden; color:var(--text-secondary); font-size:12px; text-overflow:ellipsis; white-space:nowrap; }
+.external-note-import { flex:none; min-height:30px; padding:5px 11px; border:1px solid var(--line); border-radius:6px; background:var(--surface); color:var(--text-primary); font-size:12px; font-weight:600; }
+.external-note-import:hover { border-color:var(--text-tertiary); background:var(--bg-hover); }
+.external-note-import:focus-visible { outline:2px solid var(--accent-color); outline-offset:2px; }
 .editor-content { box-sizing:border-box; padding:0 40px 40px; }
 .note-prose {
   max-width:900px;

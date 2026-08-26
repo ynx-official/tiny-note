@@ -58,6 +58,51 @@ describe('notes store', () => {
     expect(note.contentMarkdown).toBe('# Guide\n\n<script>alert(1)</script>')
   })
 
+  it('keeps external Markdown out of the note list until the user imports a copy', async () => {
+    const store = useNotesStore()
+    await store.load()
+    const external = await store.openExternalMarkdown({
+      path: 'C:\\docs\\outside.md',
+      title: 'outside',
+      contentHtml: '<h1>Outside</h1>',
+      contentText: 'Outside',
+      contentMarkdown: '# Outside'
+    })
+
+    expect(external.external).toBe(true)
+    expect(store.activeId).toBe(external.id)
+    expect(store.visible.map(note => note.id)).not.toContain(external.id)
+
+    const imported = await store.importExternal(external)
+    expect(imported.external).not.toBe(true)
+    expect(store.visible.map(note => note.id)).toContain(imported.id)
+    expect(store.activeId).toBe(imported.id)
+  })
+
+  it('keeps external-open history separate and can reopen or clear it', async () => {
+    const store = useNotesStore()
+    await store.load()
+    const external = await store.openExternalMarkdown({
+      path: 'C:\\docs\\history.md',
+      title: 'history',
+      contentHtml: '<h1>History</h1>',
+      contentText: 'History',
+      contentMarkdown: '# History'
+    })
+
+    await store.loadExternalSources()
+    expect(store.externalSources).toEqual([expect.objectContaining({ id: external.id, fileName: 'history.md' })])
+
+    store.activeId = null
+    const reopened = await store.openExternalSource(store.externalSources[0])
+    expect(reopened.id).toBe(external.id)
+    expect(store.activeId).toBe(external.id)
+
+    await store.clearExternalSources()
+    expect(store.externalSources).toEqual([])
+    expect(store.notes.some(note => note.external)).toBe(false)
+  })
+
   it('supports context-menu note actions', async () => {
     const store = useNotesStore()
     await store.load()

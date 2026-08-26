@@ -41,7 +41,7 @@ import { showExportSuccess } from '../services/exportSuccess'
 
 const lowlight = createLowlight()
 lowlight.register('javascript', javascript); lowlight.register('typescript', typescript); lowlight.register('python', python); lowlight.register('json', json); lowlight.register('html', xml); lowlight.register('xml', xml); lowlight.register('css', css); lowlight.register('bash', bash); lowlight.register('sql', sql); lowlight.register('markdown', markdown); lowlight.register('yaml', yaml); lowlight.register('rust', rust)
-const props = defineProps({ note: Object, tocVisible: { type: Boolean, default: false }, proposalId: { type: String, default: '' } }); const emit = defineEmits(['deleted', 'toggle-toc', 'proposal-reviewed']); const store = useNotesStore(); const library = useLibraryStore(); const appStore = useAppStore(); const tasksStore = useTasksStore(); const { t, locale } = useI18n(); const aiBusy = ref(false); const aiText = ref(''); const aiRequestId = ref(''); const aiAction = ref('summarize'); const aiResultAction = ref(''); const aiProposal = ref(null); const aiSources = ref([]); const aiConsentOpen = ref(false); const assistantOpen = ref(false); const assistantTriggerVisible = ref(true); const assistantBusy = ref(false); const assistantRequestId = ref(''); const assistantStreamingText = ref(''); const assistantMessages = ref([]); const assistantSelection = ref(null); const assistantResponseSources = ref([]); const assistantResponseProposal = ref(null); const aiPanelOpen = ref(false); const aiPanelSelectionText = ref(''); const commandMenuOpen = ref(false); const aiPrompt = ref(''); const aiInputRef = ref(null); const commandMenuDirection = ref('down'); const moreOpen = ref(false); const moreTriggerRef = ref(null); const moreMenuRef = ref(null); const revisionsOpen = ref(false); const revisions = ref([]); const revisionsBusy = ref(false); const insertOpen = ref(false); const tablePickerOpen = ref(false); const textColorOpen = ref(false); const highlightOpen = ref(false); const headingOpen = ref(false); const knowledgeMenuOpen = ref(false); const imageDialogOpen = ref(false); const imageUrl = ref(''); const imageAlt = ref(''); const imageInput = ref(null); const imageFileInput = ref(null); const tableRows = ref(0); const tableCols = ref(0); const fimEnabled = computed(() => appStore.settings.fimEnabled === true); const fimSuggestion = ref(''); const editorStateTick = ref(0); let fimTimer; let assistantTriggerTimer; let savedSelection = null; let pendingAiRequest = null; let pendingAiChange = null
+const props = defineProps({ note: Object, tocVisible: { type: Boolean, default: false }, proposalId: { type: String, default: '' } }); const emit = defineEmits(['deleted', 'toggle-toc', 'proposal-reviewed', 'import-external']); const store = useNotesStore(); const library = useLibraryStore(); const appStore = useAppStore(); const tasksStore = useTasksStore(); const { t, locale } = useI18n(); const aiBusy = ref(false); const aiText = ref(''); const aiRequestId = ref(''); const aiAction = ref('summarize'); const aiResultAction = ref(''); const aiProposal = ref(null); const aiSources = ref([]); const aiConsentOpen = ref(false); const assistantOpen = ref(false); const assistantTriggerVisible = ref(true); const assistantBusy = ref(false); const assistantRequestId = ref(''); const assistantStreamingText = ref(''); const assistantMessages = ref([]); const assistantSelection = ref(null); const assistantResponseSources = ref([]); const assistantResponseProposal = ref(null); const aiPanelOpen = ref(false); const aiPanelSelectionText = ref(''); const commandMenuOpen = ref(false); const aiPrompt = ref(''); const aiInputRef = ref(null); const commandMenuDirection = ref('down'); const moreOpen = ref(false); const moreTriggerRef = ref(null); const moreMenuRef = ref(null); const revisionsOpen = ref(false); const revisions = ref([]); const revisionsBusy = ref(false); const insertOpen = ref(false); const tablePickerOpen = ref(false); const textColorOpen = ref(false); const highlightOpen = ref(false); const headingOpen = ref(false); const knowledgeMenuOpen = ref(false); const imageDialogOpen = ref(false); const imageUrl = ref(''); const imageAlt = ref(''); const imageInput = ref(null); const imageFileInput = ref(null); const tableRows = ref(0); const tableCols = ref(0); const fimEnabled = computed(() => appStore.settings.fimEnabled === true); const fimSuggestion = ref(''); const editorStateTick = ref(0); let fimTimer; let assistantTriggerTimer; let savedSelection = null; let pendingAiRequest = null; let pendingAiChange = null
 const modeIcons = { rich: PenLine, markdown: FileCode2 }
 const noteLinks = ref([])
 const editorModes = NOTE_MODES.map(mode => ({ ...mode, icon: modeIcons[mode.id] }))
@@ -63,6 +63,7 @@ const pendingSourceDrafts = new Map()
 const persistedSignatures = new Map()
 const exportingFormat = ref('')
 const exportStatusLabel = computed(() => ({ html: t('exportingHtml'), pdf: t('exportingPdf'), print: t('preparingPrint') })[exportingFormat.value] || '')
+const externalFileName = computed(() => String(props.note?.externalPath || '').split(/[\\/]/).pop() || props.note?.title || 'Markdown 文件')
 let applyingEditorContent = false
 let markdownParseTimer
 let markdownPasteTimer
@@ -553,6 +554,7 @@ watch(() => props.note?.id, async (id, previousId) => {
     if (previous) await flushLatestContent({ note: previous, save: true })
   }
   resetTransientEditorState()
+  if (props.note?.external) editorMode.value = 'markdown'
   resetEditorSession(props.note)
   noteLinks.value = id ? (await store.listLinks(id).catch(() => [])) || [] : []
   await nextTick()
@@ -1267,6 +1269,16 @@ async function createKnowledgeFromEditor() {
   if (!name?.trim()) return
   try { await library.create(name.trim(), 'personal'); if (library.activeId) await addToKnowledge(library.activeId) } catch (error) { showToast(error?.message || '创建知识库失败，请重试', { tone: 'error' }) }
 }
+async function importExternalSource() {
+  try {
+    if (await flushLatestContent({ save: true })) emit('import-external', props.note)
+  } catch (error) {
+    const message = error?.code === 'external_file_changed'
+      ? '源文件已被其他程序修改，请重新打开文件后再导入。'
+      : (error?.message || '保存外部文件失败，请重试')
+    showToast(message, { tone: 'error' })
+  }
+}
 </script>
 <template>
   <div v-if="note" class="note-editor-shell">
@@ -1339,7 +1351,7 @@ async function createKnowledgeFromEditor() {
         </template>
       </div>
       <div key="toolbar-mode-controls" class="toolbar-right-group">
-        <span class="toolbar-menu-anchor knowledge-menu-anchor"><button :title="t('addToKnowledge')" @click="closeToolbarMenus(); knowledgeMenuOpen = !knowledgeMenuOpen"><PlusCircle :size="19" /></button><div v-if="knowledgeMenuOpen" class="toolbar-knowledge-menu" @click.stop>
+        <span v-if="!note.external" class="toolbar-menu-anchor knowledge-menu-anchor"><button :title="t('addToKnowledge')" @click="closeToolbarMenus(); knowledgeMenuOpen = !knowledgeMenuOpen"><PlusCircle :size="19" /></button><div v-if="knowledgeMenuOpen" class="toolbar-knowledge-menu" @click.stop>
           <button class="knowledge-menu-create" @click="createKnowledgeFromEditor"><Plus :size="14" />{{ t('newKnowledge') }}</button>
           <div class="note-context-divider"></div>
           <template v-if="knowledgeGroups.length">
@@ -1384,16 +1396,20 @@ async function createKnowledgeFromEditor() {
             <button type="button" role="menuitem" :disabled="Boolean(exportingFormat)" @click="exportHtml"><FileCode2 :size="15" /> {{ t('exportHtml') }}</button>
             <button type="button" role="menuitem" :disabled="Boolean(exportingFormat)" @click="exportPdf"><Download :size="15" /> {{ t('exportPdf') }}</button>
             <button type="button" role="menuitem" :disabled="Boolean(exportingFormat)" @click="printNote"><Printer :size="15" /> {{ t('printArticle') }}</button>
-            <div class="toolbar-more-divider" role="separator"></div>
-            <button type="button" role="menuitem" class="danger" @click="emit('deleted', note.id); moreOpen = false"><Trash2 :size="15" /> {{ t('deleteNote') }}</button>
+            <div v-if="!note.external" class="toolbar-more-divider" role="separator"></div>
+            <button v-if="!note.external" type="button" role="menuitem" class="danger" @click="emit('deleted', note.id); moreOpen = false"><Trash2 :size="15" /> {{ t('deleteNote') }}</button>
           </div>
         </span>
         <button v-if="assistantTriggerVisible" class="ai-button" @click="toggleAssistant"><Layers :size="17" /> Tiny Note 助理</button>
       </div>
     </div>
+    <div v-if="note.external" class="external-note-banner" role="status" :title="note.externalPath">
+      <div class="external-note-message"><FileText :size="16" aria-hidden="true" /><span><strong>外部文件</strong><small>{{ externalFileName }} · 修改会保存到源文件，不会出现在笔记列表</small></span></div>
+      <button type="button" class="external-note-import" @click="importExternalSource">导入到笔记</button>
+    </div>
     <div class="note-metadata">
       <div v-if="noteLinks.length" class="note-links" aria-label="关联笔记"><span>关联笔记</span><button v-for="link in noteLinks" :key="link.sourceNoteId + '-' + link.targetNoteId" type="button" @click="store.activeId = link.sourceNoteId === note.id ? link.targetNoteId : link.sourceNoteId">{{ link.targetTitle }}</button></div>
-      <div class="editor-meta"><button type="button" class="note-pin-button" :class="{ active: note.pinned }" :aria-pressed="note.pinned" :aria-label="note.pinned ? '取消置顶' : '置顶笔记'" :title="note.pinned ? '取消置顶' : '置顶笔记'" @click="togglePinned"><Pin :size="14" /></button><span :class="{ saving: store.saving }">{{ store.saving ? t('saving') : t('save') }}</span></div>
+      <div class="editor-meta"><button v-if="!note.external" type="button" class="note-pin-button" :class="{ active: note.pinned }" :aria-pressed="note.pinned" :aria-label="note.pinned ? '取消置顶' : '置顶笔记'" :title="note.pinned ? '取消置顶' : '置顶笔记'" @click="togglePinned"><Pin :size="14" /></button><span :class="{ saving: store.saving }">{{ store.saving ? t('saving') : t('save') }}</span></div>
     </div>
     <button class="toc-btn" :class="{ 'is-open': tocVisible }" title="目录" aria-label="目录" @click="emit('toggle-toc')"><span class="toc-char">目</span><span class="toc-char">录</span></button>
     <div ref="splitWorkspace" class="editor-workspace" :class="[`mode-${editorMode}`, { 'is-previewing': splitMode, 'is-vertical': splitVertical }]">

@@ -63,12 +63,80 @@ export function preprocessMarkdownTables(text = '') {
   return processedLines.join('\n')
 }
 
+function blockquoteLine(line = '') {
+  const match = String(line).match(/^ {0,3}((?:>\s?)+)(.*)$/)
+  if (!match) return null
+  return {
+    depth: (match[1].match(/>/g) || []).length,
+    content: match[2]
+  }
+}
+
+function plainBlockquoteLine(content = '') {
+  if (!content.trim() || /^(?: {4}|\t)/.test(content)) return false
+  const value = content.trimStart()
+  return !(
+    /^(?:#{1,6}(?:\s|$)|[-+*]\s+|\d+[.)]\s+|`{3,}|~{3,})/.test(value) ||
+    /^(?:[-*_]\s*){3,}$/.test(value) ||
+    /^\|/.test(value) ||
+    /^<[/!?a-z]/i.test(value) ||
+    /^\[[^\]]+\]:\s*/.test(value)
+  )
+}
+
+/**
+ * Keeps explicit line rhythm inside plain quoted metadata without changing
+ * normal Markdown soft-break semantics. This is a parse-only transformation;
+ * the source saved by the Markdown editor remains untouched.
+ */
+export function preprocessMarkdownBlockquoteBreaks(text = '') {
+  const lines = String(text).split(/\r?\n/)
+  const fencedLines = new Set()
+  let fence = null
+
+  lines.forEach((line, index) => {
+    const quote = blockquoteLine(line)
+    if (!quote) {
+      fence = null
+      return
+    }
+
+    const marker = quote.content.trimStart().match(/^(`{3,}|~{3,})(.*)$/)
+    if (fence) {
+      fencedLines.add(index)
+      const token = marker?.[1] || ''
+      if (quote.depth === fence.depth && token.startsWith(fence.character) && token.length >= fence.length && !marker[2].trim()) {
+        fence = null
+      }
+      return
+    }
+
+    if (marker) {
+      fence = { depth: quote.depth, character: marker[1][0], length: marker[1].length }
+      fencedLines.add(index)
+    }
+  })
+
+  for (let index = 0; index < lines.length - 1; index += 1) {
+    if (fencedLines.has(index) || fencedLines.has(index + 1)) continue
+    const current = blockquoteLine(lines[index])
+    const next = blockquoteLine(lines[index + 1])
+    if (!current || !next || current.depth !== next.depth) continue
+    if (!plainBlockquoteLine(current.content) || !plainBlockquoteLine(next.content)) continue
+    if (/(?: {2,}|\\|<br\s*\/?>)\s*$/i.test(current.content)) continue
+    lines[index] = `${lines[index].replace(/[ \t]+$/, '')}  `
+  }
+
+  return lines.join('\n')
+}
+
 export function fixEmptyTableCells(html = '') {
   return String(html).replace(/<(td|th)(\s[^>]*)?>\s*<\/\1>/gi, (_match, tag, attributes = '') => `<${tag}${attributes}>&nbsp;</${tag}>`)
 }
 
 export function markdownToEditorHtml(text = '') {
-  return fixEmptyTableCells(marked.parse(preprocessMarkdownTables(text), editorMarkedOptions))
+  const previewSource = preprocessMarkdownBlockquoteBreaks(preprocessMarkdownTables(text))
+  return fixEmptyTableCells(marked.parse(previewSource, editorMarkedOptions))
 }
 
 /**
@@ -79,9 +147,10 @@ export function markdownToEditorHtml(text = '') {
  */
 export function applyMarkdownSourceToEditor(editor, source = '') {
   if (!editor?.commands?.setContent) return false
+  const previewSource = preprocessMarkdownBlockquoteBreaks(source)
 
   try {
-    const applied = editor.commands.setContent(String(source), {
+    const applied = editor.commands.setContent(previewSource, {
       contentType: 'markdown',
       emitUpdate: false,
       errorOnInvalidContent: true

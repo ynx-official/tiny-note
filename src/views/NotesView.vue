@@ -44,7 +44,7 @@ let contextMoveTimer = null
 let contextKnowledgeTimer = null
 const expandedNotebookIds = ref(new Set())
 
-const list = computed(() => showDeleted.value ? store.deleted : store.notes)
+const list = computed(() => showDeleted.value ? store.deleted : store.listed)
 const contextNote = computed(() => contextMenu.value ? list.value.find(note => note.id === contextMenu.value.noteId) || store.notes.find(note => note.id === contextMenu.value.noteId) || store.deleted.find(note => note.id === contextMenu.value.noteId) : null)
 const notebookTree = computed(() => {
   const notebookByParent = new Map()
@@ -60,7 +60,7 @@ const notebookTree = computed(() => {
     if (ancestors.has(notebook.id)) return null
     const nextAncestors = new Set(ancestors).add(notebook.id)
     const children = (notebookByParent.get(notebook.id) || []).map(child => build(child, nextAncestors)).filter(Boolean)
-    const notes = store.notes.filter(note => note.notebookId === notebook.id && noteMatches(note)).sort((a, b) => Number(Boolean(b.pinned)) - Number(Boolean(a.pinned)) || String(b.updatedAt).localeCompare(String(a.updatedAt)))
+    const notes = store.listed.filter(note => note.notebookId === notebook.id && noteMatches(note)).sort((a, b) => Number(Boolean(b.pinned)) - Number(Boolean(a.pinned)) || String(b.updatedAt).localeCompare(String(a.updatedAt)))
     if (queryText && !notes.length && !children.length) return null
     return { ...notebook, children, notes, totalNoteCount: notes.length + children.reduce((sum, child) => sum + child.totalNoteCount, 0) }
   }
@@ -120,6 +120,14 @@ async function togglePinned(note) {
   await store.load()
 }
 async function remove(id) { if (await requestConfirmation({ title: '移入最近删除', message: t('confirmDelete'), tone: 'danger', confirmLabel: '删除' })) await store.remove(id) }
+async function importExternalNote(note) {
+  try {
+    const imported = await store.importExternal(note)
+    showToast(`已将“${imported.title}”导入笔记`, { tone: 'success' })
+  } catch (error) {
+    showToast(error?.message || '导入笔记失败，请重试', { tone: 'error' })
+  }
+}
 async function importFiles(event) {
   for (const file of event.target.files || []) await store.importText(file)
   event.target.value = ''
@@ -169,7 +177,7 @@ async function renameNotebook() {
 }
 async function deleteNotebook() {
   const folder = folderItemMenu.value
-  const directNotes = store.notes.filter(note => note.notebookId === folder?.id).length
+  const directNotes = store.listed.filter(note => note.notebookId === folder?.id).length
   const childNotebooks = store.notebooks.filter(book => book.parentId === folder?.id).length
   if (!folder || !(await requestConfirmation({ title: '删除笔记本', message: `“${folder.name}”包含 ${directNotes} 篇直属笔记和 ${childNotebooks} 个子笔记本。子笔记本将提升一级，直属笔记将移入“未分类”。`, tone: 'danger', confirmLabel: '删除' }))) return
   await store.deleteNotebook(folder.id)
@@ -439,7 +447,7 @@ onBeforeUnmount(() => {
         </div>
         <div class="notebook-tree" role="tree" aria-label="笔记本和笔记">
           <button class="tree-row tree-all-row" :class="{ active: store.selectedTreeNode.type === 'all' && !showDeleted }" @click="selectAllNotes">
-            <BookOpen :size="16" :stroke-width="1.9" /><span class="tree-label">{{ t('allNotes') }}</span><small>{{ store.notes.length }}</small>
+            <BookOpen :size="16" :stroke-width="1.9" /><span class="tree-label">{{ t('allNotes') }}</span><small>{{ store.listed.length }}</small>
           </button>
           <NotebookTreeItem
             v-for="node in notebookTree"
@@ -527,7 +535,7 @@ onBeforeUnmount(() => {
     <button v-if="sidebarCollapsed" class="sidebar-expand-btn" :title="t('noteSidebarExpand')" @click="sidebarCollapsed = false"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="3" y="3" width="18" height="18" rx="2"/><line x1="15" y1="3" x2="15" y2="21"/></svg></button>
 
     <section class="note-main note-editor-area" :class="{ 'sidebar-collapsed': sidebarCollapsed }">
-      <NoteEditor v-if="!showDeleted" :note="store.active" :toc-visible="tocVisible" :proposal-id="String(route.query.proposal || '')" @proposal-reviewed="clearReviewedProposal" @toggle-toc="toggleToc" @deleted="remove" />
+      <NoteEditor v-if="!showDeleted" :note="store.active" :toc-visible="tocVisible" :proposal-id="String(route.query.proposal || '')" @proposal-reviewed="clearReviewedProposal" @toggle-toc="toggleToc" @deleted="remove" @import-external="importExternalNote" />
       <div v-else-if="store.active" class="deleted-card"><h2>{{ store.active.title }}</h2><p>{{ store.active.contentText.slice(0, 300) }}</p><button class="secondary-button" @click="store.restore(store.active.id)">{{ t('restore') }}</button><button class="danger-button" @click="store.remove(store.active.id)">{{ t('delete') }}</button></div>
       <div v-else class="empty-state"><div class="empty-icon">⌁</div><h2>{{ t('recentlyDeleted') }}</h2></div>
     </section>

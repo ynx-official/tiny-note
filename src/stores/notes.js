@@ -21,7 +21,8 @@ export const useNotesStore = defineStore('notes', {
   }),
   getters: {
     active: state => state.notes.find(note => note.id === state.activeId) || null,
-    visible: state => state.notes.filter(note => state.selectedNotebook === 'all' || note.notebookId === state.selectedNotebook)
+    listed: state => state.notes.filter(note => !note.external),
+    visible: state => state.notes.filter(note => !note.external && (state.selectedNotebook === 'all' || note.notebookId === state.selectedNotebook))
   },
   actions: {
     async load() {
@@ -79,12 +80,22 @@ export const useNotesStore = defineStore('notes', {
       return this.createFromContent({ title, contentHtml: html, contentText, contentMarkdown, notebookId: this.selectedNotebook === 'all' ? null : this.selectedNotebook })
     },
     async openExternalMarkdown(input) {
-      const note = await invoke('note_open_external_markdown', { input })
+      const note = { ...(await invoke('note_open_external_markdown', { input })), external: true, externalPath: input.path }
       const index = this.notes.findIndex(item => item.id === note.id)
       if (index >= 0) this.notes[index] = note
       else this.notes.unshift(note)
       this.activeId = note.id
       return note
+    },
+    async importExternal(note) {
+      if (!note?.external) return note
+      return this.createFromContent({
+        title: note.title,
+        contentHtml: note.contentHtml,
+        contentText: note.contentText,
+        contentMarkdown: note.contentMarkdown || '',
+        pinned: false
+      })
     },
     async save(note) {
       this.saving = true

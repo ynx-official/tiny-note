@@ -118,6 +118,22 @@ describe('Tiny Note Markdown conversion', () => {
     expect(editor.getMarkdown().trimEnd()).toBe(source)
   })
 
+  it('renders consecutive blockquote metadata lines with explicit line breaks', () => {
+    const source = [
+      '> 文档状态：Review（解释视图）',
+      '> 最后更新：2026-08-26',
+      '> 适用对象：业务负责人、产品、设计、研发、测试及各岗位执行人员',
+      '> 权威依据：[端到端流程](../flow.md)',
+      '> 关联文档：[管理系统 PRD](../prd.md)'
+    ].join('\n')
+    const editor = createEditor()
+
+    expect(applyMarkdownSourceToEditor(editor, source)).toBe(true)
+    expect(editor.getHTML()).toContain('<blockquote><p>文档状态：Review（解释视图）<br>最后更新：2026-08-26<br>')
+    expect(editor.getHTML().match(/<br>/g)).toHaveLength(4)
+    expect(editor.getHTML()).toContain('href="../flow.md"')
+  })
+
   it('preserves rich-only formatting as sanitized inline HTML', () => {
     const editor = createEditor('<p style="text-align: center"><span style="color: #dc2626">红色</span><mark data-color="#bae6fd" style="background-color: #bae6fd">高亮</mark>H<sub>2</sub>O x<sup>2</sup></p>')
 
