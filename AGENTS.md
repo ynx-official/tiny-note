@@ -21,6 +21,6 @@
 
 ## Validation
 
-- 前端：`npm run test:unit`、`npm run lint`、`npm run typecheck`、`npm run check:components`、`npm run build`
+- 前端：`npm run test:unit`、`npm run lint`、`npm run typecheck`、`npm run check:components`、`npm run check:styles`、`npm run build`
 - Rust：`cargo fmt --check`、`cargo test`、`cargo clippy --all-targets --all-features -- -D warnings`
 - Tauri：`npm run tauri:build`

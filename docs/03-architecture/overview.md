@@ -10,7 +10,7 @@ Vue 3 负责页面与编辑器，Pinia 负责客户端状态；Tauri commands �
 
 浏览器演示实现由 `src/services/browserBackend.ts` 统一调度，具体命令分布在 `browserBackend/planner.ts`、`activity.ts`、`media.ts`、`notes.ts`、`library.ts` 与 `agent.ts`。各模块接收同一收窄后的浏览器状态并返回 typed command result，只有非 Tauri 环境才会进入该依赖闭包。
 
-页面组件只负责布局装配。Notes 的侧栏、上下文菜单、目录与编辑工作区，Chat 的标题、消息流与输入区，Settings 的导航、详情与模型弹窗，Images 的生成表单、历史和弹窗，Todos 的导航、快速新增、分组列表与详情编辑器均为独立 typed 组件。编辑器与页面状态机位于对应 composable，生产 SFC 由 300 行结构门禁约束；页面 CSS 由路由模块一起异步加载，组件独占样式优先共置。
+页面组件只负责布局装配。Notes 的侧栏、上下文菜单、目录与编辑工作区，Chat 的标题、消息流与输入区，Settings 的导航、详情与模型弹窗，Images 的生成表单、历史和弹窗，Todos 的导航、快速新增、分组列表与详情编辑器均为独立 typed 组件。编辑器与页面状态机位于对应 composable，生产 SFC 由 300 行结构门禁约束；页面 CSS 由路由模块一起异步加载，组件独占样式优先共置。全局主题与桌面外壳只由启动样式定义，迁移期遗留在异步页面包中的全局规则放入低优先级兼容层，避免路由 CSS 累积后按访问顺序改变色调或外壳尺寸。
 
 文章 HTML/PDF 在前端从二次清洗后的语义快照生成，PDF 渲染依赖按需加载。目录选择使用 Tauri Dialog 的最小 `dialog:allow-open` 权限；落盘只通过 `export_write_file` 窄化命令完成，该命令接受既有绝对目录、安全单文件名和限长 Base64 内容，使用 `create_new` 自动避让同名文件，不向前端开放通用文件系统权限。记住的默认目录作为 `exportDirectory` 写入本地 settings。系统打印使用 WebView 的 `window.print()`，macOS 由 Tauri 转发为异步原生命令，因此主窗口 capability 额外放行 `core:webview:allow-print`，调用方等待命令完成并处理拒绝。
 

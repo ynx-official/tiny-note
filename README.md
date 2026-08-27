@@ -24,6 +24,7 @@ npm run test:unit
 npm run lint
 npm run typecheck
 npm run check:components
+npm run check:styles
 npm run build
 cd src-tauri
 cargo fmt --check
@@ -31,7 +32,7 @@ cargo test
 cargo clippy --all-targets --all-features -- -D warnings
 ```
 
-也可使用 `npm run check` 一次执行 lint、三套 TypeScript 检查、全部单测、组件结构门禁、生产构建与首页资源预算。
+也可使用 `npm run check` 一次执行 lint、三套 TypeScript 检查、全部单测、组件结构门禁、路由样式隔离检查、生产构建与首页资源预算。
 
 本地 `npm run tauri:build` 会生成当前系统支持的安装包。CI 覆盖 Windows x64 NSIS、Linux x64 AppImage/DEB，以及 macOS Intel/Apple Silicon DMG；完整发布和在线升级流程见 [构建说明](docs/05-operations/build.md)。
 
