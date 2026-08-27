@@ -135,7 +135,16 @@ export function useNotesWorkspace() {
     try { await create(); await router.replace({ path: '/notes' }) } finally { creatingFromQuery = false }
   }
   
-  onMounted(() => { createFromQuery(); store.loadTemplates(); tagsStore.load() })
+  async function initializeWorkspace() {
+    await store.load()
+    await createFromQuery()
+  }
+
+  onMounted(() => {
+    void initializeWorkspace()
+    void store.loadTemplates()
+    void tagsStore.load()
+  })
   
   watch(() => route.query.new, createFromQuery)
   

@@ -59,6 +59,31 @@ describe('NoteEditor save and synchronization', () => {
     wrapper.unmount()
   })
 
+  it('remembers and restores the reading position for each article', async () => {
+    const first = note('reading-position-first')
+    const second = note('reading-position-second')
+    const wrapper = await mountEditor(first)
+    wrapper.notesStore.notes.push(second)
+    const scroller = wrapper.get('.editor-render-pane').element as HTMLElement
+    Object.defineProperties(scroller, {
+      scrollHeight: { value: 1200, configurable: true },
+      clientHeight: { value: 400, configurable: true }
+    })
+
+    scroller.scrollTop = 400
+    scroller.dispatchEvent(new window.Event('scroll'))
+    await wrapper.setProps({ note: second })
+    await flushPromises()
+    expect(localStorage.getItem('tiny-note:reading-position:reading-position-first')).toBe('0.5')
+
+    scroller.scrollTop = 160
+    scroller.dispatchEvent(new window.Event('scroll'))
+    await wrapper.setProps({ note: first })
+    await flushPromises()
+    expect(scroller.scrollTop).toBe(400)
+    wrapper.unmount()
+  })
+
   it('parses source after 150ms and keeps the existing 800ms autosave', async () => {
     const active = note('note-autosave')
     localStorage.setItem('tiny-note-browser-state', JSON.stringify({ notes: [active] }))

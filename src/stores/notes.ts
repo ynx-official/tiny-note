@@ -7,6 +7,16 @@ import { errorMessage, type ExternalMarkdownSource, type JsonValue, type Note, t
 interface CreateNoteContent { title?: string; contentHtml?: string; contentText?: string; contentMarkdown?: string; notebookId?: string | null; knowledgeBaseId?: string | null; pinned?: boolean }
 interface ExternalMarkdownInput { path: string; title: string; contentHtml: string; contentText: string; contentMarkdown: string }
 
+function hasMeaningfulContent(note: Note) {
+  if (note.contentText.trim() || note.contentMarkdown.trim()) return true
+  const visibleHtml = note.contentHtml.replace(/<[^>]*>/g, '').replace(/&(?:nbsp|#160|#xA0);/gi, '').trim()
+  return Boolean(visibleHtml || /<(?:img|video|audio|iframe|table|hr)\b/i.test(note.contentHtml))
+}
+
+function initialNoteId(notes: Note[]) {
+  return notes.find(hasMeaningfulContent)?.id || notes[0]?.id || null
+}
+
 export const useNotesStore = defineStore('notes', {
   state: () => ({
     notes: [] as Note[],
@@ -40,8 +50,9 @@ export const useNotesStore = defineStore('notes', {
           invoke('notebook_list'),
           invoke('external_markdown_list')
         ])
-        if (!this.activeId && this.notes[0]) this.activeId = this.notes[0].id
-        if (this.activeId && !this.notes.some(note => note.id === this.activeId) && this.notes[0]) this.activeId = this.notes[0].id
+        if (!this.activeId || !this.notes.some(note => note.id === this.activeId)) {
+          this.activeId = initialNoteId(this.notes)
+        }
       } finally {
         this.loading = false
       }

@@ -6,7 +6,8 @@ export const DEFAULT_NOTE_MODE = 'rich'
 
 export const NOTE_MODES = Object.freeze([
   { id: 'rich', label: '即时编辑', description: '像 Notion 一样输入并立即呈现格式' },
-  { id: 'markdown', label: 'Markdown', description: '编辑源码，可打开实时预览' }
+  { id: 'markdown', label: 'Markdown', description: '编辑源码，可打开实时预览' },
+  { id: 'reading', label: '阅读模式', description: '专注阅读，不会意外修改正文' }
 ])
 
 const allowedTags = [

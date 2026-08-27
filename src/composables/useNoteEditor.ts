@@ -19,7 +19,7 @@ import yaml from 'highlight.js/lib/languages/yaml'
 import rust from 'highlight.js/lib/languages/rust'
 import { VueNodeViewRenderer } from '@tiptap/vue-3'
 import CodeBlockComponent from '../components/CodeBlockComponent.vue'
-import { FileCode2, PenLine } from 'lucide-vue-next'
+import { BookOpenText, FileCode2, PenLine } from 'lucide-vue-next'
 import { useNotesStore } from '../stores/notes'
 import { useLibraryStore } from '../stores/library'
 import { useAppStore } from '../stores/app'
@@ -54,7 +54,7 @@ export type NoteEditorEmit = {
 export function useNoteEditor(props: Readonly<NoteEditorProps>, emit: NoteEditorEmit) {  
   const lowlight = createLowlight()
   lowlight.register('javascript', javascript); lowlight.register('typescript', typescript); lowlight.register('python', python); lowlight.register('json', json); lowlight.register('html', xml); lowlight.register('xml', xml); lowlight.register('css', css); lowlight.register('bash', bash); lowlight.register('sql', sql); lowlight.register('markdown', markdown); lowlight.register('yaml', yaml); lowlight.register('rust', rust)
-  type EditorMode = 'rich' | 'markdown'
+  type EditorMode = 'rich' | 'markdown' | 'reading'
   type AiAction = 'interpret' | 'refine' | 'polish' | 'expand' | 'translate' | 'summarize' | 'continue_write' | 'fix_grammar' | 'generate_plan' | 'generate_table' | 'custom'
   type ExportFormat = '' | 'html' | 'pdf' | 'print'
   type TaskFlight = () => void
@@ -124,7 +124,7 @@ export function useNoteEditor(props: Readonly<NoteEditorProps>, emit: NoteEditor
   let savedSelection: SelectionRange | null = null
   let pendingAiRequest: PendingAiRequest | null = null
   let pendingAiChange: PendingAiChange | null = null
-  const modeIcons = { rich: PenLine, markdown: FileCode2 }
+  const modeIcons = { rich: PenLine, markdown: FileCode2, reading: BookOpenText }
   const noteLinks = ref<NoteLink[]>([])
   const editorModes = NOTE_MODES.map(mode => ({ ...mode, id: mode.id as EditorMode, icon: modeIcons[mode.id as EditorMode] }))
   const editorMode = ref<EditorMode>(DEFAULT_NOTE_MODE as EditorMode)
@@ -141,6 +141,8 @@ export function useNoteEditor(props: Readonly<NoteEditorProps>, emit: NoteEditor
   const splitWorkspace = ref<HTMLElement | null>(null)
   const sourceEditorRef = ref<MarkdownEditorExpose | null>(null)
   const previewScroller = ref<HTMLElement | null>(null)
+  const READING_POSITION_PREFIX = 'tiny-note:reading-position:'
+  let readingPositionTimer: ReturnType<typeof setTimeout> | undefined
   const pendingSourceDrafts = new Map<string, string>()
   const persistedSignatures = new Map<string, string>()
   const exportingFormat = ref<ExportFormat>('')
@@ -187,6 +189,7 @@ export function useNoteEditor(props: Readonly<NoteEditorProps>, emit: NoteEditor
   const modeShortcutLabel = computed(() => modeShortcutParts.value.join(' + '))
   const richMode = computed(() => editorMode.value === 'rich')
   const codeMode = computed(() => editorMode.value === 'markdown')
+  const readingMode = computed(() => editorMode.value === 'reading')
   const splitMode = computed(() => codeMode.value && markdownPreview.value)
   const splitPaneStyle = computed(() => splitVertical.value ? { height: `${splitRatio.value}%` } : { width: `${splitRatio.value}%` })
   const aiActionLabels: Record<AiAction, string> = { interpret: '解读', refine: '精炼', polish: '润色', expand: '扩写', translate: '翻译', summarize: '总结', continue_write: '续写', fix_grammar: '语法修正', generate_plan: '生成任务计划', generate_table: '生成表格', custom: 'AI 写作' }
@@ -474,6 +477,7 @@ export function useNoteEditor(props: Readonly<NoteEditorProps>, emit: NoteEditor
     if (!editorModes.some(option => option.id === mode)) return
     modeMenuOpen.value = false
     if (mode === editorMode.value) return
+    saveReadingPosition(props.note?.id)
     const valid = await flushLatestContent({ save: true })
     if (!valid && mode === 'rich') return
     if (mode === 'markdown' && !sourceDirty.value) markdownDraft.value = deriveMarkdown()
@@ -483,6 +487,7 @@ export function useNoteEditor(props: Readonly<NoteEditorProps>, emit: NoteEditor
     fimSuggestion.value = ''
     await nextTick()
     setupSplitObserver()
+    restoreReadingPosition(props.note?.id)
   }
   
   async function handleEditorModeShortcut(event: KeyboardEvent) {
@@ -618,8 +623,38 @@ export function useNoteEditor(props: Readonly<NoteEditorProps>, emit: NoteEditor
   }
   
   function handlePreviewScroll() {
-    if (!splitMode.value) return
-    synchronizeSplitScroll('preview', {})
+    scheduleReadingPositionSave()
+    if (splitMode.value) synchronizeSplitScroll('preview', {})
+  }
+
+  function readingPositionStorageKey(noteId?: string) {
+    return noteId ? `${READING_POSITION_PREFIX}${noteId}` : ''
+  }
+
+  function saveReadingPosition(noteId?: string) {
+    const key = readingPositionStorageKey(noteId)
+    const scroller = previewScroller.value
+    if (!key || !scroller || scroller.clientHeight <= 0 || scroller.scrollHeight <= scroller.clientHeight) return
+    const progress = Number(scrollProgress(scroller.scrollTop, scroller.scrollHeight, scroller.clientHeight).toFixed(6))
+    try { window.localStorage.setItem(key, String(progress)) } catch {}
+  }
+
+  function scheduleReadingPositionSave() {
+    clearTimeout(readingPositionTimer)
+    const noteId = props.note?.id
+    readingPositionTimer = setTimeout(() => saveReadingPosition(noteId), 150)
+  }
+
+  function restoreReadingPosition(noteId?: string) {
+    const key = readingPositionStorageKey(noteId)
+    const scroller = previewScroller.value
+    if (!key || !scroller) return
+    let progress = 0
+    try {
+      const stored = Number(window.localStorage.getItem(key))
+      if (Number.isFinite(stored)) progress = Math.min(1, Math.max(0, stored))
+    } catch {}
+    scroller.scrollTop = scrollOffset(progress, scroller.scrollHeight, scroller.clientHeight)
   }
   
   async function toggleMarkdownPreview() {
@@ -661,15 +696,18 @@ export function useNoteEditor(props: Readonly<NoteEditorProps>, emit: NoteEditor
   
   watch(() => props.note?.id, async (id, previousId) => {
     if (previousId && previousId !== id) {
+      clearTimeout(readingPositionTimer)
+      saveReadingPosition(previousId)
       const previous = [...store.notes, ...store.deleted].find(note => note.id === previousId)
       if (previous) await flushLatestContent({ note: previous, save: true })
     }
     resetTransientEditorState()
-    if (props.note?.external) editorMode.value = 'markdown'
+    if (props.note?.external) editorMode.value = 'rich'
     resetEditorSession(props.note)
     noteLinks.value = id ? (await store.listLinks(id).catch(() => [])) || [] : []
     await nextTick()
     setupSplitObserver()
+    restoreReadingPosition(id)
     loadExternalProposal()
   }, { immediate: true, flush: 'post' })
   
@@ -709,6 +747,8 @@ export function useNoteEditor(props: Readonly<NoteEditorProps>, emit: NoteEditor
     clearTimeout(assistantTriggerTimer)
     clearTimeout(markdownParseTimer)
     clearTimeout(markdownPasteTimer)
+    clearTimeout(readingPositionTimer)
+    saveReadingPosition(props.note?.id)
     stopAiDrag()
     stopSplitResize()
     splitResizeObserver?.disconnect()
@@ -1410,7 +1450,7 @@ export function useNoteEditor(props: Readonly<NoteEditorProps>, emit: NoteEditor
     markdownPreview, splitRatio, splitVertical, splitWorkspace, sourceEditorRef, previewScroller, pendingSourceDrafts, persistedSignatures,
     exportingFormat, exportStatusLabel, externalFileName, EXTERNAL_NOTICE_DISMISSED_PREFIX, externalNoticeDismissed, showExternalNoteBanner, applyingEditorContent, markdownParseTimer,
     markdownPasteTimer, splitResizeObserver, splitDragState, scrollSyncFrame, scrollSyncSource, modeShortcutSwitching, externalNoticeStorageKey, readExternalNoticeDismissed,
-    dismissExternalNoteBanner, currentMode, modeShortcutParts, modeShortcutLabel, richMode, codeMode, splitMode, splitPaneStyle,
+    dismissExternalNoteBanner, currentMode, modeShortcutParts, modeShortcutLabel, richMode, codeMode, readingMode, splitMode, splitPaneStyle,
     aiActionLabels, aiErrorMessages, aiEventErrorMessage, aiActionLabel, unknownErrorCode, contextConsentModelId, aiFeedback, aiOutputOpen,
     aiOriginalText, aiChangePending, AI_CHANGE_HIGHLIGHT, aiCharCount, aiDialogPosition, aiDialogStyle, aiDragState, refreshEditorState,
     looksLikeMarkdown, isPlainInlineAiReplacement, handleMarkdownPaste, prepareEditorContent, extractNoteTitle, textFromPreparedEditorContent, syncNoteTitle, getEditorMarkdown,
@@ -1418,7 +1458,8 @@ export function useNoteEditor(props: Readonly<NoteEditorProps>, emit: NoteEditor
     highlightPalette, currentHeadingLabel, canSetNoteTitle, noteContentSignature, scheduleNoteSave, saveDirtyNote, handleRichEditorUpdate, deriveMarkdown,
     commitMarkdown, queueMarkdownParse, updateMarkdownDraft, flushLatestContent, resetEditorSession, changeEditorMode, handleEditorModeShortcut, toggleModeMenu,
     focusModeOption, moveModeFocus, handleModeMenuKeydown, focusMoreItem, toggleMoreMenu, handleMoreMenuKeydown, handleDocumentPointerDown, updateSplitOrientation,
-    setupSplitObserver, stopSplitResize, resizeSplitPane, startSplitResize, synchronizeSplitScroll, handlePreviewScroll, toggleMarkdownPreview, viewPastedMarkdown,
+    setupSplitObserver, stopSplitResize, resizeSplitPane, startSplitResize, synchronizeSplitScroll, handlePreviewScroll, readingPositionStorageKey, saveReadingPosition,
+    scheduleReadingPositionSave, restoreReadingPosition, toggleMarkdownPreview, viewPastedMarkdown,
     resetTransientEditorState, handleBackgroundNoteTask, setEditorEditable, loadExternalProposal, toggle, applyMarkdownFormat, setMarkdownHeading, setMarkdownSmallBody,
     hasNoteContextConsent, cancelAiConsent, confirmAiConsent, runAi, captureAssistantSelection, openAssistant, closeAssistant, toggleAssistant,
     assistantContext, assistantReferences, pushAssistantResponse, assistantEditIntent, sendAssistantMessage, stopAssistant, copyAssistantMessage, stopAi,
