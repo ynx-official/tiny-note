@@ -1,4 +1,4 @@
-import { mount } from '@vue/test-utils'
+import { flushPromises, mount } from '@vue/test-utils'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import AppUpdateDialog from './AppUpdateDialog.vue'
 
@@ -44,6 +44,28 @@ describe('AppUpdateDialog automatic scheduling', () => {
     expect(mocks.check).toHaveBeenCalledTimes(1)
     await vi.advanceTimersByTimeAsync(15 * 60 * 1000)
     expect(mocks.check).toHaveBeenCalledTimes(2)
+
+    wrapper.unmount()
+  })
+
+  it('renders release notes as Markdown', async () => {
+    mocks.check.mockResolvedValueOnce({
+      supported: true,
+      available: true,
+      version: '1.2.0',
+      body: '# 更新内容\n\n> 更稳定的启动体验\n\n- 修复首次加载\n- **优化**更新页面',
+      assetName: 'tiny-note-1.2.0.dmg'
+    })
+    const wrapper = mount(AppUpdateDialog)
+
+    await vi.advanceTimersByTimeAsync(2200)
+    await flushPromises()
+
+    const notes = document.body.querySelector('.app-update-notes')
+    expect(notes?.querySelector('h1')?.textContent).toBe('更新内容')
+    expect(notes?.querySelector('blockquote')?.textContent).toContain('更稳定的启动体验')
+    expect(notes?.querySelectorAll('li')).toHaveLength(2)
+    expect(notes?.querySelector('strong')?.textContent).toBe('优化')
 
     wrapper.unmount()
   })
