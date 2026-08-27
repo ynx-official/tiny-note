@@ -3,12 +3,14 @@ import { computed, nextTick, onBeforeUnmount, onMounted, reactive, ref, watch } 
 import { useRoute, useRouter } from 'vue-router'
 import { storeToRefs } from 'pinia'
 import { useI18n } from 'vue-i18n'
-import { Bell, CalendarClock, Check, CheckCircle2, ChevronDown, ChevronRight, Circle, Inbox, ListTodo, LoaderCircle, Menu, Plus, SortAsc, Trash2, X } from 'lucide-vue-next'
+import { Bell, CalendarClock, Check, CheckCircle2, ChevronDown, ChevronRight, Circle, Inbox, List, ListTodo, LoaderCircle, Menu, MoreHorizontal, Pencil, Plus, SortAsc, Trash2, X } from 'lucide-vue-next'
 import { useTodosStore } from '../stores/todos'
 import { ensureReminderPermission, fromDateTimeLocal, normalizedReminder, reminderSummary, toDateTimeLocal } from '../services/reminders'
+import { requestConfirmation } from '../services/appFeedback'
 import { defaultQuickDue, filterTodoViewItems, groupTodos, TODO_FILTERS, TODO_SORTS, todoCounts } from '../utils/todos'
 import { localDateValue } from '../utils/dateTime'
 import TodoQuickScheduler from '../components/TodoQuickScheduler.vue'
+import TodoListDialog from '../components/TodoListDialog.vue'
 
 const emptyReminder = () => ({ enabled: false, mode: 'at', triggerAt: '', offsetMinutes: 10, intervalMinutes: 10 })
 const store = useTodosStore()
@@ -18,9 +20,16 @@ const { t, locale } = useI18n()
 const { loading, error } = storeToRefs(store)
 const initialFilter = TODO_FILTERS.includes(String(route.query.filter)) ? String(route.query.filter) : 'inbox'
 const filter = ref(initialFilter)
+const activeListId = ref(String(route.query.list || ''))
 const sortMode = ref('due')
 const sortOpen = ref(false)
 const navOpen = ref(false)
+const listsCollapsed = ref(false)
+const listMenuId = ref('')
+const listDialogOpen = ref(false)
+const editingList = ref(null)
+const listDialogSaving = ref(false)
+const listDialogError = ref('')
 const selectedId = ref('')
 const quickTitle = ref('')
 const quickStartAt = ref('')
@@ -35,7 +44,7 @@ const dirty = ref(false)
 const saveState = ref('idle')
 const saveError = ref('')
 const permissionWarning = ref('')
-const form = reactive({ title: '', notes: '', startAt: '', dueAt: '', priority: 'none', reminder: emptyReminder() })
+const form = reactive({ title: '', notes: '', listId: '', startAt: '', dueAt: '', priority: 'none', reminder: emptyReminder() })
 let saveTimer
 let editVersion = 0
 let lastQueuedVersion = 0
@@ -48,10 +57,12 @@ const navItems = computed(() => [
   { key: 'inbox', label: t('todoInbox'), icon: Inbox, count: counts.value.inbox }
 ])
 const completedNav = computed(() => ({ key: 'completed', label: t('todoCompleted'), icon: CheckCircle2, count: counts.value.completed }))
-const heading = computed(() => [...navItems.value, completedNav.value].find(item => item.key === filter.value)?.label || t('todoInbox'))
-const headingCount = computed(() => filter.value === 'completed' ? counts.value.completed : counts.value[filter.value] || 0)
-const visible = computed(() => filterTodoViewItems(store.todos, filter.value))
-const groups = computed(() => groupTodos(visible.value, filter.value, new Date(), sortMode.value))
+const activeList = computed(() => store.listById(activeListId.value))
+const heading = computed(() => activeList.value?.name || [...navItems.value, completedNav.value].find(item => item.key === filter.value)?.label || t('todoInbox'))
+const headingCount = computed(() => activeList.value ? store.activeCountForList(activeList.value.id) : filter.value === 'completed' ? counts.value.completed : counts.value[filter.value] || 0)
+const visible = computed(() => activeList.value ? store.itemsForList(activeList.value.id) : filterTodoViewItems(store.todos, filter.value))
+const groups = computed(() => groupTodos(visible.value, activeList.value ? 'inbox' : filter.value, new Date(), sortMode.value))
+const canQuickAdd = computed(() => Boolean(activeList.value) || filter.value !== 'completed')
 const selected = computed(() => store.byId(selectedId.value))
 const sortOptions = computed(() => [
   { key: 'due', label: t('todoSortDue') },
@@ -61,7 +72,7 @@ const sortOptions = computed(() => [
 const saveLabel = computed(() => saveState.value === 'saving' ? t('todoSaving') : saveState.value === 'error' ? t('todoSaveFailed') : saveState.value === 'saved' ? t('todoSaved') : '')
 
 function groupLabel(key) { return t({ overdue: 'todoOverdue', today: 'todoToday', later: 'todoLater', undated: 'todoUndated', completed: 'todoCompleted' }[key]) }
-function resetQuickDraft() { quickStartAt.value = ''; quickDueAt.value = defaultQuickDue(filter.value); quickReminder.value = emptyReminder(); quickError.value = '' }
+function resetQuickDraft() { quickStartAt.value = ''; quickDueAt.value = defaultQuickDue(activeListId.value ? 'inbox' : filter.value); quickReminder.value = emptyReminder(); quickError.value = '' }
 function fillForm(item) {
   if (!item) return
   suppressFormWatch.value = true
@@ -69,6 +80,7 @@ function fillForm(item) {
   Object.assign(form, {
     title: item.title,
     notes: item.notes || '',
+    listId: item.listId || '',
     startAt: toDateTimeLocal(item.startAt),
     dueAt: toDateTimeLocal(item.dueAt),
     priority: item.priority || 'none',
@@ -88,7 +100,7 @@ function fillForm(item) {
   nextTick(() => { suppressFormWatch.value = false })
 }
 function snapshotForm(version) {
-  return { id: selectedId.value, version, title: form.title, notes: form.notes, startAt: form.startAt, dueAt: form.dueAt, priority: form.priority, reminder: { ...form.reminder } }
+  return { id: selectedId.value, version, title: form.title, notes: form.notes, listId: form.listId || null, startAt: form.startAt, dueAt: form.dueAt, priority: form.priority, reminder: { ...form.reminder } }
 }
 async function persistSnapshot(snapshot) {
   if (!snapshot.id) return true
@@ -114,11 +126,16 @@ async function persistSnapshot(snapshot) {
         await nextTick(); suppressFormWatch.value = false
       }
     }
-    await store.update(snapshot.id, { title: snapshot.title.trim(), notes: snapshot.notes, startAt, dueAt, priority: snapshot.priority, reminder })
+    await store.update(snapshot.id, { title: snapshot.title.trim(), notes: snapshot.notes, listId: snapshot.listId, startAt, dueAt, priority: snapshot.priority, reminder })
+    const movedOutOfActiveList = Boolean(activeListId.value && snapshot.listId !== activeListId.value)
     if (snapshot.id === selectedId.value && snapshot.version === editVersion) {
       dirty.value = false
       saveState.value = 'saved'
       saveError.value = ''
+      if (movedOutOfActiveList) {
+        selectedId.value = ''
+        await router.replace({ query: { list: activeListId.value } })
+      }
     }
     return true
   } catch (reason) {
@@ -156,22 +173,33 @@ async function select(item) {
   if (selectedId.value && !(await flushAutoSave())) return
   selectedId.value = item?.id || ''
   if (item) fillForm(item)
-  await router.replace({ query: { filter: filter.value, ...(item ? { id: item.id } : {}) } })
+  await router.replace({ query: { ...(activeListId.value ? { list: activeListId.value } : { filter: filter.value }), ...(item ? { id: item.id } : {}) } })
 }
 async function clearSelection() {
   clearTimeout(saveTimer)
   selectedId.value = ''
   dirty.value = false
-  await router.replace({ query: { filter: filter.value } })
+  await router.replace({ query: activeListId.value ? { list: activeListId.value } : { filter: filter.value } })
 }
 async function changeFilter(key) {
-  if (key === filter.value) { navOpen.value = false; return }
+  if (!activeListId.value && key === filter.value) { navOpen.value = false; return }
   if (selectedId.value && !(await flushAutoSave())) return
   filter.value = key
+  activeListId.value = ''
   navOpen.value = false
   selectedId.value = ''
   resetQuickDraft()
   await router.replace({ query: { filter: key } })
+  await nextTick(); quickInput.value?.focus()
+}
+async function changeList(item) {
+  if (item.id === activeListId.value) { navOpen.value = false; return }
+  if (selectedId.value && !(await flushAutoSave())) return
+  activeListId.value = item.id
+  navOpen.value = false
+  selectedId.value = ''
+  resetQuickDraft()
+  await router.replace({ query: { list: item.id } })
   await nextTick(); quickInput.value?.focus()
 }
 async function quickAdd() {
@@ -184,7 +212,7 @@ async function quickAdd() {
     const dueAt = fromDateTimeLocal(quickDueAt.value)
     const reminder = normalizedReminder(quickReminder.value, { hasAnchor: Boolean(dueAt) })
     if (reminder && !(await ensureReminderPermission())) throw new Error(t('todoReminderPermissionDenied'))
-    await store.create({ title, notes: '', startAt, dueAt, priority: 'none', reminder })
+    await store.create({ title, notes: '', listId: activeListId.value || null, startAt, dueAt, priority: 'none', reminder })
     quickTitle.value = ''
     resetQuickDraft()
     await nextTick(); quickInput.value?.focus()
@@ -207,6 +235,59 @@ async function remove() {
   await store.remove(id)
   if (selectedId.value === id) await clearSelection()
 }
+function openListDialog(item = null) {
+  editingList.value = item
+  listDialogError.value = ''
+  listDialogOpen.value = true
+  listMenuId.value = ''
+}
+function closeListDialog() {
+  if (listDialogSaving.value) return
+  listDialogOpen.value = false
+  editingList.value = null
+  listDialogError.value = ''
+}
+async function saveList(input) {
+  if (listDialogSaving.value) return
+  try {
+    listDialogSaving.value = true
+    listDialogError.value = ''
+    const item = editingList.value ? await store.updateList(editingList.value.id, input) : await store.createList(input)
+    const created = !editingList.value
+    listDialogOpen.value = false
+    editingList.value = null
+    listDialogError.value = ''
+    if (created) await changeList(item)
+  } catch (reason) {
+    listDialogError.value = reason?.message || String(reason)
+  } finally {
+    listDialogSaving.value = false
+  }
+}
+async function deleteList(item) {
+  listMenuId.value = ''
+  const confirmed = await requestConfirmation({
+    title: t('todoListDeleteTitle'),
+    message: t('todoListDeleteConfirm', { name: item.name }),
+    tone: 'danger',
+    confirmLabel: t('todoListDelete'),
+    cancelLabel: t('cancel')
+  })
+  if (!confirmed) return
+  if (selectedId.value && !(await flushAutoSave())) return
+  const selectedWasInList = selected.value?.listId === item.id
+  await store.deleteList(item.id)
+  if (activeListId.value === item.id) {
+    activeListId.value = ''
+    filter.value = 'inbox'
+    selectedId.value = ''
+    dirty.value = false
+    resetQuickDraft()
+    await router.replace({ query: { filter: 'inbox' } })
+  } else if (selectedWasInList && selected.value) {
+    fillForm(store.byId(selected.value.id))
+  }
+}
 function setSort(key) { if (TODO_SORTS.includes(key)) sortMode.value = key; sortOpen.value = false }
 function toggleGroup(key) {
   const next = new Set(collapsedGroups.value)
@@ -228,10 +309,14 @@ function formatDue(value, startValue = '') {
   return `${format.format(start)} – ${format.format(date)}`
 }
 function isOverdue(item) { return !item.completedAt && item.dueAt && new Date(item.dueAt) < new Date() }
-function handleDocumentClick(event) { if (!event.target?.closest?.('.todo-sort-wrap')) sortOpen.value = false }
+function handleDocumentClick(event) {
+  if (!event.target?.closest?.('.todo-sort-wrap')) sortOpen.value = false
+  if (!event.target?.closest?.('.todo-list-row-wrap')) listMenuId.value = ''
+}
 function handleKey(event) {
   if (event.key !== 'Escape') return
   if (sortOpen.value) sortOpen.value = false
+  else if (listMenuId.value) listMenuId.value = ''
   else if (navOpen.value) navOpen.value = false
   else if (selectedId.value && window.innerWidth < 1180) clearSelection()
 }
@@ -241,6 +326,11 @@ onMounted(async () => {
   window.addEventListener('keydown', handleKey)
   document.addEventListener('pointerdown', handleDocumentClick)
   await store.load()
+  if (activeListId.value && !store.listById(activeListId.value)) {
+    activeListId.value = ''
+    filter.value = 'inbox'
+    await router.replace({ query: { filter: 'inbox' } })
+  }
   const routeItem = route.query.id && store.byId(String(route.query.id))
   if (routeItem) { selectedId.value = routeItem.id; fillForm(routeItem) }
 })
@@ -258,11 +348,26 @@ onBeforeUnmount(() => {
     <aside class="todo-smart-lists" :class="{ open: navOpen }">
       <header><ListTodo :size="20" /><strong>{{ t('todos') }}</strong><button class="nav-close" :aria-label="t('close')" @click="navOpen = false"><X :size="18" /></button></header>
       <nav class="smart-nav">
-        <button v-for="item in navItems" :key="item.key" :class="{ active: filter === item.key }" @click="changeFilter(item.key)"><component :is="item.icon" :size="18" /><span>{{ item.label }}</span><small>{{ item.count }}</small></button>
+        <button v-for="item in navItems" :key="item.key" :class="{ active: !activeListId && filter === item.key }" @click="changeFilter(item.key)"><component :is="item.icon" :size="18" /><span>{{ item.label }}</span><small>{{ item.count }}</small></button>
       </nav>
-      <div class="nav-spacer"><span>{{ t('todoSmartLists') }}</span><small>{{ t('todoSmartListsHint') }}</small></div>
+      <section class="custom-lists-section">
+        <header>
+          <button type="button" class="custom-lists-toggle" :aria-expanded="!listsCollapsed" :aria-label="listsCollapsed ? t('todoListsExpand') : t('todoListsCollapse')" @click="listsCollapsed = !listsCollapsed"><ChevronDown :size="15" :class="{ collapsed: listsCollapsed }" /><span>{{ t('todoLists') }}</span></button>
+          <button type="button" class="custom-list-add" :aria-label="t('todoListAdd')" @click="openListDialog()"><Plus :size="17" /></button>
+        </header>
+        <div v-if="!listsCollapsed" class="custom-list-rows">
+          <div v-for="item in store.lists" :key="item.id" class="todo-list-row-wrap" :class="{ active: activeListId === item.id }">
+            <button type="button" class="custom-list-row" @click="changeList(item)"><span class="custom-list-icon" :style="{ '--list-color': item.color }"><List :size="15" /></span><span>{{ item.name }}</span><small>{{ store.activeCountForList(item.id) }}</small></button>
+            <button type="button" class="custom-list-more" :aria-label="`${item.name} ${t('todoListMore')}`" :aria-expanded="listMenuId === item.id" @click.stop="listMenuId = listMenuId === item.id ? '' : item.id"><MoreHorizontal :size="16" /></button>
+            <div v-if="listMenuId === item.id" class="custom-list-menu" role="menu">
+              <button type="button" role="menuitem" @click="openListDialog(item)"><Pencil :size="14" />{{ t('todoListEdit') }}</button>
+              <button type="button" class="danger" role="menuitem" @click="deleteList(item)"><Trash2 :size="14" />{{ t('todoListDelete') }}</button>
+            </div>
+          </div>
+        </div>
+      </section>
       <nav class="smart-nav nav-bottom">
-        <button :class="{ active: filter === completedNav.key }" @click="changeFilter(completedNav.key)"><component :is="completedNav.icon" :size="18" /><span>{{ completedNav.label }}</span><small>{{ completedNav.count }}</small></button>
+        <button :class="{ active: !activeListId && filter === completedNav.key }" @click="changeFilter(completedNav.key)"><component :is="completedNav.icon" :size="18" /><span>{{ completedNav.label }}</span><small>{{ completedNav.count }}</small></button>
       </nav>
     </aside>
 
@@ -272,7 +377,7 @@ onBeforeUnmount(() => {
         <div class="todo-list-actions"><div class="todo-sort-wrap"><button :title="t('todoSort')" :aria-expanded="sortOpen" @click.stop="sortOpen = !sortOpen"><SortAsc :size="20" /></button><div v-if="sortOpen" class="todo-sort-menu" role="menu"><button v-for="option in sortOptions" :key="option.key" type="button" role="menuitemradio" :aria-checked="sortMode === option.key" @click="setSort(option.key)"><Check v-if="sortMode === option.key" :size="14" /><span>{{ option.label }}</span></button></div></div></div>
       </header>
 
-      <form v-if="filter !== 'completed'" class="todo-quick" @submit.prevent="quickAdd">
+      <form v-if="canQuickAdd" class="todo-quick" @submit.prevent="quickAdd">
         <Plus :size="22" /><input ref="quickInput" v-model="quickTitle" :placeholder="t('todoQuickPlaceholder')" :aria-label="t('todoQuickPlaceholder')">
         <TodoQuickScheduler v-model:start-at="quickStartAt" v-model:due-at="quickDueAt" v-model:reminder="quickReminder" :locale="locale" :disabled="quickSaving" />
         <button class="quick-submit" :disabled="!quickTitle.trim() || quickSaving">{{ quickSaving ? t('todoAdding') : t('add') }}</button>
@@ -281,7 +386,7 @@ onBeforeUnmount(() => {
 
       <div v-if="loading" class="todo-state"><LoaderCircle class="spin" :size="20" />{{ t('todoLoading') }}</div>
       <div v-else-if="error" class="todo-state error">{{ error }}<button @click="store.load()">{{ t('refresh') }}</button></div>
-      <div v-else-if="!visible.length" class="todo-empty"><CheckCircle2 :size="38" /><strong>{{ filter === 'completed' ? t('todoNoCompleted') : t('todoEmpty') }}</strong><span>{{ t('todoEmptyHint') }}</span></div>
+      <div v-else-if="!visible.length" class="todo-empty"><CheckCircle2 :size="38" /><strong>{{ !activeListId && filter === 'completed' ? t('todoNoCompleted') : t('todoEmpty') }}</strong><span>{{ t('todoEmptyHint') }}</span></div>
       <div v-else class="todo-groups">
         <section v-for="group in groups" :key="group.key" class="todo-group">
           <button class="todo-group-heading" :aria-expanded="!collapsedGroups.has(group.key)" @click="toggleGroup(group.key)"><ChevronDown :size="17" :class="{ collapsed: collapsedGroups.has(group.key) }" /><strong>{{ groupLabel(group.key) }}</strong><span>{{ group.items.length }}</span></button>
@@ -301,6 +406,7 @@ onBeforeUnmount(() => {
         <form class="todo-detail-form" @submit.prevent>
           <label class="detail-title"><span class="sr-only">{{ t('todoTitle') }}</span><textarea v-model="form.title" rows="2" :placeholder="t('todoTitle')"></textarea></label>
           <label class="detail-notes"><span>{{ t('todoNotes') }}</span><textarea v-model="form.notes" rows="6" :placeholder="t('todoNotesPlaceholder')"></textarea></label>
+          <label class="detail-property"><span><List :size="16" />{{ t('todoListAssignment') }}</span><select v-model="form.listId"><option value="">{{ t('todoListNone') }}</option><option v-for="item in store.lists" :key="item.id" :value="item.id">{{ item.name }}</option></select></label>
           <div class="detail-property"><span><CalendarClock :size="16" />{{ t('todoSchedule') }}</span><TodoQuickScheduler v-model:start-at="form.startAt" v-model:due-at="form.dueAt" v-model:reminder="form.reminder" :locale="locale" /></div>
           <label class="detail-property"><span><Circle :size="16" />{{ t('todoPriority') }}</span><select v-model="form.priority"><option value="none">{{ t('todoPriorityNone') }}</option><option value="low">{{ t('todoPriorityLow') }}</option><option value="medium">{{ t('todoPriorityMedium') }}</option><option value="high">{{ t('todoPriorityHigh') }}</option></select></label>
           <p v-if="selected.reminder && !selected.reminder.enabled" class="stopped">{{ t('todoReminderStopped') }}</p><p v-if="permissionWarning" class="permission-warning">{{ permissionWarning }}</p><p v-if="saveError" class="form-error" role="alert">{{ saveError }}</p>
@@ -309,11 +415,12 @@ onBeforeUnmount(() => {
       </template>
       <div v-else class="detail-placeholder"><ListTodo :size="42" /><strong>{{ t('todoSelect') }}</strong><span>{{ t('todoSelectHint') }}</span></div>
     </aside>
+    <TodoListDialog :open="listDialogOpen" :item="editingList" :saving="listDialogSaving" :error="listDialogError" @close="closeListDialog" @save="saveList" />
   </section>
 </template>
 
 <style scoped>
-.todos-page{position:relative;height:100%;min-height:0;display:grid;grid-template-columns:clamp(160px,18vw,220px) minmax(320px,1fr) clamp(270px,28vw,360px);background:var(--bg);color:var(--text);overflow:hidden}.todo-smart-lists,.todo-detail{box-sizing:border-box;background:var(--panel);min-height:0}.todo-smart-lists{border-right:1px solid var(--line);display:flex;flex-direction:column;padding:12px 9px}.todo-smart-lists>header{height:32px;display:flex;align-items:center;gap:8px;padding:0 9px 11px}.todo-smart-lists>header strong{font-size:15px}.nav-close{display:none;margin-left:auto;border:0;background:transparent;color:var(--muted)}.smart-nav{display:grid;gap:3px}.smart-nav button{height:38px;border:0;border-radius:8px;background:transparent;color:var(--text);display:grid;grid-template-columns:20px 1fr auto;gap:8px;align-items:center;padding:0 10px;text-align:left;font:inherit;font-size:13px}.smart-nav button:hover,.smart-nav button.active{background:var(--hover)}.smart-nav button.active{font-weight:650}.smart-nav button small{color:var(--muted);font-variant-numeric:tabular-nums}.nav-spacer{margin:14px 4px 0;padding-top:13px;border-top:1px solid var(--line);display:grid;gap:6px;color:var(--muted)}.nav-spacer span{display:block;padding:0 6px;font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.05em}.nav-spacer small{display:block;margin:0 4px;padding:9px 10px;border-radius:8px;background:color-mix(in srgb,var(--hover),transparent 25%);font-size:10px;line-height:1.45}.nav-bottom{margin-top:auto;padding-top:11px;border-top:1px solid var(--line)}
+.todos-page{position:relative;height:100%;min-height:0;display:grid;grid-template-columns:clamp(160px,18vw,220px) minmax(320px,1fr) clamp(270px,28vw,360px);background:var(--bg);color:var(--text);overflow:hidden}.todo-smart-lists,.todo-detail{box-sizing:border-box;background:var(--panel);min-height:0}.todo-smart-lists{border-right:1px solid var(--line);display:flex;flex-direction:column;padding:12px 9px}.todo-smart-lists>header{height:32px;display:flex;align-items:center;gap:8px;padding:0 9px 11px}.todo-smart-lists>header strong{font-size:15px}.nav-close{display:none;margin-left:auto;border:0;background:transparent;color:var(--muted)}.smart-nav{display:grid;gap:3px}.smart-nav button{height:38px;border:0;border-radius:8px;background:transparent;color:var(--text);display:grid;grid-template-columns:20px 1fr auto;gap:8px;align-items:center;padding:0 10px;text-align:left;font:inherit;font-size:13px}.smart-nav button:hover,.smart-nav button.active{background:var(--hover)}.smart-nav button.active{font-weight:650}.smart-nav button small{color:var(--muted);font-variant-numeric:tabular-nums}.custom-lists-section{min-height:0;flex:1;margin:14px 4px 0;padding-top:9px;border-top:1px solid var(--line);display:flex;flex-direction:column}.custom-lists-section>header{height:31px;display:flex;align-items:center;gap:4px}.custom-lists-toggle,.custom-list-add,.custom-list-more{border:0;border-radius:6px;background:transparent;color:var(--muted)}.custom-lists-toggle{min-width:0;flex:1;height:29px;display:flex;align-items:center;gap:5px;padding:0 5px;font:inherit;text-align:left}.custom-lists-toggle span{color:var(--text);font-size:12px;font-weight:650}.custom-lists-toggle svg{transition:transform .15s}.custom-lists-toggle svg.collapsed{transform:rotate(-90deg)}.custom-list-add{width:29px;height:29px;display:grid;place-items:center}.custom-lists-toggle:hover,.custom-list-add:hover,.custom-list-more:hover{background:var(--hover);color:var(--text)}.custom-list-rows{min-height:0;overflow:auto;display:grid;align-content:start;gap:2px;padding-top:2px}.todo-list-row-wrap{position:relative;border-radius:8px}.todo-list-row-wrap:hover,.todo-list-row-wrap.active{background:var(--hover)}.custom-list-row{box-sizing:border-box;width:100%;height:36px;display:grid;grid-template-columns:20px minmax(0,1fr) auto;align-items:center;gap:7px;border:0;border-radius:8px;background:transparent;color:var(--text);padding:0 29px 0 7px;font:inherit;text-align:left}.custom-list-row>span:nth-child(2){overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:13px}.custom-list-row small{color:var(--muted);font-size:11px;font-variant-numeric:tabular-nums;transition:opacity .12s}.custom-list-icon{width:20px;height:20px;display:grid;place-items:center;border-radius:5px;background:color-mix(in srgb,var(--list-color),transparent 86%);color:var(--list-color)}.custom-list-more{position:absolute;right:3px;top:4px;width:28px;height:28px;display:grid;place-items:center;opacity:0}.todo-list-row-wrap:hover .custom-list-more,.todo-list-row-wrap:focus-within .custom-list-more{opacity:1}.todo-list-row-wrap:hover .custom-list-row small,.todo-list-row-wrap:focus-within .custom-list-row small{opacity:0}.custom-list-menu{position:absolute;z-index:70;right:2px;top:34px;width:142px;display:grid;gap:2px;padding:5px;border:1px solid var(--line);border-radius:8px;background:var(--panel);box-shadow:0 12px 35px #0005}.custom-list-menu button{height:32px;display:flex;align-items:center;gap:8px;border:0;border-radius:5px;background:transparent;color:var(--text);padding:0 9px;font:inherit;font-size:12px;text-align:left}.custom-list-menu button:hover{background:var(--hover)}.custom-list-menu .danger{color:#dc4c4c}.nav-bottom{flex:none;margin-top:10px;padding-top:11px;border-top:1px solid var(--line)}
 .todo-list-pane{min-width:0;min-height:0;display:flex;flex-direction:column;background:var(--bg)}.todos-page .todo-list-header{box-sizing:border-box;height:58px;flex:none;display:flex;align-items:center;justify-content:space-between;padding:0 18px;border:0}.todo-heading{display:flex;align-items:center;gap:9px;min-width:0}.todo-heading>div{display:flex;align-items:baseline;gap:7px;min-width:0}.todos-page .todo-heading h1{margin:0;font-size:20px;line-height:1.2;white-space:nowrap}.todos-page .todo-heading small{color:var(--muted)!important;font-size:10px}.nav-trigger{display:none}.todo-list-actions button,.nav-trigger{width:32px;height:32px;border:0;border-radius:7px;background:transparent;color:var(--text);place-items:center;padding:0}.todo-list-actions button{display:grid}.todo-list-actions button:hover,.nav-trigger:hover{background:var(--hover)}.todo-sort-wrap{position:relative}.todo-sort-menu{position:absolute;z-index:60;right:0;top:38px;width:165px;padding:5px;border:1px solid var(--line);border-radius:9px;background:var(--panel);box-shadow:0 12px 35px #0005}.todo-sort-menu button{width:100%;height:34px;display:grid;grid-template-columns:20px 1fr;text-align:left}.todo-sort-menu span{justify-self:start}
 .todo-quick{position:relative;box-sizing:border-box;flex:none;margin:6px 18px 10px;min-height:48px;display:flex;align-items:center;gap:8px;border:1px solid var(--line);border-radius:10px;background:var(--panel);padding:0 8px 0 13px;transition:.16s}.todo-quick:focus-within{border-color:var(--accent);box-shadow:0 0 0 2px color-mix(in srgb,var(--accent),transparent 75%)}.todo-quick>svg{color:var(--muted)}.todo-quick>input{min-width:80px;flex:1;border:0;outline:0;background:transparent;color:var(--text);font:inherit;font-size:13px}.todo-quick>input::placeholder{color:var(--muted)}.quick-submit{height:32px;border:0;border-radius:7px;background:var(--accent);color:#fff;padding:0 10px;font:inherit;font-size:11px;font-weight:650}.quick-submit:disabled{opacity:.4}.quick-error{margin:-4px 20px 7px;color:#dc4c4c;font-size:11px}.todo-state,.todo-empty,.detail-placeholder{height:100%;display:grid;place-content:center;justify-items:center;gap:8px;color:var(--muted)}.todo-state{display:flex;align-items:center}.todo-state.error{color:#dc4c4c}.todo-state.error button{border:0;background:transparent;color:var(--accent)}.todo-empty strong,.detail-placeholder strong{color:var(--text)}.todo-empty span,.detail-placeholder span{font-size:11px}
 .todo-groups{min-height:0;overflow:auto;padding:2px 18px 22px}.todo-group+.todo-group{margin-top:7px}.todo-group-heading{width:100%;height:30px;display:flex;align-items:center;gap:5px;border:0;background:transparent;color:var(--text);padding:0 2px;font:inherit;text-align:left}.todo-group-heading svg{transition:.15s}.todo-group-heading svg.collapsed{transform:rotate(-90deg)}.todo-group-heading strong{font-size:13px}.todo-group-heading span{margin-left:2px;color:var(--muted);font-size:11px}.todo-rows article{display:grid;grid-template-columns:36px minmax(0,1fr);align-items:start;border-bottom:1px solid var(--line);transition:.12s}.todo-rows article:hover,.todo-rows article.active{background:var(--hover)}.todo-rows article.active{box-shadow:inset 3px 0 0 var(--accent)}.todo-rows article.completed{opacity:.58}.todos-page .todo-check,.todos-page .todo-row-main{border:0;background:transparent;color:var(--text)}.todos-page .todo-check{width:36px;height:40px;display:grid;place-items:center;padding:0;border-radius:6px;cursor:pointer}.todo-checkbox{box-sizing:border-box;width:17px;height:17px;display:grid;place-items:center;border:1.5px solid color-mix(in srgb,var(--muted),transparent 20%);border-radius:5px;background:transparent;color:#fff;transition:border-color .14s,background-color .14s,box-shadow .14s}.todo-check:hover .todo-checkbox{border-color:var(--accent);background:color-mix(in srgb,var(--accent),transparent 90%)}.todo-check:focus-visible{outline:0}.todo-check:focus-visible .todo-checkbox{border-color:var(--accent);box-shadow:0 0 0 3px color-mix(in srgb,var(--accent),transparent 75%)}.todo-checkbox.checked{border-color:var(--accent);background:var(--accent)}.todo-checkbox.checked svg{display:block}.todos-page .todo-row-main{min-width:0;padding:8px 10px 9px 1px;text-align:left;font:inherit;outline:0}.todo-row-title{display:flex;align-items:center;gap:7px}.todo-row-title strong{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:13px}.todo-priority-dot{display:block!important;inline-size:7px!important;block-size:7px!important;min-inline-size:7px;border-radius:50%!important}.p-high{background:#d95461}.p-medium{background:#d4944e}.p-low{background:#4e8fb8}.p-none{display:none!important}.todo-notes{display:block;margin-top:3px;color:var(--muted);font-size:11px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.todo-meta{display:flex;align-items:center;gap:10px;margin-top:4px}.todo-meta small{display:flex;align-items:center;gap:4px;color:var(--muted);font-size:10px}.todo-meta small.overdue{color:#dc4c4c}.todo-rows article.completed .todo-row-title strong{text-decoration:line-through}

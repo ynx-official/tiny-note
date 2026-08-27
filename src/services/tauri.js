@@ -139,6 +139,18 @@ function browserPlannerReminder(state, ownerType, ownerId, input, now) {
   return reminder
 }
 
+function normalizeBrowserTodoListInput(input = {}) {
+  const name = String(input.name || '').trim()
+  const color = String(input.color || '').trim().toUpperCase()
+  if (!name) throw new Error('清单名称不能为空')
+  if (!/^#[\dA-F]{6}$/.test(color)) throw new Error('清单颜色无效')
+  return { name, color }
+}
+
+function validateBrowserTodoListId(state, listId) {
+  if (listId && !state.todoLists.some(item => item.id === listId)) throw new Error('清单不存在')
+}
+
 export async function invoke(command, args = {}) {
   if (window.__TAURI_INTERNALS__) return tauriInvoke(command, args)
   const state = browserState()
@@ -184,6 +196,10 @@ export async function invoke(command, args = {}) {
   if (!state.backgroundTasks) state.backgroundTasks = []
   if (!state.calendarEvents) state.calendarEvents = []
   if (!state.todos) state.todos = []
+  if (!state.todoLists) state.todoLists = []
+  state.todos.forEach(todo => {
+    if (!Object.hasOwn(todo, 'listId') || (todo.listId && !state.todoLists.some(item => item.id === todo.listId))) todo.listId = null
+  })
   if (!state.reminders) state.reminders = []
   state.backgroundTasks = state.backgroundTasks.filter(task => !['chat_response', 'agent_run'].includes(task.kind))
   state.backgroundTasks = state.backgroundTasks.filter(task => !(['succeeded', 'failed', 'cancelled', 'interrupted'].includes(task.status) && task.completedAt && new Date(task.completedAt).getTime() < Date.now() - 30 * 86400000))
@@ -202,10 +218,14 @@ export async function invoke(command, args = {}) {
   else if (command === 'calendar_event_create') { const input = args.input || {}; const id = crypto.randomUUID(); const reminder = browserPlannerReminder(state, 'calendarEvent', id, input.reminder, now); result = { id, title: input.title, startDate: input.startDate, endDate: input.endDate, startTime: input.startTime || '', endTime: input.endTime || '', allDay: Boolean(input.allDay), description: input.description || '', color: input.color || '#1E88E5', priority: input.priority || 'important', completed: Boolean(input.completed), reminder, createdAt: now, updatedAt: now }; state.calendarEvents.push({ ...result, reminder: undefined }) }
   else if (command === 'calendar_event_update') { const item = state.calendarEvents.find(value => value.id === args.id); if (!item) throw new Error('日程不存在'); const input = args.input || {}; Object.assign(item, input, { updatedAt: now }); const reminder = browserPlannerReminder(state, 'calendarEvent', item.id, input.reminder, now); if (item.completed && reminder) Object.assign(reminder, { enabled: false, nextFireAt: null, stoppedAt: now }); result = { ...item, reminder } }
   else if (command === 'calendar_event_delete') { state.calendarEvents = state.calendarEvents.filter(item => item.id !== args.id); state.reminders = state.reminders.filter(item => !(item.ownerType === 'calendarEvent' && item.ownerId === args.id)); result = null }
+  else if (command === 'todo_custom_list_list') result = [...state.todoLists].sort((a, b) => a.createdAt.localeCompare(b.createdAt) || a.id.localeCompare(b.id))
+  else if (command === 'todo_custom_list_create') { const input = normalizeBrowserTodoListInput(args.input); result = { id: crypto.randomUUID(), ...input, createdAt: now, updatedAt: now }; state.todoLists.push(result) }
+  else if (command === 'todo_custom_list_update') { const item = state.todoLists.find(value => value.id === args.id); if (!item) throw new Error('清单不存在'); Object.assign(item, normalizeBrowserTodoListInput(args.input), { updatedAt: now }); result = { ...item } }
+  else if (command === 'todo_custom_list_delete') { if (!state.todoLists.some(value => value.id === args.id)) throw new Error('清单不存在'); state.todoLists = state.todoLists.filter(value => value.id !== args.id); state.todos.forEach(todo => { if (todo.listId === args.id) Object.assign(todo, { listId: null, updatedAt: now }) }); result = null }
   else if (command === 'todo_list') result = state.todos.map(item => ({ ...item, reminder: state.reminders.find(value => value.ownerType === 'todo' && value.ownerId === item.id) || null }))
   else if (command === 'todo_get') { const item = state.todos.find(value => value.id === args.id); result = item ? { ...item, reminder: state.reminders.find(value => value.ownerType === 'todo' && value.ownerId === item.id) || null } : null }
-  else if (command === 'todo_create') { const input = args.input || {}; const id = crypto.randomUUID(); const reminder = browserPlannerReminder(state, 'todo', id, input.reminder, now); result = { id, title: input.title, notes: input.notes || '', startAt: input.startAt || null, dueAt: input.dueAt || null, priority: input.priority || 'none', completedAt: null, reminder, createdAt: now, updatedAt: now }; state.todos.unshift({ ...result, reminder: undefined }) }
-  else if (command === 'todo_update') { const item = state.todos.find(value => value.id === args.id); if (!item) throw new Error('待办不存在'); const input = args.input || {}; Object.assign(item, input, { updatedAt: now }); const reminder = browserPlannerReminder(state, 'todo', item.id, input.reminder, now); result = { ...item, reminder } }
+  else if (command === 'todo_create') { const input = args.input || {}; const id = crypto.randomUUID(); const listId = input.listId || null; validateBrowserTodoListId(state, listId); const reminder = browserPlannerReminder(state, 'todo', id, input.reminder, now); result = { id, title: input.title, notes: input.notes || '', listId, startAt: input.startAt || null, dueAt: input.dueAt || null, priority: input.priority || 'none', completedAt: null, reminder, createdAt: now, updatedAt: now }; state.todos.unshift({ ...result, reminder: undefined }) }
+  else if (command === 'todo_update') { const item = state.todos.find(value => value.id === args.id); if (!item) throw new Error('待办不存在'); const input = args.input || {}; const listId = Object.hasOwn(input, 'listId') ? input.listId || null : item.listId || null; validateBrowserTodoListId(state, listId); Object.assign(item, input, { listId, updatedAt: now }); const reminder = browserPlannerReminder(state, 'todo', item.id, input.reminder, now); result = { ...item, reminder } }
   else if (command === 'todo_set_completed') { const item = state.todos.find(value => value.id === args.id); if (!item) throw new Error('待办不存在'); item.completedAt = args.completed ? now : null; item.updatedAt = now; const reminder = state.reminders.find(value => value.ownerType === 'todo' && value.ownerId === item.id) || null; if (args.completed && reminder) Object.assign(reminder, { enabled: false, nextFireAt: null, stoppedAt: now }); result = { ...item, reminder } }
   else if (command === 'todo_delete') { state.todos = state.todos.filter(item => item.id !== args.id); state.reminders = state.reminders.filter(item => !(item.ownerType === 'todo' && item.ownerId === args.id)); result = null }
   else if (command === 'reminder_stop') { const reminder = state.reminders.find(item => item.ownerType === args.ownerType && item.ownerId === args.ownerId); if (reminder) Object.assign(reminder, { enabled: false, nextFireAt: null, stoppedAt: now, updatedAt: now }); result = null }
@@ -399,11 +419,11 @@ export async function invoke(command, args = {}) {
   else if (command === 'note_revision_list') result = state.noteRevisions.filter(item => item.noteId === args.noteId)
   else if (command === 'note_revision_get') result = state.noteRevisions.find(item => item.id === args.id)
   else if (command === 'note_revision_restore') { const revision = state.noteRevisions.find(item => item.id === args.id); const note = state.notes.find(item => item.id === revision?.noteId); if (revision && note) { state.noteRevisions.unshift({ id: crypto.randomUUID(), noteId: note.id, title: note.title, contentHtml: note.contentHtml, contentText: note.contentText, contentMarkdown: note.contentMarkdown, reason: 'revision_restore', createdAt: now }); Object.assign(note, { title: revision.title, contentHtml: revision.contentHtml, contentText: revision.contentText, contentMarkdown: revision.contentMarkdown, updatedAt: now }); rebuildBrowserLinks(state) } result = note }
-  else if (command === 'workspace_export') { const exportedNotes = state.notes.filter(note => !note.externalPath); const exportedIds = new Set(exportedNotes.map(note => note.id)); result = { format: 'tiny-note-workspace', version: 4, exportedAt: now, notebooks: state.notebooks, notes: exportedNotes, tags: state.tags.map(({ id, name, createdAt, updatedAt }) => ({ id, name, createdAt, updatedAt })), noteTags: state.noteTags.filter(link => exportedIds.has(link.noteId)).map(({ noteId, tagId }) => ({ noteId, tagId })), knowledgeBases: state.kbs, files: state.libraryFiles.filter(file => file.kind === 'file').map(file => ({ knowledgeBaseId: file.knowledgeBaseId, relativePath: file.relativePath, contentBase64: file.contentBase64 || bytesToBase64(new globalThis.TextEncoder().encode(file.content || '')) })), templates: state.templates, links: state.noteLinks.filter(link => exportedIds.has(link.sourceNoteId) && exportedIds.has(link.targetNoteId)), imageGenerations: state.imageGenerations, imageAssets: state.imageAssets.map(({ dataUri, ...asset }) => ({ ...asset, contentBase64: String(dataUri || '').split(',')[1] || '' })), calendarEvents: state.calendarEvents, todos: state.todos, reminders: state.reminders, settings: state.settings || { theme: 'system', language: 'zh-CN', fimEnabled: false } } }
+  else if (command === 'workspace_export') { const exportedNotes = state.notes.filter(note => !note.externalPath); const exportedIds = new Set(exportedNotes.map(note => note.id)); result = { format: 'tiny-note-workspace', version: 5, exportedAt: now, notebooks: state.notebooks, notes: exportedNotes, tags: state.tags.map(({ id, name, createdAt, updatedAt }) => ({ id, name, createdAt, updatedAt })), noteTags: state.noteTags.filter(link => exportedIds.has(link.noteId)).map(({ noteId, tagId }) => ({ noteId, tagId })), knowledgeBases: state.kbs, files: state.libraryFiles.filter(file => file.kind === 'file').map(file => ({ knowledgeBaseId: file.knowledgeBaseId, relativePath: file.relativePath, contentBase64: file.contentBase64 || bytesToBase64(new globalThis.TextEncoder().encode(file.content || '')) })), templates: state.templates, links: state.noteLinks.filter(link => exportedIds.has(link.sourceNoteId) && exportedIds.has(link.targetNoteId)), imageGenerations: state.imageGenerations, imageAssets: state.imageAssets.map(({ dataUri, ...asset }) => ({ ...asset, contentBase64: String(dataUri || '').split(',')[1] || '' })), calendarEvents: state.calendarEvents, todoLists: state.todoLists, todos: state.todos, reminders: state.reminders, settings: state.settings || { theme: 'system', language: 'zh-CN', fimEnabled: false } } }
   else if (command === 'workspace_import') {
     if (!args.request?.replaceExisting) throw new Error('恢复工作区前需要确认替换现有数据')
     const backup = args.request.backup
-    if (backup?.format !== 'tiny-note-workspace' || ![1, 2, 3, 4].includes(backup.version)) throw new Error('不支持的备份文件')
+    if (backup?.format !== 'tiny-note-workspace' || ![1, 2, 3, 4, 5].includes(backup.version)) throw new Error('不支持的备份文件')
     const backupNotebooks = backup.notebooks || []
     for (const notebook of backupNotebooks) {
       const visited = new Set([notebook.id])
@@ -417,6 +437,8 @@ export async function invoke(command, args = {}) {
       }
     }
     if ((backup.noteTags || []).some(link => !(backup.notes || []).some(note => note.id === link.noteId) || !(backup.tags || []).some(tag => tag.id === link.tagId))) throw new Error('备份中的标签关联无效')
+    const backupTodoLists = backup.version >= 5 ? (backup.todoLists || []) : []
+    if ((backup.todos || []).some(todo => todo.listId && !backupTodoLists.some(todoList => todoList.id === todo.listId))) throw new Error('备份中的待办清单引用无效')
     state.imageGenerations = backup.imageGenerations || []
     state.imageAssets = backup.imageAssets || []
     for (const file of backup.files || []) {
@@ -450,7 +472,8 @@ export async function invoke(command, args = {}) {
     rebuildBrowserLinks(state)
     state.settings = backup.settings || state.settings
     state.calendarEvents = backup.calendarEvents || []
-    state.todos = backup.todos || []
+    state.todoLists = backupTodoLists.map(item => ({ ...item }))
+    state.todos = (backup.todos || []).map(todo => ({ ...todo, listId: backup.version >= 5 ? todo.listId || null : null }))
     state.reminders = backup.reminders || []
     result = null
   }

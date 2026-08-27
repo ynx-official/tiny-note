@@ -1192,4 +1192,104 @@ mod tests {
                 .enabled
         );
     }
+
+    #[test]
+    fn schema_migrates_existing_todos_for_custom_lists() {
+        let conn = Connection::open_in_memory().unwrap();
+        conn.execute_batch(
+            "CREATE TABLE todos (
+               id TEXT PRIMARY KEY,
+               title TEXT NOT NULL,
+               notes TEXT NOT NULL DEFAULT '',
+               due_at TEXT,
+               priority TEXT NOT NULL DEFAULT 'none',
+               completed_at TEXT,
+               created_at TEXT NOT NULL,
+               updated_at TEXT NOT NULL
+             );",
+        )
+        .unwrap();
+        init_schema(&conn).unwrap();
+        let columns = conn
+            .prepare("PRAGMA table_info(todos)")
+            .unwrap()
+            .query_map([], |row| row.get::<_, String>(1))
+            .unwrap()
+            .collect::<Result<Vec<_>, _>>()
+            .unwrap();
+        assert!(columns.iter().any(|column| column == "start_at"));
+        assert!(columns.iter().any(|column| column == "list_id"));
+        assert!(conn
+            .query_row(
+                "SELECT EXISTS(SELECT 1 FROM sqlite_master WHERE type='table' AND name='todo_lists')",
+                [],
+                |row| row.get::<_, bool>(0),
+            )
+            .unwrap());
+    }
+
+    #[test]
+    fn custom_lists_round_trip_and_reject_invalid_backup_references() {
+        let conn = db();
+        let timestamp = now();
+        let todo_list = TodoListDto {
+            id: "list-1".into(),
+            name: "工作".into(),
+            color: "#1E88E5".into(),
+            created_at: timestamp.clone(),
+            updated_at: timestamp.clone(),
+        };
+        let todo = TodoDto {
+            id: "todo-1".into(),
+            title: "整理周报".into(),
+            notes: String::new(),
+            list_id: Some(todo_list.id.clone()),
+            start_at: None,
+            due_at: None,
+            priority: "none".into(),
+            completed_at: None,
+            reminder: None,
+            created_at: timestamp.clone(),
+            updated_at: timestamp,
+        };
+        import_data(
+            &conn,
+            &[],
+            std::slice::from_ref(&todo_list),
+            std::slice::from_ref(&todo),
+            &[],
+        )
+        .unwrap();
+        let (_, lists, todos, _) = export_data(&conn).unwrap();
+        assert_eq!(lists[0].name, "工作");
+        assert_eq!(todos[0].list_id.as_deref(), Some("list-1"));
+
+        let invalid_todo = TodoDto {
+            list_id: Some("missing".into()),
+            ..todo
+        };
+        assert!(import_data(&conn, &[], &[], &[invalid_todo], &[]).is_err());
+        assert_eq!(
+            conn.query_row("SELECT COUNT(*) FROM todo_lists", [], |row| row
+                .get::<_, i64>(0))
+                .unwrap(),
+            1
+        );
+    }
+
+    #[test]
+    fn custom_list_input_is_trimmed_and_color_normalized() {
+        let (name, color) = normalized_todo_list(&TodoListInput {
+            name: "  个人  ".into(),
+            color: "#5c6bc0".into(),
+        })
+        .unwrap();
+        assert_eq!(name, "个人");
+        assert_eq!(color, "#5C6BC0");
+        assert!(normalized_todo_list(&TodoListInput {
+            name: String::new(),
+            color: "#5C6BC0".into(),
+        })
+        .is_err());
+    }
 }

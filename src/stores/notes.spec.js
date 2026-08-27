@@ -147,7 +147,7 @@ describe('notes store', () => {
     expect(restored).toMatchObject({ contentHtml: '<p>旧版</p>', contentText: '旧版', contentMarkdown: '旧版源码' })
   })
 
-  it('supports templates, normalized tags, pinning, backlinks and workspace backup v4', async () => {
+  it('supports templates, normalized tags, pinning, backlinks and workspace backup v5', async () => {
     const store = useNotesStore()
     await store.load()
     await store.loadTemplates()
@@ -170,7 +170,7 @@ describe('notes store', () => {
 
     const backup = await store.exportWorkspace()
     expect(backup.format).toBe('tiny-note-workspace')
-    expect(backup.version).toBe(4)
+    expect(backup.version).toBe(5)
     expect(backup.tags).toEqual([expect.objectContaining({ id: tag.id, name: '项目' })])
     expect(backup.noteTags).toContainEqual({ noteId: source.id, tagId: tag.id })
     expect(backup.notes.some(note => note.id === source.id && note.pinned)).toBe(true)
