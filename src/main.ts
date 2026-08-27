@@ -31,6 +31,11 @@ async function bootstrapMainWindow() {
   const app = createApp(appModule.default).use(pinia).use(router).use(i18n)
 
   const appStore = appStoreModule.useAppStore(pinia)
+  const bootShell = document.querySelector<HTMLElement>('.boot-shell')
+  if (bootShell) {
+    bootShell.classList.add('is-ready')
+    await new Promise(resolve => window.setTimeout(resolve, 360))
+  }
   void runMainWindowBootstrap({
     mountShell: () => app.mount('#app'),
     hydrate: async () => {
