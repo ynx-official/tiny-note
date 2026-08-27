@@ -1,4 +1,4 @@
-<script setup>
+<script setup lang="ts">
 import { computed } from 'vue'
 import { renderMarkdown } from '../utils/markdown'
 
@@ -9,8 +9,8 @@ const props = defineProps({
 
 const renderedContent = computed(() => renderMarkdown(props.content))
 
-async function copyCode(event) {
-  const button = event.target.closest('.markdown-code-copy')
+async function copyCode(event: MouseEvent) {
+  const button = (event.target as HTMLElement | null)?.closest<HTMLButtonElement>('.markdown-code-copy')
   if (!button) return
   const code = button.closest('.markdown-code-block')?.querySelector('code')?.textContent
   if (code == null) return

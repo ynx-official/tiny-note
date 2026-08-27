@@ -1,4 +1,4 @@
-<script setup>
+<script setup lang="ts">
 import { computed, nextTick, ref, watch } from 'vue'
 import { AlertCircle, CheckCircle2, Info, TriangleAlert, X } from 'lucide-vue-next'
 import { useTasksStore } from '../stores/tasks'
@@ -9,13 +9,16 @@ import {
   feedbackState,
   runToastAction
 } from '../services/appFeedback'
+import type { FeedbackTone, Toast } from '../services/appFeedback'
+import type { Component } from 'vue'
 
 const tasks = useTasksStore()
-const confirmButton = ref(null)
-const toneIcons = { success: CheckCircle2, warning: TriangleAlert, error: AlertCircle, info: Info }
+const confirmButton = ref<HTMLButtonElement | null>(null)
+const toneIcons: Partial<Record<FeedbackTone, Component>> = { success: CheckCircle2, warning: TriangleAlert, error: AlertCircle, info: Info }
+type DisplayToast = Toast & { source: 'app' | 'task' }
 const allToasts = computed(() => [
-  ...feedbackState.toasts.map(item => ({ ...item, source: 'app' })),
-  ...tasks.notices.map(item => ({ ...item, source: 'task', tone: item.tone || 'info' }))
+  ...feedbackState.toasts.map(item => ({ ...item, source: 'app' as const })),
+  ...tasks.notices.map(item => ({ ...item, source: 'task' as const, tone: item.tone || 'info', actionLabel: '', onAction: null }))
 ])
 
 watch(() => feedbackState.dialog.visible, async visible => {
@@ -24,12 +27,12 @@ watch(() => feedbackState.dialog.visible, async visible => {
   confirmButton.value?.focus()
 })
 
-function dismiss(item) {
+function dismiss(item: DisplayToast) {
   if (item.source === 'task') tasks.dismissNotice(item.id)
   else dismissToast(item.id)
 }
 
-function activate(item) {
+function activate(item: DisplayToast) {
   if (item.source === 'task') {
     tasks.dismissNotice(item.id)
     return

@@ -1,23 +1,17 @@
-<script setup>
+<script setup lang="ts">
 import { computed, nextTick, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue'
 import { CalendarDays, Check, ChevronLeft, ChevronRight, Clock3, X } from 'lucide-vue-next'
 import { localDateValue, localTimeValue, roundedFutureDate } from '../utils/dateTime'
 
-const props = defineProps({
-  modelValue: { type: String, default: '' },
-  mode: { type: String, default: 'datetime', validator: value => ['date', 'time', 'datetime'].includes(value) },
-  placeholder: { type: String, default: '选择日期和时间' },
-  locale: { type: String, default: 'zh-CN' },
-  minuteStep: { type: Number, default: 5 },
-  clearable: { type: Boolean, default: true },
-  disabled: Boolean
+const props = withDefaults(defineProps<{ modelValue?: string; mode?: 'date' | 'time' | 'datetime'; placeholder?: string; locale?: string; minuteStep?: number; clearable?: boolean; disabled?: boolean }>(), {
+  modelValue: '', mode: 'datetime', placeholder: '选择日期和时间', locale: 'zh-CN', minuteStep: 5, clearable: true, disabled: false
 })
 const emit = defineEmits(['update:modelValue', 'change'])
-const root = ref(null)
-const trigger = ref(null)
-const panel = ref(null)
+const root = ref<HTMLElement | null>(null)
+const trigger = ref<HTMLElement | null>(null)
+const panel = ref<HTMLElement | null>(null)
 const open = ref(false)
-const position = reactive({ left: '0px', top: '0px', width: '320px' })
+const position = reactive({ left: '0px', top: '0px', bottom: 'auto', width: '320px' })
 const cursor = ref(new Date())
 const zh = computed(() => props.locale === 'zh-CN')
 const copy = computed(() => zh.value ? { today: '今天', tomorrow: '明天', nextWeek: '下周', previousMonth: '上个月', nextMonth: '下个月', time: '时间', hour: '小时', minute: '分钟', now: '现在', clear: '清空', done: '完成', dialog: '日期和时间选择器' } : { today: 'Today', tomorrow: 'Tomorrow', nextWeek: 'Next week', previousMonth: 'Previous month', nextMonth: 'Next month', time: 'Time', hour: 'Hour', minute: 'Minute', now: 'Now', clear: 'Clear', done: 'Done', dialog: 'Date and time picker' })
@@ -70,10 +64,10 @@ function commit(date = datePart.value, time = timePart.value) {
   emit('update:modelValue', next)
   emit('change', next)
 }
-function chooseDate(value) { commit(value, timePart.value) }
-function chooseTime(hour, minute) { commit(datePart.value, hour + ':' + minute) }
-function setHour(event) { chooseTime(event.target.value, selectedMinute.value) }
-function setMinute(event) { chooseTime(selectedHour.value, event.target.value) }
+function chooseDate(value: string) { commit(value, timePart.value) }
+function chooseTime(hour: string, minute: string) { commit(datePart.value, hour + ':' + minute) }
+function setHour(event: Event) { chooseTime((event.target as HTMLSelectElement).value, selectedMinute.value) }
+function setMinute(event: Event) { chooseTime(selectedHour.value, (event.target as HTMLSelectElement).value) }
 function chooseToday(offset = 0) {
   const date = new Date()
   date.setDate(date.getDate() + offset)
@@ -87,7 +81,7 @@ function chooseNow() {
   cursor.value = date
 }
 function clear() { emit('update:modelValue', ''); emit('change', ''); open.value = false }
-function moveMonth(amount) { const date = new Date(cursor.value); date.setDate(1); date.setMonth(date.getMonth() + amount); cursor.value = date }
+function moveMonth(amount: number) { const date = new Date(cursor.value); date.setDate(1); date.setMonth(date.getMonth() + amount); cursor.value = date }
 function syncCursor() {
   const value = selectedDate.value
   if (!value) { cursor.value = new Date(); return }
@@ -114,11 +108,11 @@ async function toggle() {
   open.value = !open.value
   if (open.value) { syncCursor(); await nextTick(); updatePosition() }
 }
-function closeOnOutside(event) {
-  if (!open.value || root.value?.contains(event.target) || panel.value?.contains(event.target)) return
+function closeOnOutside(event: PointerEvent) {
+  if (!open.value || root.value?.contains(event.target as Node) || panel.value?.contains(event.target as Node)) return
   open.value = false
 }
-function handleKey(event) { if (event.key === 'Escape') open.value = false }
+function handleKey(event: KeyboardEvent) { if (event.key === 'Escape') open.value = false }
 watch(() => props.modelValue, () => { if (open.value) syncCursor() })
 onMounted(() => {
   document.addEventListener('pointerdown', closeOnOutside)

@@ -3780,7 +3780,7 @@ mod tests {
             std::env::temp_dir().join(format!("tiny-note-agent-test-{}", Uuid::new_v4()));
         fs::create_dir_all(&data_dir).unwrap();
         AppState {
-            db: Arc::new(Mutex::new(conn)),
+            db: Arc::new(crate::Database::ready(conn)),
             data_dir,
             cancels: Arc::new(Mutex::new(HashMap::new())),
             exported_files: Arc::new(Mutex::new(HashSet::new())),

@@ -7,10 +7,11 @@ use std::{
     collections::{HashMap, HashSet},
     fs::{self, OpenOptions},
     io::Write,
+    ops::{Deref, DerefMut},
     path::{Component, Path, PathBuf},
     sync::{
         atomic::{AtomicBool, Ordering},
-        Arc, Mutex,
+        Arc, Condvar, Mutex, MutexGuard,
     },
     thread,
 };
@@ -95,10 +96,93 @@ impl AppError {
 
 #[derive(Clone)]
 pub struct AppState {
-    db: Arc<Mutex<Connection>>,
+    db: Arc<Database>,
     data_dir: PathBuf,
     cancels: Arc<Mutex<HashMap<String, Arc<AtomicBool>>>>,
     exported_files: Arc<Mutex<HashSet<PathBuf>>>,
+}
+
+struct Database {
+    state: Mutex<DatabaseState>,
+    ready: Condvar,
+}
+
+struct DatabaseState {
+    connection: Option<Connection>,
+    error: Option<AppError>,
+}
+
+struct DatabaseGuard<'a>(MutexGuard<'a, DatabaseState>);
+
+impl Deref for DatabaseGuard<'_> {
+    type Target = Connection;
+
+    fn deref(&self) -> &Self::Target {
+        self.0
+            .connection
+            .as_ref()
+            .expect("database guard requires a ready connection")
+    }
+}
+
+impl DerefMut for DatabaseGuard<'_> {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        self.0
+            .connection
+            .as_mut()
+            .expect("database guard requires a ready connection")
+    }
+}
+
+impl Database {
+    fn pending() -> Self {
+        Self {
+            state: Mutex::new(DatabaseState {
+                connection: None,
+                error: None,
+            }),
+            ready: Condvar::new(),
+        }
+    }
+
+    #[cfg(test)]
+    fn ready(connection: Connection) -> Self {
+        Self {
+            state: Mutex::new(DatabaseState {
+                connection: Some(connection),
+                error: None,
+            }),
+            ready: Condvar::new(),
+        }
+    }
+
+    fn complete(&self, result: Result<Connection, AppError>) {
+        let mut state = self.state.lock().unwrap_or_else(|error| error.into_inner());
+        match result {
+            Ok(connection) => state.connection = Some(connection),
+            Err(error) => state.error = Some(error),
+        }
+        self.ready.notify_all();
+    }
+
+    fn lock(&self) -> Result<DatabaseGuard<'_>, AppError> {
+        let mut state = self
+            .state
+            .lock()
+            .map_err(|_| AppError::db("database lock poisoned"))?;
+        loop {
+            if state.connection.is_some() {
+                return Ok(DatabaseGuard(state));
+            }
+            if let Some(error) = state.error.as_ref() {
+                return Err(error.clone());
+            }
+            state = self
+                .ready
+                .wait(state)
+                .map_err(|_| AppError::db("database lock poisoned"))?;
+        }
+    }
 }
 
 #[derive(Default)]
@@ -1276,19 +1360,30 @@ fn init_database(conn: &Connection) -> Result<(), AppError> {
 
 fn app_state(app: &tauri::AppHandle) -> Result<AppState, AppError> {
     let data_dir = app.path().app_data_dir().map_err(AppError::fs)?;
-    fs::create_dir_all(data_dir.join("knowledge")).map_err(AppError::fs)?;
-    fs::create_dir_all(data_dir.join("attachments")).map_err(AppError::fs)?;
-    let conn = Connection::open(data_dir.join("tiny-note.db")).map_err(AppError::db)?;
-    init_database(&conn)?;
-    let state = AppState {
-        db: Arc::new(Mutex::new(conn)),
+    Ok(AppState {
+        db: Arc::new(Database::pending()),
         data_dir,
         cancels: Arc::new(Mutex::new(HashMap::new())),
         exported_files: Arc::new(Mutex::new(HashSet::new())),
-    };
-    ensure_default_kbs(&state)?;
-    migrate_note_knowledge_base_links(&state)?;
-    Ok(state)
+    })
+}
+
+fn initialize_app_state(state: &AppState) -> Result<(), AppError> {
+    let result = (|| {
+        fs::create_dir_all(state.data_dir.join("knowledge")).map_err(AppError::fs)?;
+        fs::create_dir_all(state.data_dir.join("attachments")).map_err(AppError::fs)?;
+        let conn = Connection::open(state.data_dir.join("tiny-note.db")).map_err(AppError::db)?;
+        init_database(&conn)?;
+        Ok(conn)
+    })();
+    let failed = result.as_ref().err().cloned();
+    state.db.complete(result);
+    if let Some(error) = failed {
+        return Err(error);
+    }
+    ensure_default_kbs(state)?;
+    migrate_note_knowledge_base_links(state)?;
+    Ok(())
 }
 
 fn migrate_note_knowledge_base_links(state: &AppState) -> Result<(), AppError> {
@@ -5694,9 +5789,61 @@ fn show_main_window(app: &AppHandle) {
     }
 }
 
+fn create_tray(app: &AppHandle) -> tauri::Result<()> {
+    let show = MenuItem::with_id(app, "show", "打开 Tiny Note", true, None::<&str>)?;
+    let quit = MenuItem::with_id(app, "quit", "彻底退出", true, None::<&str>)?;
+    let menu = Menu::with_items(app, &[&show, &quit])?;
+    let mut tray = TrayIconBuilder::with_id("tiny-note-tray")
+        .menu(&menu)
+        .show_menu_on_left_click(false)
+        .on_menu_event(|app, event| match event.id.as_ref() {
+            "show" => show_main_window(app),
+            "quit" => app.exit(0),
+            _ => {}
+        })
+        .on_tray_icon_event(|tray, event| {
+            if let TrayIconEvent::Click {
+                position,
+                button: MouseButton::Left,
+                button_state: MouseButtonState::Up,
+                ..
+            } = event
+            {
+                toggle_tray_panel(tray.app_handle(), position);
+            }
+        });
+    if let Some(icon) = app.default_window_icon() {
+        tray = tray.icon(icon.clone());
+    }
+    tray.build(app)?;
+    Ok(())
+}
+
 fn toggle_tray_panel(app: &AppHandle, click_position: PhysicalPosition<f64>) {
-    let Some(window) = app.get_webview_window(TRAY_PANEL_LABEL) else {
-        return;
+    let window = match app.get_webview_window(TRAY_PANEL_LABEL) {
+        Some(window) => window,
+        None => match WebviewWindowBuilder::new(
+            app,
+            TRAY_PANEL_LABEL,
+            WebviewUrl::App("tray.html".into()),
+        )
+        .title("Tiny Note 待办")
+        .inner_size(400.0, 640.0)
+        .resizable(false)
+        .maximizable(false)
+        .minimizable(false)
+        .closable(false)
+        .decorations(false)
+        .shadow(true)
+        .always_on_top(true)
+        .visible_on_all_workspaces(true)
+        .skip_taskbar(true)
+        .visible(false)
+        .build()
+        {
+            Ok(window) => window,
+            Err(_) => return,
+        },
     };
     if window.is_visible().unwrap_or(false) {
         let _ = window.hide();
@@ -5745,6 +5892,38 @@ fn tray_open_main(app: AppHandle, route: String) -> Result<(), AppError> {
     Ok(())
 }
 
+#[tauri::command]
+fn startup_probe(state: String, browser_timestamp: f64) {
+    if !matches!(
+        state.as_str(),
+        "static-shell" | "shell-ready" | "ready" | "error"
+    ) {
+        return;
+    }
+    let Ok(report_path) = std::env::var("TINY_NOTE_STARTUP_REPORT") else {
+        return;
+    };
+    let path = PathBuf::from(report_path);
+    if path.extension().and_then(|value| value.to_str()) != Some("jsonl") {
+        return;
+    }
+    let Some(parent) = path.parent() else {
+        return;
+    };
+    let allowed_parent = fs::canonicalize(std::env::temp_dir()).ok();
+    if fs::canonicalize(parent).ok() != allowed_parent {
+        return;
+    }
+    let Ok(mut report) = OpenOptions::new().create(true).append(true).open(path) else {
+        return;
+    };
+    let payload = serde_json::json!({
+        "state": state,
+        "browserTimestamp": browser_timestamp,
+    });
+    let _ = writeln!(report, "{payload}");
+}
+
 pub fn run() {
     let app = tauri::Builder::default()
         .plugin(tauri_plugin_single_instance::init(|app, args, cwd| {
@@ -5767,10 +5946,10 @@ pub fn run() {
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_notification::init())
         .on_window_event(|window, event| {
-            if window.label() == TRAY_PANEL_LABEL {
-                if matches!(event, tauri::WindowEvent::Focused(false)) {
-                    let _ = window.hide();
-                }
+            if window.label() == TRAY_PANEL_LABEL
+                && matches!(event, tauri::WindowEvent::Focused(false))
+            {
+                let _ = window.hide();
             }
             if let tauri::WindowEvent::CloseRequested { api, .. } = event {
                 api.prevent_close();
@@ -5780,7 +5959,13 @@ pub fn run() {
         .setup(|app| {
             let state =
                 app_state(app.handle()).map_err(|e| Box::new(e) as Box<dyn std::error::Error>)?;
-            app.manage(state);
+            app.manage(state.clone());
+            thread::spawn(move || {
+                thread::sleep(std::time::Duration::from_millis(250));
+                if let Err(error) = initialize_app_state(&state) {
+                    eprintln!("Tiny Note database initialization failed: {error}");
+                }
+            });
             let pending = PendingMarkdownFiles::default();
             let cwd = std::env::current_dir().unwrap_or_default();
             enqueue_markdown_paths(
@@ -5790,51 +5975,17 @@ pub fn run() {
             );
             app.manage(pending);
 
-            WebviewWindowBuilder::new(app, TRAY_PANEL_LABEL, WebviewUrl::App("index.html".into()))
-                .title("Tiny Note 待办")
-                .inner_size(400.0, 640.0)
-                .resizable(false)
-                .maximizable(false)
-                .minimizable(false)
-                .closable(false)
-                .decorations(false)
-                .shadow(true)
-                .always_on_top(true)
-                .visible_on_all_workspaces(true)
-                .skip_taskbar(true)
-                .visible(false)
-                .initialization_script("window.__TINY_NOTE_TRAY_PANEL__ = true;")
-                .build()?;
-
-            let show = MenuItem::with_id(app, "show", "打开 Tiny Note", true, None::<&str>)?;
-            let quit = MenuItem::with_id(app, "quit", "彻底退出", true, None::<&str>)?;
-            let menu = Menu::with_items(app, &[&show, &quit])?;
-            let mut tray = TrayIconBuilder::with_id("tiny-note-tray")
-                .menu(&menu)
-                .show_menu_on_left_click(false)
-                .on_menu_event(|app, event| match event.id.as_ref() {
-                    "show" => {
-                        show_main_window(app);
+            let app_handle = app.handle().clone();
+            thread::spawn(move || {
+                thread::sleep(std::time::Duration::from_millis(250));
+                let main_thread_handle = app_handle.clone();
+                let _ = app_handle.run_on_main_thread(move || {
+                    if let Err(error) = create_tray(&main_thread_handle) {
+                        eprintln!("Tiny Note tray initialization failed: {error}");
                     }
-                    "quit" => app.exit(0),
-                    _ => {}
-                })
-                .on_tray_icon_event(|tray, event| {
-                    if let TrayIconEvent::Click {
-                        position,
-                        button: MouseButton::Left,
-                        button_state: MouseButtonState::Up,
-                        ..
-                    } = event
-                    {
-                        toggle_tray_panel(tray.app_handle(), position);
-                    }
+                    planner::start_reminder_scheduler(main_thread_handle.clone());
                 });
-            if let Some(icon) = app.default_window_icon() {
-                tray = tray.icon(icon.clone());
-            }
-            tray.build(app)?;
-            planner::start_reminder_scheduler(app.handle().clone());
+            });
 
             Ok(())
         })
@@ -5949,6 +6100,7 @@ pub fn run() {
             planner::todo_set_completed,
             planner::reminder_stop,
             tray_open_main,
+            startup_probe,
             agent::agent_invoke,
             agent::agent_resume,
             agent::agent_respond_input,
@@ -5993,6 +6145,38 @@ pub fn run() {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn pending_database_blocks_until_initialization_completes() {
+        let database = Arc::new(Database::pending());
+        let worker_database = database.clone();
+        let (sender, receiver) = std::sync::mpsc::channel();
+        let worker = thread::spawn(move || {
+            let connection = worker_database.lock().unwrap();
+            sender
+                .send(connection.query_row("SELECT 1", [], |row| row.get::<_, i64>(0)))
+                .unwrap();
+        });
+
+        assert!(receiver
+            .recv_timeout(std::time::Duration::from_millis(20))
+            .is_err());
+        database.complete(Ok(Connection::open_in_memory().unwrap()));
+        assert_eq!(receiver.recv().unwrap().unwrap(), 1);
+        worker.join().unwrap();
+    }
+
+    #[test]
+    fn pending_database_propagates_initialization_failure() {
+        let database = Database::pending();
+        database.complete(Err(AppError::db("initialization failed")));
+        let error = match database.lock() {
+            Ok(_) => panic!("failed initialization must not expose a connection"),
+            Err(error) => error,
+        };
+        assert!(matches!(error, AppError::Database { .. }));
+    }
+
     #[test]
     fn external_open_only_queues_markdown_paths_once() {
         let pending = PendingMarkdownFiles::default();
@@ -6174,7 +6358,7 @@ mod tests {
         fs::write(&exported, b"pdf").unwrap();
         fs::write(&unrelated, b"other").unwrap();
         let state = AppState {
-            db: Arc::new(Mutex::new(Connection::open_in_memory().unwrap())),
+            db: Arc::new(Database::ready(Connection::open_in_memory().unwrap())),
             data_dir: directory.path().to_path_buf(),
             cancels: Arc::new(Mutex::new(HashMap::new())),
             exported_files: Arc::new(Mutex::new(HashSet::from([

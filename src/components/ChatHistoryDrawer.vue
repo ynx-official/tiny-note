@@ -1,12 +1,13 @@
-<script setup>
+<script setup lang="ts">
 import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
 import { Clock3, Loader2, MessageSquare, Trash2, X } from 'lucide-vue-next'
 import { invoke } from '../services/tauri'
 import { requestConfirmation } from '../services/appFeedback'
+import { errorMessage, type ChatConversation } from '../types/domain'
 
-const props = defineProps({ modelValue: { type: Boolean, default: false } })
-const emit = defineEmits(['update:modelValue', 'open'])
-const conversations = ref([])
+const props = withDefaults(defineProps<{ modelValue?: boolean }>(), { modelValue: false })
+const emit = defineEmits<{ 'update:modelValue': [value: boolean]; open: [id: string] }>()
+const conversations = ref<ChatConversation[]>([])
 const loading = ref(false)
 const error = ref('')
 const visible = computed({ get: () => props.modelValue, set: value => emit('update:modelValue', value) })
@@ -14,23 +15,23 @@ const visible = computed({ get: () => props.modelValue, set: value => emit('upda
 async function load() {
   loading.value = true
   error.value = ''
-  try { conversations.value = await invoke('chat_list') } catch (cause) { error.value = cause?.message || '历史记录读取失败' } finally { loading.value = false }
+  try { conversations.value = await invoke('chat_list') } catch (cause) { error.value = errorMessage(cause, '历史记录读取失败') } finally { loading.value = false }
 }
-function openConversation(id) { emit('open', id); visible.value = false }
-function modeLabel(mode) { return mode === 'agent' ? 'Tiny Agent' : '对话' }
-async function remove(event, id) {
+function openConversation(id: string) { emit('open', id); visible.value = false }
+function modeLabel(mode: string) { return mode === 'agent' ? 'Tiny Agent' : '对话' }
+async function remove(event: MouseEvent, id: string) {
   event.stopPropagation()
   if (!(await requestConfirmation({ title: '删除对话', message: '确定删除这条对话及全部消息吗？删除后无法恢复。', tone: 'danger', confirmLabel: '删除' }))) return
   await invoke('chat_delete', { id })
   window.dispatchEvent(new CustomEvent('tiny-note-chat-deleted', { detail: { id } }))
   await load()
 }
-function formatTime(value) {
+function formatTime(value: string) {
   const date = new Date(value)
   const today = new Date()
   return date.toDateString() === today.toDateString() ? date.toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' }) : date.toLocaleDateString('zh-CN', { month: 'numeric', day: 'numeric' })
 }
-function handleEscape(event) { if (event.key === 'Escape' && visible.value) visible.value = false }
+function handleEscape(event: KeyboardEvent) { if (event.key === 'Escape' && visible.value) visible.value = false }
 watch(visible, value => { if (value) load() })
 onMounted(() => { document.addEventListener('keydown', handleEscape); window.addEventListener('tiny-note-chat-updated', load) })
 onUnmounted(() => { document.removeEventListener('keydown', handleEscape); window.removeEventListener('tiny-note-chat-updated', load) })

@@ -1,14 +1,15 @@
-<script setup>
+<script setup lang="ts">
 import { computed, onMounted, ref } from 'vue'
 import { Brain, Cable, CheckCircle2, FolderTree, LibraryBig, LoaderCircle, NotebookPen, RefreshCw, ShieldCheck, Sparkles, TerminalSquare, UsersRound, Wrench } from 'lucide-vue-next'
 import { invoke } from '../services/tauri'
+import { errorMessage, type AgentTool } from '../types/domain'
 
-const tools = ref([])
+const tools = ref<AgentTool[]>([])
 const loading = ref(false)
 const saving = ref(false)
 const error = ref('')
 
-const toolMeta = {
+const toolMeta: Record<string, { label: string; group: string; permission: string }> = {
   get_current_time: { label: '获取当前时间', group: 'system', permission: '只读' },
   run_sandbox_script: { label: '运行隔离计算脚本', group: 'system', permission: '计算' },
   list_notes: { label: '列出笔记', group: 'notes', permission: '只读' },
@@ -65,24 +66,24 @@ async function loadTools() {
   loading.value = true
   error.value = ''
   try { tools.value = await invoke('agent_list_tools') || [] }
-  catch (cause) { tools.value = []; error.value = cause?.message || cause?.code || '工具目录读取失败' }
+  catch (cause) { tools.value = []; error.value = errorMessage(cause, '工具目录读取失败') }
   finally { loading.value = false }
 }
 
-async function updatePolicy(toolNames, requireApproval) {
+async function updatePolicy(toolNames: string[], requireApproval: boolean | null) {
   if (!toolNames.length || saving.value) return
   saving.value = true
   error.value = ''
   try {
     tools.value = await invoke('agent_tool_policy_update', { request: { toolNames, requireApproval } }) || []
   } catch (cause) {
-    error.value = cause?.message || cause?.code || '审批策略保存失败'
+    error.value = errorMessage(cause, '审批策略保存失败')
   } finally {
     saving.value = false
   }
 }
 
-function togglePolicy(tool) {
+function togglePolicy(tool: AgentTool) {
   updatePolicy([tool.name], !tool.requireApproval)
 }
 

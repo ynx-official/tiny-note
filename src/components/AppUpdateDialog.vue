@@ -1,16 +1,17 @@
-<script setup>
+<script setup lang="ts">
 import { nextTick, onMounted, onUnmounted, ref } from 'vue'
 import { Download, RefreshCw, Sparkles, X } from 'lucide-vue-next'
 import { appUpdater, UPDATE_CHECK_INTERVAL_MS, UPDATE_RETRY_INTERVAL_MS } from '../services/appUpdater'
+import { errorMessage } from '../types/domain'
 
 const visible = ref(false)
 const checking = ref(false)
 const installing = ref(false)
-const progress = ref(null)
-const info = ref(null)
+const progress = ref<number | null>(null)
+const info = ref<Awaited<ReturnType<typeof appUpdater.check>> | null>(null)
 const error = ref('')
-const dialogRef = ref(null)
-let autoCheckTimer = null
+const dialogRef = ref<HTMLElement | null>(null)
+let autoCheckTimer: number | null = null
 
 function isChinese() { return (localStorage.getItem('tiny-note-language') || 'zh-CN') !== 'en' }
 function close() { if (!installing.value) visible.value = false }
@@ -30,15 +31,15 @@ async function checkForUpdates({ force = true, openWhenAvailable = true } = {}) 
     }
     return result
   } catch (reason) {
-    error.value = reason?.message || (isChinese() ? '检查更新失败，请稍后重试。' : 'Unable to check for updates.')
+    error.value = errorMessage(reason, isChinese() ? '检查更新失败，请稍后重试。' : 'Unable to check for updates.')
     return { failed: true }
   } finally {
     checking.value = false
   }
 }
 
-function scheduleAutomaticCheck(delay) {
-  window.clearTimeout(autoCheckTimer)
+function scheduleAutomaticCheck(delay: number) {
+  if (autoCheckTimer != null) window.clearTimeout(autoCheckTimer)
   autoCheckTimer = window.setTimeout(runAutomaticCheck, Math.max(1000, delay))
 }
 
@@ -46,8 +47,8 @@ async function runAutomaticCheck() {
   const result = await checkForUpdates({ force: false })
   const nextDelay = result?.failed
     ? UPDATE_RETRY_INTERVAL_MS
-    : (result?.retryAfterMs ?? UPDATE_CHECK_INTERVAL_MS)
-  scheduleAutomaticCheck(nextDelay)
+    : (result && 'retryAfterMs' in result ? result.retryAfterMs : UPDATE_CHECK_INTERVAL_MS)
+  scheduleAutomaticCheck(nextDelay ?? UPDATE_CHECK_INTERVAL_MS)
 }
 
 async function install() {
@@ -59,13 +60,13 @@ async function install() {
     await appUpdater.downloadAndInstall(value => { progress.value = value })
     visible.value = false
   } catch (reason) {
-    error.value = reason?.message || (isChinese() ? '更新安装失败，请稍后重试。' : 'Unable to install the update.')
+    error.value = errorMessage(reason, isChinese() ? '更新安装失败，请稍后重试。' : 'Unable to install the update.')
   } finally {
     installing.value = false
   }
 }
 
-function onKeydown(event) {
+function onKeydown(event: KeyboardEvent) {
   if (event.key === 'Escape') close()
 }
 
@@ -75,7 +76,7 @@ onMounted(() => {
 })
 onUnmounted(() => {
   document.removeEventListener('keydown', onKeydown)
-  window.clearTimeout(autoCheckTimer)
+  if (autoCheckTimer != null) window.clearTimeout(autoCheckTimer)
 })
 </script>
 

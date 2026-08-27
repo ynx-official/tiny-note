@@ -1,4 +1,4 @@
-<script setup>
+<script setup lang="ts">
 import { computed, onMounted, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { useRouter } from 'vue-router'
@@ -12,6 +12,7 @@ import { useNotesStore } from '../stores/notes'
 import { useWorkspaceSidebar } from '../utils/workspaceSidebar'
 import { requestPrompt } from '../services/promptDialog'
 import { requestConfirmation, showToast } from '../services/appFeedback'
+import { errorMessage, type KnowledgeBase, type LibraryEntry, type Note } from '../types/domain'
 
 const store = useLibraryStore()
 const notesStore = useNotesStore()
@@ -28,7 +29,7 @@ const searchVisible = ref(false)
 const sorting = ref(false)
 const importing = ref(false)
 const dropActive = ref(false)
-const importInput = ref(null)
+const importInput = ref<HTMLInputElement | null>(null)
 const entries = computed(() => store.entries)
 const knowledgeNotes = computed(() => notesStore.notes.filter(note => note.knowledgeBaseId === store.activeId))
 const personalBases = computed(() => store.bases.filter(base => base.category === 'personal'))
@@ -51,17 +52,18 @@ async function folder() {
   const value = await requestPrompt(t('createFolder'))
   if (value?.trim()) await store.createFolder(value.trim())
 }
-async function importFiles(event) {
-  await importList(Array.from(event.target.files || []))
-  event.target.value = ''
+async function importFiles(event: Event) {
+  const input = event.target as HTMLInputElement
+  await importList(Array.from(input.files || []))
+  input.value = ''
 }
-async function importList(files) {
+async function importList(files: File[]) {
   if (!files.length || !store.activeId) return
   importing.value = true
   try {
     await store.importFiles(files)
   } catch (error) {
-    showToast(error?.message || '文件导入失败，请重试', { tone: 'error' })
+    showToast(errorMessage(error, '文件导入失败，请重试'), { tone: 'error' })
   } finally {
     importing.value = false
     dropActive.value = false
@@ -74,33 +76,33 @@ async function importUrl() {
   try {
     await store.importUrl(url.trim())
   } catch (error) {
-    showToast(error?.message || '网页导入失败，请重试', { tone: 'error' })
+    showToast(errorMessage(error, '网页导入失败，请重试'), { tone: 'error' })
   }
 }
-async function handleDrop(event) {
+async function handleDrop(event: DragEvent) {
   dropActive.value = false
   await importList(Array.from(event.dataTransfer?.files || []))
 }
-async function remove(entry) {
+async function remove(entry: LibraryEntry) {
   if (await requestConfirmation({ title: '删除文件', message: `确定删除「${entry.name}」吗？`, tone: 'danger', confirmLabel: '删除' })) await store.remove(entry.relativePath)
 }
-async function rename(entry) {
+async function rename(entry: LibraryEntry) {
   const next = await requestPrompt(t('rename'), entry.name)
   if (next?.trim() && next.trim() !== entry.name) await store.rename(entry.relativePath, next.trim())
 }
-async function renameBase(base) {
+async function renameBase(base: KnowledgeBase) {
   const next = await requestPrompt(t('rename'), base.name)
   if (next?.trim() && next.trim() !== base.name) await store.updateBase(base, next.trim())
 }
-async function deleteBase(base) {
+async function deleteBase(base: KnowledgeBase) {
   if (await requestConfirmation({ title: '删除知识库', message: `${t('confirmDelete')} ${base.name}`, tone: 'danger', confirmLabel: '删除' })) await store.deleteBase(base.id)
 }
-function openEntry(entry) {
+function openEntry(entry: LibraryEntry) {
   if (entry.kind === 'folder') store.navigate(entry.relativePath)
   else store.openPreview(entry.relativePath)
 }
-function selectBase(id) { store.selectBase(id) }
-function openNote(note) { router.push({ path: '/notes', query: { note: note.id } }) }
+function selectBase(id: string) { store.selectBase(id) }
+function openNote(note: Note) { router.push({ path: '/notes', query: { note: note.id } }) }
 </script>
 
 <template>
@@ -163,7 +165,8 @@ function openNote(note) { router.push({ path: '/notes', query: { note: note.id }
       </div>
 
       <div v-if="dropActive" class="drop-hint"><Upload :size="20" /><strong>松开以导入文件</strong><span>文件将保存到当前文件夹</span></div>
-      <div v-if="!store.active" class="empty-state"><div class="empty-icon">⌂</div><h2>{{ t('chooseKb') }}</h2></div>
+      <div v-if="store.error" class="empty-state"><div class="empty-icon">!</div><h2>{{ store.error }}</h2><button class="secondary-button" @click="store.loadEntries()">重试</button></div>
+      <div v-else-if="!store.active" class="empty-state"><div class="empty-icon">⌂</div><h2>{{ t('chooseKb') }}</h2></div>
       <div v-else-if="store.loading && !entries.length" class="empty-state"><div class="empty-icon loading-dot">···</div><h2>正在读取文件</h2></div>
       <div v-else-if="!entries.length && !knowledgeNotes.length" class="empty-state"><div class="empty-icon">⌁</div><h2>{{ t('noFiles') }}</h2><p>点击右上角导入，或将文件拖到此处</p></div>
       <div v-else :class="['file-grid', view]">

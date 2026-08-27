@@ -1,11 +1,11 @@
-<script setup>
+<script setup lang="ts">
 import { nextTick, ref, watch } from 'vue'
 import { FolderOpen, LoaderCircle, X } from 'lucide-vue-next'
 import { useI18n } from 'vue-i18n'
 import { cancelExportLocationRequest, chooseExportLocation, exportLocationState } from '../services/exportLocation'
 
 const { t } = useI18n()
-const dialogRef = ref(null)
+const dialogRef = ref<HTMLElement | null>(null)
 
 watch(() => exportLocationState.visible, async visible => {
   if (!visible) return

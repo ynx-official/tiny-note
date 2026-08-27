@@ -1,5 +1,5 @@
-<script setup>
-import { computed, nextTick, onMounted, ref } from 'vue'
+<script setup lang="ts">
+import { computed, nextTick, onMounted, ref, type Component } from 'vue'
 import { storeToRefs } from 'pinia'
 import { useRouter } from 'vue-router'
 import { useI18n } from 'vue-i18n'
@@ -15,6 +15,10 @@ import kimiIcon from '../assets/providers/kimi.png'
 import minimaxIcon from '../assets/providers/minimax.png'
 import otherIcon from '../assets/providers/other.png'
 import { modelProviderLabel } from '../utils/modelProvider'
+import type { LibraryEntry, ModelProfile, Note } from '../types/domain'
+
+interface HomeReference { key: string; type: 'note' | 'file'; name: string; noteId?: string; baseId?: string | null; baseName?: string; relativePath?: string }
+interface HomeCopy { subtitle: string; placeholder: string; noteMode: string; localAi: string; features: Array<[string, string, Component, string]>; start: string }
 
 const router = useRouter()
 const { locale, t } = useI18n()
@@ -24,9 +28,9 @@ const appStore = useAppStore()
 const { models } = storeToRefs(appStore)
 const draft = ref('')
 const referenceMenuOpen = ref(false)
-const referencePicker = ref(null)
-const referenceFileBaseId = ref(null)
-const references = ref([])
+const referencePicker = ref<'note' | 'file' | null>(null)
+const referenceFileBaseId = ref<string | null>(null)
+const references = ref<HomeReference[]>([])
 const selectedModelId = ref('')
 const thinkingMode = ref('fast')
 const chatMode = ref('agent')
@@ -34,20 +38,20 @@ const modeMenuOpen = ref(false)
 const modelMenuOpen = ref(false)
 const modelMenuPlacement = ref('below')
 const modelMenuMaxHeight = ref(460)
-const modelSelectButton = ref(null)
+const modelSelectButton = ref<HTMLButtonElement | null>(null)
 const personalBases = computed(() => library.bases.filter(item => item.category === 'personal'))
 const localBases = computed(() => library.bases.filter(item => item.category === 'local'))
 const noteCandidates = computed(() => notes.notes.filter(note => !note.deletedAt))
 const selectedModel = computed(() => models.value.find(model => model.id === selectedModelId.value) || models.value.find(model => model.isDefault) || models.value[0] || null)
-const providerIcons = { doubao: doubaoIcon, qwen: qwenIcon, zhipu: zhipuIcon, deepseek: deepseekIcon, kimi: kimiIcon, minimax: minimaxIcon, custom: otherIcon }
-const providerAliases = { doubao: ['doubao', '豆包'], qwen: ['qwen', '千问', '通义'], zhipu: ['zhipu', '智谱'], deepseek: ['deepseek'], kimi: ['kimi', 'moonshot'], minimax: ['minimax'], custom: ['custom', '其他', 'openai'] }
+const providerIcons: Record<string, string> = { doubao: doubaoIcon, qwen: qwenIcon, zhipu: zhipuIcon, deepseek: deepseekIcon, kimi: kimiIcon, minimax: minimaxIcon, custom: otherIcon }
+const providerAliases: Record<string, string[]> = { doubao: ['doubao', '豆包'], qwen: ['qwen', '千问', '通义'], zhipu: ['zhipu', '智谱'], deepseek: ['deepseek'], kimi: ['kimi', 'moonshot'], minimax: ['minimax'], custom: ['custom', '其他', 'openai'] }
 const modelButtonLabel = computed(() => {
   const mode = thinkingMode.value === 'deep' ? (locale.value === 'en' ? 'Deep' : '深度') : (locale.value === 'en' ? 'Quick' : '快速')
   if (!selectedModel.value) return locale.value === 'en' ? `Local AI · ${mode}` : `本地 AI · ${mode}`
   return `${selectedModel.value.model || selectedModel.value.name} · ${mode}`
 })
 
-const copy = computed(() => locale.value === 'en' ? {
+const copy = computed<HomeCopy>(() => locale.value === 'en' ? {
   subtitle: 'What would you like Tiny Note to help with?',
   placeholder: 'Write an idea or start a note…',
   noteMode: 'Chat mode',
@@ -75,9 +79,9 @@ const copy = computed(() => locale.value === 'en' ? {
   start: '开始对话'
 })
 
-function open(path) { router.push(path) }
+function open(path: string) { router.push(path) }
 function startNote() { router.push('/notes?new=1') }
-function openChat(value = draft.value) {
+function openChat(value: string | Event = draft.value) {
   const message = (typeof value === 'string' ? value : draft.value).trim()
   sessionStorage.setItem('tiny-note-chat-pending', JSON.stringify({ message, references: references.value, modelProfileId: selectedModel.value?.id || null, thinkingMode: thinkingMode.value, mode: chatMode.value }))
   router.push({ path: '/chat', query: { from: 'home' } })
@@ -92,11 +96,11 @@ function closeMenus() {
   modeMenuOpen.value = false
   modelMenuOpen.value = false
 }
-function selectChatMode(mode) {
+function selectChatMode(mode: string) {
   chatMode.value = mode
   modeMenuOpen.value = false
 }
-function selectModel(model) {
+function selectModel(model: ModelProfile) {
   selectedModelId.value = model.id
   modelMenuOpen.value = false
 }
@@ -113,7 +117,7 @@ async function toggleModelMenu() {
   modelMenuPlacement.value = below >= 140 || below >= above ? 'below' : 'above'
   modelMenuMaxHeight.value = Math.max(120, Math.min(460, modelMenuPlacement.value === 'below' ? below : above))
 }
-function providerIcon(model) {
+function providerIcon(model: ModelProfile) {
   const provider = String(model?.provider || '').toLowerCase()
   const key = Object.keys(providerAliases).find(item => providerAliases[item].some(alias => provider.includes(alias))) || 'custom'
   return providerIcons[key]
@@ -122,33 +126,31 @@ async function openReferenceMenu() {
   referenceMenuOpen.value = !referenceMenuOpen.value
   referencePicker.value = null
   referenceFileBaseId.value = null
-  if (!referenceMenuOpen.value) return
-  if (!notes.notes.length) await notes.load()
-  if (!library.bases.length) await library.load()
 }
-async function openReferencePicker(type) {
+async function openReferencePicker(type: 'note' | 'file') {
   referencePicker.value = type
+  if (type === 'note' && !notes.notes.length) await notes.load()
   if (type === 'file' && !library.bases.length) await library.load()
 }
-function addReference(reference) {
+function addReference(reference: HomeReference) {
   if (!references.value.some(item => item.key === reference.key)) references.value.push(reference)
   closeReferenceMenu()
 }
-function removeReference(key) {
+function removeReference(key: string) {
   references.value = references.value.filter(item => item.key !== key)
 }
-function addNoteReference(note) {
+function addNoteReference(note: Note) {
   addReference({ key: `note:${note.id}`, type: 'note', name: note.title || t('untitled'), noteId: note.id })
 }
-function addFileReference(entry) {
+function addFileReference(entry: LibraryEntry) {
   addReference({ key: `file:${library.activeId}:${entry.relativePath}`, type: 'file', name: entry.name, baseId: library.activeId, baseName: library.active?.name || '', relativePath: entry.relativePath })
 }
-async function selectReferenceFileBase(baseId) {
+async function selectReferenceFileBase(baseId: string) {
   referenceFileBaseId.value = baseId
   await library.selectBase(baseId)
   if (library.path) await library.navigate('')
 }
-async function openReferenceFolder(entry) {
+async function openReferenceFolder(entry: LibraryEntry) {
   await library.navigate(entry.relativePath)
 }
 async function referenceBack() {
@@ -167,10 +169,6 @@ onMounted(async () => {
   restoreAssistantDraft()
   await appStore.initialize()
   selectedModelId.value = models.value.find(model => model.isDefault)?.id || models.value[0]?.id || ''
-  await Promise.allSettled([
-    notes.notes.length ? Promise.resolve() : notes.load(),
-    library.bases.length ? Promise.resolve() : library.load()
-  ])
 })
 </script>
 

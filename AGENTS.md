@@ -2,7 +2,7 @@
 
 ## 技术栈
 
-- 前端：JavaScript、Vue 3、Vite、Vue Router 4、Pinia、Vue I18n
+- 前端：TypeScript、Vue 3、Vite、Vue Router 4、Pinia、Vue I18n
 - 桌面：Tauri 2
 - 后端：Rust
 - 本地数据：Rust `rusqlite` + SQLite
@@ -21,6 +21,6 @@
 
 ## Validation
 
-- 前端：`npm run test:unit`、`npm run build`
+- 前端：`npm run test:unit`、`npm run lint`、`npm run typecheck`、`npm run check:components`、`npm run build`
 - Rust：`cargo fmt --check`、`cargo test`、`cargo clippy --all-targets --all-features -- -D warnings`
 - Tauri：`npm run tauri:build`

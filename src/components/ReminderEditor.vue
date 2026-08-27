@@ -1,11 +1,14 @@
-<script setup>
+<script setup lang="ts">
 import { computed } from 'vue'
 import { Bell, BellOff, Repeat2, TimerReset } from 'lucide-vue-next'
 import DateTimePicker from './DateTimePicker.vue'
 import { localDateTimeValue, roundedFutureDate } from '../utils/dateTime'
 
-const props = defineProps({ modelValue: { type: Object, default: null }, hasAnchor: { type: Boolean, default: true }, locale: { type: String, default: 'zh-CN' }, disabled: Boolean })
+interface ReminderDraft { enabled: boolean; mode: string; triggerAt: string; offsetMinutes: number; intervalMinutes: number }
+
+const props = withDefaults(defineProps<{ modelValue?: ReminderDraft | null; hasAnchor?: boolean; locale?: string; disabled?: boolean }>(), { modelValue: null, hasAnchor: true, locale: 'zh-CN', disabled: false })
 const emit = defineEmits(['update:modelValue'])
+const inputValue = (event: Event) => (event.target as HTMLInputElement).value
 const fallback = { enabled: false, mode: 'at', triggerAt: '', offsetMinutes: 10, intervalMinutes: 10 }
 const value = computed({ get: () => props.modelValue || fallback, set: next => emit('update:modelValue', next) })
 const beforePresets = [5, 10, 30, 60, 1440]
@@ -24,14 +27,14 @@ const copy = computed(() => zh.value ? {
   intervalLabel: 'Alert interval', every: 'Every', first: 'First alert (optional)', firstPlaceholder: 'Automatic: one interval from now',
   intervalHint: 'Leave empty to start one interval from now and continue until completed or stopped.', hour: '1 hour', day: '1 day'
 })
-function durationLabel(minutes) { return minutes === 1440 ? copy.value.day : minutes >= 60 ? copy.value.hour : `${minutes} ${copy.value.minute}` }
-function patch(field, next) { value.value = { ...fallback, ...value.value, [field]: next } }
+function durationLabel(minutes: number) { return minutes === 1440 ? copy.value.day : minutes >= 60 ? copy.value.hour : `${minutes} ${copy.value.minute}` }
+function patch(field: keyof ReminderDraft, next: string | number | boolean) { value.value = { ...fallback, ...value.value, [field]: next } as ReminderDraft }
 function defaultTrigger() { return localDateTimeValue(roundedFutureDate(30, 5)) }
 function toggle() {
   const enabled = !value.value.enabled
   value.value = { ...fallback, ...value.value, enabled, triggerAt: enabled && value.value?.mode === 'at' && !value.value?.triggerAt ? defaultTrigger() : value.value?.triggerAt || '' }
 }
-function setMode(mode) {
+function setMode(mode: string) {
   const next = { ...fallback, ...value.value, mode }
   if (mode === 'at' && !next.triggerAt) next.triggerAt = defaultTrigger()
   value.value = next
@@ -62,7 +65,7 @@ function setMode(mode) {
         <div class="reminder-presets">
           <button v-for="minutes in beforePresets" :key="minutes" type="button" :class="{ active: Number(value.offsetMinutes) === minutes }" @click="patch('offsetMinutes', minutes)">{{ durationLabel(minutes) }}</button>
         </div>
-        <label class="custom-number"><span>{{ copy.custom }}</span><input type="number" min="1" max="10080" :value="value.offsetMinutes" :disabled="disabled || !hasAnchor" @input="patch('offsetMinutes', Number($event.target.value))"><span>{{ copy.minute }}</span></label>
+        <label class="custom-number"><span>{{ copy.custom }}</span><input type="number" min="1" max="10080" :value="value.offsetMinutes" :disabled="disabled || !hasAnchor" @input="patch('offsetMinutes', Number(inputValue($event)))"><span>{{ copy.minute }}</span></label>
         <small v-if="hasAnchor">{{ copy.beforeHint }}</small>
         <small v-else class="warning">{{ copy.beforeWarning }}</small>
       </div>
@@ -72,7 +75,7 @@ function setMode(mode) {
         <div class="reminder-presets">
           <button v-for="minutes in intervalPresets" :key="minutes" type="button" :class="{ active: Number(value.intervalMinutes) === minutes }" @click="patch('intervalMinutes', minutes)">{{ durationLabel(minutes) }}</button>
         </div>
-        <label class="custom-number"><span>{{ copy.every }}</span><input type="number" min="1" max="10080" :value="value.intervalMinutes" :disabled="disabled" @input="patch('intervalMinutes', Number($event.target.value))"><span>{{ copy.minute }}</span></label>
+        <label class="custom-number"><span>{{ copy.every }}</span><input type="number" min="1" max="10080" :value="value.intervalMinutes" :disabled="disabled" @input="patch('intervalMinutes', Number(inputValue($event)))"><span>{{ copy.minute }}</span></label>
         <label class="first-label"><TimerReset :size="14" />{{ copy.first }}</label>
         <DateTimePicker :model-value="value.triggerAt" :locale="locale" :placeholder="copy.firstPlaceholder" :disabled="disabled" @update:model-value="patch('triggerAt', $event)" />
         <small>{{ copy.intervalHint }}</small>

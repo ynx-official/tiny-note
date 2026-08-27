@@ -1,4 +1,4 @@
-<script setup>
+<script setup lang="ts">
 import { computed, onMounted, reactive, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { ArrowLeft, Bell, CalendarDays, CheckCircle2, Clock3, Edit3, Save, Trash2 } from 'lucide-vue-next'
@@ -7,6 +7,13 @@ import { ensureReminderPermission, normalizedReminder, reminderSummary, toDateTi
 import ReminderEditor from '../components/ReminderEditor.vue'
 import DateTimePicker from '../components/DateTimePicker.vue'
 import { compareLocalEventTimes, shiftEventStart } from '../utils/dateTime'
+import { errorMessage, type CalendarEvent, type Reminder } from '../types/domain'
+
+interface EventForm {
+  title: string; startDate: string; endDate: string; startTime: string; endTime: string
+  allDay: boolean; description: string; color: string; priority: string; completed: boolean
+  reminder: Partial<Reminder> & { enabled: boolean; mode: string; triggerAt: string; offsetMinutes: number; intervalMinutes: number }
+}
 
 const route = useRoute()
 const router = useRouter()
@@ -14,10 +21,10 @@ const store = useCalendarStore()
 const editing = ref(false)
 const saving = ref(false)
 const error = ref('')
-const event = computed(() => store.byId(route.params.id))
-const form = reactive({})
+const event = computed(() => store.byId(String(route.params.id || '')))
+const form = reactive<EventForm>({ title: '', startDate: '', endDate: '', startTime: '', endTime: '', allDay: false, description: '', color: EVENT_COLORS[0], priority: 'important', completed: false, reminder: { enabled: false, mode: 'at', triggerAt: '', offsetMinutes: 10, intervalMinutes: 10 } })
 
-function fill(item) {
+function fill(item: CalendarEvent) {
   Object.assign(form, {
     title: item.title, startDate: item.startDate, endDate: item.endDate, startTime: item.startTime, endTime: item.endTime,
     allDay: item.allDay, description: item.description, color: item.color, priority: item.priority, completed: item.completed,
@@ -27,9 +34,9 @@ function fill(item) {
   })
 }
 watch(event, item => { if (item) fill(item) }, { immediate: true })
-function changeStartDate(value) { const end = shiftEventStart(form, value, form.startTime); form.startDate = value; Object.assign(form, end) }
-function changeEndDate(value) { form.endDate = value; if (!form.startDate || value < form.startDate) form.startDate = value }
-function changeStartTime(value) { const end = shiftEventStart(form, form.startDate, value); form.startTime = value; Object.assign(form, end) }
+function changeStartDate(value: string) { const end = shiftEventStart(form, value, form.startTime); form.startDate = value; Object.assign(form, end) }
+function changeEndDate(value: string) { form.endDate = value; if (!form.startDate || value < form.startDate) form.startDate = value }
+function changeStartTime(value: string) { const end = shiftEventStart(form, form.startDate, value); form.startTime = value; Object.assign(form, end) }
 async function save() {
   try {
     saving.value = true
@@ -38,12 +45,14 @@ async function save() {
     if (!form.allDay && (!form.startTime || !form.endTime || compareLocalEventTimes(form) <= 0)) throw new Error('结束时间需要晚于开始时间')
     const reminder = normalizedReminder(form.reminder, { hasAnchor: !form.allDay && Boolean(form.startTime) })
     if (reminder && !(await ensureReminderPermission())) throw new Error('未获得系统通知权限')
-    await store.update(event.value.id, { ...form, reminder })
+    const current = event.value
+    if (!current) throw new Error('日程不存在')
+    await store.update(current.id, { ...form, reminder })
     editing.value = false
-  } catch (reason) { error.value = reason?.message || String(reason) } finally { saving.value = false }
+  } catch (reason) { error.value = errorMessage(reason, String(reason)) } finally { saving.value = false }
 }
-async function toggle() { await store.update(event.value.id, { ...event.value, completed: !event.value.completed, reminder: event.value.reminder?.enabled ? { ...event.value.reminder } : null }) }
-async function remove() { if (!window.confirm('确定删除这个日程吗？')) return; await store.remove(event.value.id); router.push('/calendar') }
+async function toggle() { const current = event.value; if (current) await store.update(current.id, { ...current, completed: !current.completed, reminder: current.reminder?.enabled ? { ...current.reminder } : null }) }
+async function remove() { const current = event.value; if (!current || !window.confirm('确定删除这个日程吗？')) return; await store.remove(current.id); router.push('/calendar') }
 onMounted(() => { if (!store.events.length) store.load() })
 </script>
 

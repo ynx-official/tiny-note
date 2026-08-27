@@ -1,4 +1,4 @@
-<script setup>
+<script setup lang="ts">
 import { onBeforeUnmount, onMounted, ref, shallowRef, watch } from 'vue'
 import { Compartment, EditorState } from '@codemirror/state'
 import { EditorView, basicSetup } from 'codemirror'
@@ -7,19 +7,18 @@ import { markdown } from '@codemirror/lang-markdown'
 import { languages } from '@codemirror/language-data'
 import { scrollOffset } from '../utils/noteMarkdown'
 
-const props = defineProps({
-  modelValue: { type: String, default: '' },
-  readonly: { type: Boolean, default: false },
-  ariaLabel: { type: String, required: true }
+const props = withDefaults(defineProps<{ modelValue?: string; readonly?: boolean; ariaLabel?: string }>(), {
+  modelValue: '', readonly: false, ariaLabel: 'Markdown editor'
 })
 
-const emit = defineEmits(['update:modelValue', 'focus', 'scroll'])
-const host = ref(null)
-const view = shallowRef(null)
+interface EditorScrollPayload { element: HTMLElement; scrollTop: number; scrollHeight: number; clientHeight: number }
+const emit = defineEmits<{ 'update:modelValue': [value: string]; focus: []; scroll: [payload: EditorScrollPayload] }>()
+const host = ref<HTMLElement | null>(null)
+const view = shallowRef<EditorView | null>(null)
 const editable = new Compartment()
 let syncingFromModel = false
 
-function editableExtensions(readonly) {
+function editableExtensions(readonly: boolean) {
   return [EditorState.readOnly.of(readonly), EditorView.editable.of(!readonly)]
 }
 
@@ -35,6 +34,7 @@ function emitScroll() {
 }
 
 onMounted(() => {
+  if (!host.value) return
   view.value = new EditorView({
     parent: host.value,
     state: EditorState.create({
@@ -77,10 +77,11 @@ onMounted(() => {
 })
 
 watch(() => props.modelValue, value => {
-  const current = view.value?.state.doc.toString()
-  if (current == null || current === value) return
+  const instance = view.value
+  const current = instance?.state.doc.toString()
+  if (!instance || current == null || current === value) return
   syncingFromModel = true
-  view.value.dispatch({ changes: { from: 0, to: view.value.state.doc.length, insert: value } })
+  instance.dispatch({ changes: { from: 0, to: instance.state.doc.length, insert: value } })
   syncingFromModel = false
 })
 
@@ -104,12 +105,12 @@ function getScrollElement() {
   return view.value?.scrollDOM || null
 }
 
-function setScrollProgress(progress) {
+function setScrollProgress(progress: number) {
   const element = getScrollElement()
   if (element) element.scrollTop = scrollOffset(progress, element.scrollHeight, element.clientHeight)
 }
 
-function replaceSelection(before, after = before, placeholder = '文字') {
+function replaceSelection(before: string, after = before, placeholder = '文字') {
   const instance = view.value
   if (!instance || props.readonly) return false
   const { from, to } = instance.state.selection.main
@@ -129,7 +130,7 @@ function replaceSelection(before, after = before, placeholder = '文字') {
   return true
 }
 
-function replaceLinePrefixes(prefix, matcher = /^(?: {0,3}(?:[-+*]|\d+\.|>)(?: \[[ xX]\])?\s+)/) {
+function replaceLinePrefixes(prefix: string, matcher = /^(?: {0,3}(?:[-+*]|\d+\.|>)(?: \[[ xX]\])?\s+)/) {
   const instance = view.value
   if (!instance || props.readonly) return false
   const selection = instance.state.selection.main
@@ -149,9 +150,10 @@ function replaceLinePrefixes(prefix, matcher = /^(?: {0,3}(?:[-+*]|\d+\.|>)(?: \
   return true
 }
 
-function applyFormat(format) {
-  if (format === 'undo') return undo(view.value)
-  if (format === 'redo') return redo(view.value)
+function applyFormat(format: string) {
+  const instance = view.value
+  if (format === 'undo') return instance ? undo(instance) : false
+  if (format === 'redo') return instance ? redo(instance) : false
   if (format === 'bold') return replaceSelection('**', '**', '粗体文字')
   if (format === 'italic') return replaceSelection('*', '*', '斜体文字')
   if (format === 'strike') return replaceSelection('~~', '~~', '删除线文字')

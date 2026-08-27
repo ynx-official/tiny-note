@@ -22,6 +22,8 @@ Vite 实时预览地址为 `http://localhost:1420/#/notes`，修改 Vue/CSS 后�
 ```bash
 npm run test:unit
 npm run lint
+npm run typecheck
+npm run check:components
 npm run build
 cd src-tauri
 cargo fmt --check
@@ -29,7 +31,13 @@ cargo test
 cargo clippy --all-targets --all-features -- -D warnings
 ```
 
+也可使用 `npm run check` 一次执行 lint、三套 TypeScript 检查、全部单测、组件结构门禁、生产构建与首页资源预算。
+
 本地 `npm run tauri:build` 会生成当前系统支持的安装包。CI 覆盖 Windows x64 NSIS、Linux x64 AppImage/DEB，以及 macOS Intel/Apple Silicon DMG；完整发布和在线升级流程见 [构建说明](docs/05-operations/build.md)。
+
+Windows release 构建后可运行 `npm run measure:startup` 执行 5 次独立进程启动并检查 500ms 静态外壳 / 1.5s 首页可操作预算。该命令只在测量进程中写入系统临时目录，不触碰用户数据。
+
+前端运行时代码、Vue 组件与测试统一使用 TypeScript；`npm run build` 会在 Vite 构建后检查首页关键路径预算（minified JS 500KB、CSS 100KB），并阻止 TipTap、CodeMirror、Mermaid 或 html2pdf 进入启动依赖闭包。启动性能与验收方式见 [启动性能与 TypeScript 迁移](docs/04-quality/startup-performance-and-typescript.md)。
 
 ## 当前实现
 

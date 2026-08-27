@@ -1,11 +1,11 @@
-<script setup>
+<script setup lang="ts">
 import { nextTick, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { X } from 'lucide-vue-next'
 import { cancelPrompt, promptDialogState, resolvePrompt } from '../services/promptDialog'
 
 const { t } = useI18n()
-const inputRef = ref(null)
+const inputRef = ref<HTMLInputElement | null>(null)
 
 watch(() => promptDialogState.visible, async visible => {
   if (!visible) return

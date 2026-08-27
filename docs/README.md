@@ -13,6 +13,7 @@
 - [命令契约](03-architecture/api-contracts.md)
 - [威胁模型](03-architecture/threat-model.md)
 - [测试计划](04-quality/test-plan.md)
+- [启动性能与 TypeScript 迁移](04-quality/startup-performance-and-typescript.md)
 - [构建说明](05-operations/build.md)
 - [里程碑](06-delivery/milestones.md)
 

@@ -1,18 +1,14 @@
-<script setup>
+<script setup lang="ts">
 import { nextTick, reactive, ref, watch } from 'vue'
 import { List, X } from 'lucide-vue-next'
 import { useI18n } from 'vue-i18n'
 import { TODO_LIST_COLORS } from '../stores/todos'
+import type { TodoList } from '../types/domain'
 
-const props = defineProps({
-  open: { type: Boolean, default: false },
-  item: { type: Object, default: null },
-  saving: { type: Boolean, default: false },
-  error: { type: String, default: '' }
-})
+const props = withDefaults(defineProps<{ open?: boolean; item?: TodoList | null; saving?: boolean; error?: string }>(), { open: false, item: null, saving: false, error: '' })
 const emit = defineEmits(['close', 'save'])
 const { t } = useI18n()
-const nameInput = ref(null)
+const nameInput = ref<HTMLInputElement | null>(null)
 const form = reactive({ name: '', color: '#5C6BC0' })
 
 watch(() => props.open, async open => {

@@ -1,6 +1,9 @@
 # 测试计划（Draft）
 
-最后更新：2026-08-26
+最后更新：2026-08-27
+
+- 启动性能：验证设置/模型 IPC 未完成或失败时静态外壳和 Vue 外壳仍可见；构建后解析 Vite manifest，首页达到可交互前的 minified JS 不超过 500KB、CSS 不超过 100KB，且关键依赖闭包不包含 TipTap、CodeMirror、Mermaid 或 html2pdf。Windows release 使用 `npm run measure:startup` 独立启动 5 次并取中位数；2026-08-27 最终打包后的 release 可执行文件实测外壳 599ms、ready 691ms，前者仍未达到 500ms，实际 NSIS 安装后程序仍需复测。
+- TypeScript：`src/` 不允许 `.js/.mjs` 运行时代码或测试；应用、测试与 Node 配置分别执行 `vue-tsc`/`tsc`。ESLint 覆盖 `.ts` 与 `.vue` 并以零 warning 结束；所有生产 SFC 不超过 300 行且结构检查不使用历史例外。浏览器模拟后端按业务域实现同一 `CommandMap` 契约，外部持久化值从 `unknown` 收窄；NoteEditor 测试按编辑模式、保存、AI、内容和公共契约独立执行。
 
 - Rust：旧库自动增加两处 `content_markdown`、三表示行映射、CRUD/复制、AI 应用、版本创建与恢复、软删除清理、笔记本删除、路径穿越/符号链接、导入冲突、SSE 事件和取消。
 - Rust：`tags_json` 到 `tags/note_tags` 的去重迁移、空归属到“未分类”、扁平笔记本到 `parent_id`、多级移动与循环拒绝、中间节点删除事务、标签增删改/批量关联/级联清理、备份 v3 往返和 v1/v2 兼容；另覆盖置顶、模板和 `[[双向链接]]` 同步、Base64 二进制导入、URL 导入限制，以及旧索引表、触发器和 `retrieve_knowledge` 策略迁移清理且业务数据不丢失。

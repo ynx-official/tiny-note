@@ -66,15 +66,17 @@
   </node-view-wrapper>
 </template>
 
-<script setup>
+<script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { NodeViewContent, NodeViewWrapper } from '@tiptap/vue-3'
+import type { NodeViewProps } from '@tiptap/core'
 import { Check, Code2, Copy, Eye, Trash2 } from 'lucide-vue-next'
 import { useI18n } from 'vue-i18n'
 import MermaidDiagram from './MermaidDiagram.vue'
 import { consumeMermaidDiagramForEditing } from '../utils/mermaidEditorState'
 
-const props = defineProps({ node: Object, editor: Object, updateAttributes: Function, deleteNode: Function })
+const props = defineProps<Pick<NodeViewProps, 'node' | 'editor' | 'updateAttributes' | 'deleteNode'>>()
+const editorEvents = props.editor as typeof props.editor & { on(event: string, callback: () => void): void; off(event: string, callback: () => void): void }
 const { locale } = useI18n()
 const copied = ref(false)
 const source = computed(() => props.node.textContent || '')
@@ -104,11 +106,11 @@ function syncEditable() {
 
 onMounted(() => {
   props.editor?.on?.('update', syncEditable)
-  props.editor?.on?.('tinyNoteEditableChange', syncEditable)
+  editorEvents.on?.('tinyNoteEditableChange', syncEditable)
 })
 onBeforeUnmount(() => {
   props.editor?.off?.('update', syncEditable)
-  props.editor?.off?.('tinyNoteEditableChange', syncEditable)
+  editorEvents.off?.('tinyNoteEditableChange', syncEditable)
 })
 
 async function handleCopy() {

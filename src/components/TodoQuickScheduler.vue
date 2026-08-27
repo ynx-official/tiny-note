@@ -1,27 +1,26 @@
-<script setup>
+<script setup lang="ts">
 import { computed, nextTick, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue'
 import { Bell, CalendarDays, Check, ChevronDown, ChevronLeft, ChevronRight, Clock3, Repeat2, Sun, X } from 'lucide-vue-next'
 import DateTimePicker from './DateTimePicker.vue'
 import { lunarLabelForDate, monthCells } from '../utils/calendar'
 import { localDateTimeValue, localDateValue, localTimeValue, roundedFutureDate } from '../utils/dateTime'
+import type { Reminder } from '../types/domain'
 
-const props = defineProps({
-  startAt: { type: String, default: '' },
-  dueAt: { type: String, default: '' },
-  reminder: { type: Object, default: null },
-  locale: { type: String, default: 'zh-CN' },
-  disabled: Boolean
+interface ReminderDraft { enabled: boolean; mode: string; triggerAt: string; offsetMinutes: number; intervalMinutes: number }
+const props = withDefaults(defineProps<{ startAt?: string; dueAt?: string; reminder?: Partial<Reminder> | null; locale?: string; disabled?: boolean }>(), {
+  startAt: '', dueAt: '', reminder: null, locale: 'zh-CN', disabled: false
 })
-const emit = defineEmits(['update:startAt', 'update:dueAt', 'update:reminder'])
-const root = ref(null)
-const trigger = ref(null)
-const panel = ref(null)
+const emit = defineEmits<{ 'update:startAt': [value: string]; 'update:dueAt': [value: string]; 'update:reminder': [value: ReminderDraft] }>()
+const selectValue = (event: Event) => (event.target as HTMLSelectElement).value
+const root = ref<HTMLElement | null>(null)
+const trigger = ref<HTMLButtonElement | null>(null)
+const panel = ref<HTMLElement | null>(null)
 const open = ref(false)
 const activeTab = ref('date')
 const cursor = ref(new Date())
 const draftStart = ref('')
 const draftDue = ref('')
-const draftReminder = ref(null)
+const draftReminder = ref<ReminderDraft | null>(null)
 const draftError = ref('')
 const rangePickingEnd = ref(false)
 const position = reactive({ left: '0px', top: '0px', width: '430px' })
@@ -46,7 +45,7 @@ const cells = computed(() => monthCells(cursor.value.getFullYear(), cursor.value
 const rangeStartDate = computed(() => draftStart.value.slice(0, 10))
 const dueDate = computed(() => draftDue.value.slice(0, 10))
 const dueTime = computed(() => draftDue.value.split('T')[1] || '18:00')
-const shortDate = value => value ? new Intl.DateTimeFormat(props.locale, { month: 'numeric', day: 'numeric' }).format(new Date(`${value}T12:00`)) : '—'
+const shortDate = (value: string) => value ? new Intl.DateTimeFormat(props.locale, { month: 'numeric', day: 'numeric' }).format(new Date(`${value}T12:00`)) : '—'
 const triggerLabel = computed(() => {
   if (!props.dueAt) return text.value.none
   const date = new Date(props.dueAt)
@@ -69,7 +68,13 @@ const triggerLabel = computed(() => {
 function syncDraft() {
   draftStart.value = props.startAt || ''
   draftDue.value = props.dueAt || ''
-  draftReminder.value = { ...fallbackReminder(), ...(props.reminder || {}) }
+  draftReminder.value = {
+    enabled: Boolean(props.reminder?.enabled),
+    mode: props.reminder?.mode || 'at',
+    triggerAt: props.reminder?.triggerAt || '',
+    offsetMinutes: props.reminder?.offsetMinutes || 10,
+    intervalMinutes: props.reminder?.intervalMinutes || 10
+  }
   draftError.value = ''
   rangePickingEnd.value = false
   const date = draftDue.value ? new Date(draftDue.value) : new Date()
@@ -92,12 +97,13 @@ async function toggle() {
   if (open.value) { syncDraft(); activeTab.value = props.startAt ? 'range' : 'date'; await nextTick(); updatePosition() }
 }
 function close() { open.value = false }
-function closeOutside(event) {
-  if (!open.value || root.value?.contains(event.target) || panel.value?.contains(event.target) || event.target?.closest?.('.date-time-panel')) return
+function closeOutside(event: PointerEvent) {
+  const target = event.target instanceof Element ? event.target : null
+  if (!open.value || root.value?.contains(target) || panel.value?.contains(target) || target?.closest('.date-time-panel')) return
   close()
 }
-function handleKey(event) { if (event.key === 'Escape' && open.value) { event.stopPropagation(); close(); trigger.value?.focus() } }
-function moveMonth(amount) { const date = new Date(cursor.value); date.setDate(1); date.setMonth(date.getMonth() + amount); cursor.value = date }
+function handleKey(event: KeyboardEvent) { if (event.key === 'Escape' && open.value) { event.stopPropagation(); close(); trigger.value?.focus() } }
+function moveMonth(amount: number) { const date = new Date(cursor.value); date.setDate(1); date.setMonth(date.getMonth() + amount); cursor.value = date }
 function ensureRangeDraft() {
   const due = dueDate.value || localDateValue()
   const start = rangeStartDate.value || due
@@ -107,7 +113,7 @@ function ensureRangeDraft() {
   draftDue.value = `${high}T23:59`
   rangePickingEnd.value = false
 }
-async function setActiveTab(tab) {
+async function setActiveTab(tab: string) {
   activeTab.value = tab
   draftError.value = ''
   if (tab === 'date') draftStart.value = ''
@@ -115,7 +121,7 @@ async function setActiveTab(tab) {
   await nextTick()
   updatePosition()
 }
-function chooseDate(value) {
+function chooseDate(value: string) {
   if (activeTab.value === 'range') {
     if (!rangePickingEnd.value) {
       draftStart.value = `${value}T00:00`
@@ -136,7 +142,7 @@ function chooseDate(value) {
   draftError.value = ''
   cursor.value = new Date(`${value}T12:00`)
 }
-function choosePreset(days, time = '18:00') {
+function choosePreset(days: number, time = '18:00') {
   const date = new Date(); date.setDate(date.getDate() + days)
   draftDue.value = `${localDateValue(date)}T${time}`
   if (activeTab.value === 'range') {
@@ -148,7 +154,7 @@ function choosePreset(days, time = '18:00') {
   draftError.value = ''
   cursor.value = date
 }
-function changeTime(part, value) {
+function changeTime(part: 'hour' | 'minute', value: string) {
   const current = dueTime.value
   const date = dueDate.value || localDateValue()
   const [hour, minute] = current.split(':')
@@ -156,14 +162,14 @@ function changeTime(part, value) {
   draftDue.value = next
   draftError.value = ''
 }
-function patchReminder(field, value) { draftReminder.value = { ...fallbackReminder(), ...draftReminder.value, [field]: value } }
+function patchReminder(field: keyof ReminderDraft, value: string | number | boolean) { draftReminder.value = { ...fallbackReminder(), ...draftReminder.value, [field]: value } as ReminderDraft }
 function toggleReminder() {
   const enabled = !draftReminder.value?.enabled
   const next = { ...fallbackReminder(), ...draftReminder.value, enabled }
   if (enabled && next.mode === 'at' && !next.triggerAt) next.triggerAt = draftDue.value || localDateTimeValue(roundedFutureDate(30, 5))
   draftReminder.value = next
 }
-function setReminderMode(mode) {
+function setReminderMode(mode: string) {
   const next = { ...fallbackReminder(), ...draftReminder.value, enabled: true, mode }
   if (mode === 'at' && !next.triggerAt) next.triggerAt = draftDue.value || localDateTimeValue(roundedFutureDate(30, 5))
   draftReminder.value = next
@@ -229,9 +235,9 @@ onBeforeUnmount(() => {
           </div>
           <div v-if="activeTab === 'date'" class="schedule-time-row">
             <span><Clock3 :size="16" />{{ text.time }}</span>
-            <select :value="dueTime.split(':')[0]" :aria-label="text.time" @change="changeTime('hour', $event.target.value)"><option v-for="hour in hours" :key="hour">{{ hour }}</option></select>
+            <select :value="dueTime.split(':')[0]" :aria-label="text.time" @change="changeTime('hour', selectValue($event))"><option v-for="hour in hours" :key="hour">{{ hour }}</option></select>
             <b>:</b>
-            <select :value="dueTime.split(':')[1]" :aria-label="text.minutes" @change="changeTime('minute', $event.target.value)"><option v-for="minute in minutes" :key="minute">{{ minute }}</option></select>
+            <select :value="dueTime.split(':')[1]" :aria-label="text.minutes" @change="changeTime('minute', selectValue($event))"><option v-for="minute in minutes" :key="minute">{{ minute }}</option></select>
           </div>
           <div v-else class="schedule-date-range" aria-live="polite">
             <div><span><small>{{ text.start }}</small><strong>{{ shortDate(rangeStartDate) }}</strong></span><ChevronRight :size="17" /><span><small>{{ text.end }}</small><strong>{{ shortDate(dueDate) }}</strong></span></div>

@@ -1,21 +1,22 @@
-<script setup>
-import { computed, onMounted, onUnmounted, ref } from 'vue'
+<script setup lang="ts">
+import { computed, onMounted, onUnmounted, ref, type Component } from 'vue'
 import { useRouter } from 'vue-router'
 import { storeToRefs } from 'pinia'
 import { AlertCircle, CheckCircle2, CircleStop, Clock3, FileText, ImagePlus, LoaderCircle, RefreshCw, Sparkles, Trash2 } from 'lucide-vue-next'
 import { useTasksStore } from '../stores/tasks'
 import { formatTaskDuration } from '../utils/taskDuration'
+import type { BackgroundTask, JsonValue } from '../types/domain'
 
 const router = useRouter()
 const store = useTasksStore()
 const { tasks, loading, error } = storeToRefs(store)
 const filter = ref('all')
 const expanded = ref('')
-const retrying = ref([])
+const retrying = ref<string[]>([])
 const now = ref(Date.now())
-let durationTimer
+let durationTimer: number | undefined
 
-const filters = [
+const filters: Array<[string, string]> = [
   ['all', '全部'], ['active', '进行中'], ['attention', '待处理'], ['succeeded', '已完成'], ['failed', '失败']
 ]
 const visibleTasks = computed(() => tasks.value.filter(task => {
@@ -33,22 +34,29 @@ const counts = computed(() => Object.fromEntries(filters.map(([key]) => [key, ta
   return true
 }).length])))
 
-const kindMeta = {
+const kindMeta: Record<string, [string, Component]> = {
   conversation_summary: ['总结为笔记', Sparkles], note_ai: ['笔记 AI', FileText], image_generation: ['生图', ImagePlus]
 }
-const statusLabels = { queued: '排队中', running: '执行中', awaiting_approval: '等待确认', awaiting_input: '等待回答', succeeded: '已完成', failed: '失败', cancelled: '已取消', interrupted: '已中断' }
-const statusIcons = { queued: Clock3, running: LoaderCircle, awaiting_approval: Clock3, awaiting_input: Clock3, succeeded: CheckCircle2, failed: AlertCircle, cancelled: CircleStop, interrupted: AlertCircle }
-function formatTime(value) { if (!value) return ''; return new Intl.DateTimeFormat('zh-CN', { month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' }).format(new Date(value)) }
-function executionTime(task) { return formatTaskDuration(task, now.value) }
-function hasRetryAttempt(task) { return tasks.value.some(item => item.retryOf === task.id) }
-function openResult(task) {
-  if (task.result?.noteId) router.push({ path: '/notes', query: { note: task.result.noteId } })
-  else if (task.result?.proposalId && task.targetNoteId) router.push({ path: '/notes', query: { note: task.targetNoteId, proposal: task.result.proposalId } })
-  else if (task.kind === 'image_generation') router.push({ path: '/images', query: { generation: task.result?.generationId || '' } })
+const statusLabels: Record<string, string> = { queued: '排队中', running: '执行中', awaiting_approval: '等待确认', awaiting_input: '等待回答', succeeded: '已完成', failed: '失败', cancelled: '已取消', interrupted: '已中断' }
+const statusIcons: Record<string, Component> = { queued: Clock3, running: LoaderCircle, awaiting_approval: Clock3, awaiting_input: Clock3, succeeded: CheckCircle2, failed: AlertCircle, cancelled: CircleStop, interrupted: AlertCircle }
+function formatTime(value: string | null) { if (!value) return ''; return new Intl.DateTimeFormat('zh-CN', { month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' }).format(new Date(value)) }
+function executionTime(task: BackgroundTask) { return formatTaskDuration(task, now.value) }
+function hasRetryAttempt(task: BackgroundTask) { return tasks.value.some(item => item.retryOf === task.id) }
+function resultField(result: JsonValue | null, key: string): string {
+  if (!result || Array.isArray(result) || typeof result !== 'object') return ''
+  const value = result[key]
+  return typeof value === 'string' ? value : ''
+}
+function openResult(task: BackgroundTask) {
+  const noteId = resultField(task.result, 'noteId')
+  const proposalId = resultField(task.result, 'proposalId')
+  if (noteId) router.push({ path: '/notes', query: { note: noteId } })
+  else if (proposalId && task.targetNoteId) router.push({ path: '/notes', query: { note: task.targetNoteId, proposal: proposalId } })
+  else if (task.kind === 'image_generation') router.push({ path: '/images', query: { generation: resultField(task.result, 'generationId') } })
   else if (task.conversationId) router.push({ path: '/chat', query: { id: task.conversationId } })
   else if (task.targetNoteId) router.push({ path: '/notes', query: { note: task.targetNoteId } })
 }
-async function quickRetry(task) {
+async function quickRetry(task: BackgroundTask) {
   if (retrying.value.includes(task.id)) return
   retrying.value = [...retrying.value, task.id]
   try { await store.retry(task.id) } finally { retrying.value = retrying.value.filter(id => id !== task.id) }
@@ -58,7 +66,7 @@ onMounted(async () => {
   await store.initialize()
   store.markResultsSeen()
 })
-onUnmounted(() => window.clearInterval(durationTimer))
+onUnmounted(() => { if (durationTimer !== undefined) window.clearInterval(durationTimer) })
 </script>
 
 <template>

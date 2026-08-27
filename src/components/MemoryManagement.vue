@@ -1,21 +1,24 @@
-<script setup>
+<script setup lang="ts">
 import { computed, onMounted, ref } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { marked } from 'marked'
 import DOMPurify from 'dompurify'
 import { BookOpen, Eye, FileText, Pencil, Sparkles, User, Wrench, X } from 'lucide-vue-next'
 import { invoke } from '../services/tauri'
+import { errorMessage, type MemoryFile } from '../types/domain'
+import type { Component } from 'vue'
 
 const { t } = useI18n()
-const emit = defineEmits(['close'])
-const files = ref([])
+interface MemoryEditor extends MemoryFile { mode: string; saving: boolean }
+const emit = defineEmits<{ close: [] }>()
+const files = ref<MemoryFile[]>([])
 const loading = ref(false)
 const error = ref('')
-const editor = ref(null)
+const editor = ref<MemoryEditor | null>(null)
 
-const iconMap = { SOUL: Sparkles, USER: User, MEMORY: BookOpen, Agent: Wrench }
-const activeIcon = computed(() => iconMap[editor.value?.nameKey] || FileText)
-const previewHtml = computed(() => DOMPurify.sanitize(marked.parse(editor.value?.content || '', { breaks: true, gfm: true })))
+const iconMap: Record<string, Component> = { SOUL: Sparkles, USER: User, MEMORY: BookOpen, Agent: Wrench }
+const activeIcon = computed(() => editor.value ? (iconMap[editor.value.nameKey] || FileText) : FileText)
+const previewHtml = computed(() => DOMPurify.sanitize(String(marked.parse(editor.value?.content || '', { breaks: true, gfm: true }))))
 
 async function loadFiles() {
   loading.value = true
@@ -23,13 +26,13 @@ async function loadFiles() {
   try {
     files.value = await invoke('memory_list')
   } catch (cause) {
-    error.value = cause?.message || '记忆文件读取失败'
+    error.value = errorMessage(cause, '记忆文件读取失败')
   } finally {
     loading.value = false
   }
 }
 
-function openEditor(file) {
+function openEditor(file: MemoryFile) {
   editor.value = { ...file, mode: 'edit', saving: false }
 }
 
@@ -45,13 +48,13 @@ async function saveEditor() {
     editor.value = null
     await loadFiles()
   } catch (cause) {
-    error.value = cause?.message || '记忆保存失败'
+    error.value = errorMessage(cause, '记忆保存失败')
   } finally {
     if (editor.value) editor.value.saving = false
   }
 }
 
-function formatTime(value) {
+function formatTime(value: string | null) {
   if (!value) return ''
   try {
     return new Intl.DateTimeFormat(undefined, { month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' }).format(new Date(value))

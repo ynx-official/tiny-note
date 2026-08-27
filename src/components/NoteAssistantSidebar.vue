@@ -1,18 +1,19 @@
-<script setup>
+<script setup lang="ts">
 import { nextTick, ref, watch } from 'vue'
 import { BookOpen, Copy, FileText, Send, Sparkles, Square, X } from 'lucide-vue-next'
 import MarkdownMessage from './MarkdownMessage.vue'
+import type { Note } from '../types/domain'
 
-const props = defineProps({
-  note: { type: Object, default: null },
-  selection: { type: Object, default: null },
-  messages: { type: Array, default: () => [] },
-  busy: { type: Boolean, default: false },
-  streamingText: { type: String, default: '' }
+interface AssistantReference { key: string; type: string; label: string; preview?: string }
+interface AssistantSource { id: string; title: string; snippet?: string; truncated?: boolean }
+interface AssistantMessage { role: 'user' | 'assistant'; content: string; references?: AssistantReference[]; sources?: AssistantSource[]; proposal?: unknown }
+
+const props = withDefaults(defineProps<{ note?: Note | null; selection?: { text?: string } | null; messages?: AssistantMessage[]; busy?: boolean; streamingText?: string }>(), {
+  note: null, selection: null, messages: () => [], busy: false, streamingText: ''
 })
 const emit = defineEmits(['close', 'send', 'stop', 'copy'])
 const input = ref('')
-const messagesRef = ref(null)
+const messagesRef = ref<HTMLElement | null>(null)
 
 function scrollToBottom() {
   nextTick(() => {
@@ -20,14 +21,15 @@ function scrollToBottom() {
     if (container) container.scrollTop = container.scrollHeight
   })
 }
-function submit(event) {
+function submit(event: SubmitEvent | KeyboardEvent) {
   const text = input.value.trim()
   if (!text || props.busy) return
-  const source = event?.submitter || event?.currentTarget?.closest?.('form')?.querySelector('.tiny-note-assistant-send') || event?.currentTarget
+  const currentTarget = event.currentTarget as HTMLElement | null
+  const source = (event instanceof SubmitEvent ? event.submitter : null) || currentTarget?.closest('form')?.querySelector('.tiny-note-assistant-send') || currentTarget
   emit('send', text, source)
   input.value = ''
 }
-function selectionPreview(text) {
+function selectionPreview(text: string) {
   const value = String(text || '').replace(/\s+/g, ' ').trim()
   return value.length > 92 ? `${value.slice(0, 92)}…` : value
 }

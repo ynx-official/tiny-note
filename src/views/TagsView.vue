@@ -1,4 +1,4 @@
-<script setup>
+<script setup lang="ts">
 import { computed, onMounted, ref } from 'vue'
 import { useRouter } from 'vue-router'
 import { useI18n } from 'vue-i18n'
@@ -15,7 +15,7 @@ const router = useRouter()
 const { t } = useI18n()
 const pickerOpen = ref(false)
 const pickerSearch = ref('')
-const selectedNoteIds = ref(new Set())
+const selectedNoteIds = ref(new Set<string>())
 const { sidebarWidth, isResizing, onResizeStart } = useWorkspaceSidebar()
 
 const activeTitle = computed(() => tags.activeId === 'untagged' ? t('untagged') : tags.activeTag?.name || t('tags'))
@@ -24,14 +24,15 @@ const availableNotes = computed(() => {
   const query = pickerSearch.value.trim().toLocaleLowerCase()
   return notes.notes.filter(note => !linked.has(note.id) && (!query || `${note.title} ${note.contentText}`.toLocaleLowerCase().includes(query)))
 })
-function notebookPath(notebookId) {
-  const parts = []
-  const visited = new Set()
+function notebookPath(notebookId: string | null) {
+  const parts: string[] = []
+  const visited = new Set<string>()
   let current = notes.notebooks.find(book => book.id === notebookId)
   while (current && !visited.has(current.id)) {
     visited.add(current.id)
     parts.unshift(current.name)
-    current = notes.notebooks.find(book => book.id === current.parentId)
+    const parentId = current.parentId
+    current = notes.notebooks.find(book => book.id === parentId)
   }
   return parts.join(' / ') || '未分类'
 }
@@ -49,10 +50,10 @@ async function deleteTag() {
   await tags.remove(tags.activeTag.id)
 }
 function openPicker() { pickerSearch.value = ''; selectedNoteIds.value = new Set(); pickerOpen.value = true }
-function toggleSelection(id) { const next = new Set(selectedNoteIds.value); if (next.has(id)) next.delete(id); else next.add(id); selectedNoteIds.value = next }
+function toggleSelection(id: string) { const next = new Set(selectedNoteIds.value); if (next.has(id)) next.delete(id); else next.add(id); selectedNoteIds.value = next }
 async function addSelected() { if (!tags.activeTag || !selectedNoteIds.value.size) return; await tags.addNotes(tags.activeTag.id, [...selectedNoteIds.value]); pickerOpen.value = false }
-async function removeNote(id) { if (tags.activeTag) await tags.removeNotes(tags.activeTag.id, [id]) }
-function openNote(note) { router.push({ path: '/notes', query: { note: note.id } }) }
+async function removeNote(id: string) { if (tags.activeTag) await tags.removeNotes(tags.activeTag.id, [id]) }
+function openNote(note: { id: string }) { router.push({ path: '/notes', query: { note: note.id } }) }
 
 onMounted(() => tags.load())
 </script>

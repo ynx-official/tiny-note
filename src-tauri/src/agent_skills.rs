@@ -501,7 +501,9 @@ mod tests {
             std::env::temp_dir().join(format!("tiny-note-skill-test-{}", uuid::Uuid::new_v4()));
         fs::create_dir_all(&root).unwrap();
         AppState {
-            db: Arc::new(Mutex::new(Connection::open_in_memory().unwrap())),
+            db: Arc::new(crate::Database::ready(
+                Connection::open_in_memory().unwrap(),
+            )),
             data_dir: root,
             cancels: Arc::new(Mutex::new(HashMap::new())),
             exported_files: Arc::new(Mutex::new(HashSet::new())),

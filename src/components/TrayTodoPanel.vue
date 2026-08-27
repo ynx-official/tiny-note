@@ -1,12 +1,14 @@
-<script setup>
+<script setup lang="ts">
 import { computed, nextTick, onBeforeUnmount, onMounted, ref } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { CalendarDays, Check, ChevronDown, Inbox, ListTodo, LoaderCircle, Plus, Settings } from 'lucide-vue-next'
 import { listen } from '@tauri-apps/api/event'
+import type { UnlistenFn } from '@tauri-apps/api/event'
 import { invoke } from '../services/tauri'
 import { useTodosStore } from '../stores/todos'
 import { sortTodos } from '../utils/todos'
 import { localDateValue } from '../utils/dateTime'
+import { errorMessage, type Todo } from '../types/domain'
 
 const store = useTodosStore()
 const { t, locale } = useI18n()
@@ -14,10 +16,10 @@ const selectedListId = ref('')
 const listMenuOpen = ref(false)
 const completedOpen = ref(true)
 const quickTitle = ref('')
-const quickInput = ref(null)
+const quickInput = ref<HTMLInputElement | null>(null)
 const saving = ref(false)
 const actionError = ref('')
-let unlistenTrayOpen
+let unlistenTrayOpen: UnlistenFn | undefined
 
 const selectedList = computed(() => store.listById(selectedListId.value))
 const panelTitle = computed(() => selectedList.value?.name || t('todoInbox'))
@@ -33,7 +35,7 @@ function selectList(id = '') {
   nextTick(() => quickInput.value?.focus())
 }
 
-function formatDue(item) {
+function formatDue(item: Todo) {
   if (!item.dueAt) return ''
   const date = new Date(item.dueAt)
   if (Number.isNaN(date.getTime())) return ''
@@ -45,7 +47,7 @@ function formatDue(item) {
   return `${day} ${time}`
 }
 
-function isOverdue(item) {
+function isOverdue(item: Todo) {
   return Boolean(!item.completedAt && item.dueAt && new Date(item.dueAt) < new Date())
 }
 
@@ -55,7 +57,7 @@ async function refresh() {
     await store.load()
     if (selectedListId.value && !store.listById(selectedListId.value)) selectedListId.value = ''
   } catch (error) {
-    actionError.value = error?.message || String(error)
+    actionError.value = errorMessage(error, String(error))
   }
 }
 
@@ -78,37 +80,37 @@ async function quickAdd() {
     await nextTick()
     quickInput.value?.focus()
   } catch (error) {
-    actionError.value = error?.message || String(error)
+    actionError.value = errorMessage(error, String(error))
   } finally {
     saving.value = false
   }
 }
 
-async function toggleTodo(item) {
+async function toggleTodo(item: Todo) {
   try {
     actionError.value = ''
     await store.setCompleted(item.id, !item.completedAt)
   } catch (error) {
-    actionError.value = error?.message || String(error)
+    actionError.value = errorMessage(error, String(error))
   }
 }
 
-async function openMain(route) {
+async function openMain(route: string) {
   try {
     await invoke('tray_open_main', { route })
   } catch (error) {
-    actionError.value = error?.message || String(error)
+    actionError.value = errorMessage(error, String(error))
   }
 }
 
-function openTodo(item) {
+function openTodo(item: Todo) {
   const scope = selectedListId.value
     ? `list=${encodeURIComponent(selectedListId.value)}`
     : `filter=${item.completedAt ? 'completed' : 'inbox'}`
   return openMain(`/todos?${scope}&id=${encodeURIComponent(item.id)}`)
 }
 
-function handleKeydown(event) {
+function handleKeydown(event: KeyboardEvent) {
   if (event.key === 'Escape') listMenuOpen.value = false
 }
 

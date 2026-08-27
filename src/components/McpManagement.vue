@@ -1,12 +1,14 @@
-<script setup>
+<script setup lang="ts">
 import { onMounted, ref } from 'vue'
 import { Cable, Plus, RefreshCw, Save, Trash2, X } from 'lucide-vue-next'
 import { invoke } from '../services/tauri'
 import { requestConfirmation } from '../services/appFeedback'
+import { errorMessage, type McpServer } from '../types/domain'
 
-const emit = defineEmits(['close'])
-const servers = ref([])
-const editor = ref(null)
+interface McpEditor extends McpServer { argsText: string; isNew: boolean; saving: boolean }
+const emit = defineEmits<{ close: [] }>()
+const servers = ref<McpServer[]>([])
+const editor = ref<McpEditor | null>(null)
 const loading = ref(false)
 const busyId = ref('')
 const error = ref('')
@@ -15,14 +17,14 @@ async function loadServers() {
   loading.value = true
   error.value = ''
   try { servers.value = await invoke('agent_mcp_list') }
-  catch (cause) { error.value = cause?.message || 'MCP 配置读取失败' }
+  catch (cause) { error.value = errorMessage(cause, 'MCP 配置读取失败') }
   finally { loading.value = false }
 }
 
-function openEditor(server = null) {
+function openEditor(server: McpServer | null = null) {
   editor.value = server
     ? { ...server, argsText: (server.args || []).join('\n'), isNew: false, saving: false }
-    : { id: '', name: '', command: '', argsText: '', enabled: true, isNew: true, saving: false }
+    : { id: '', name: '', command: '', args: [], argsText: '', enabled: true, isNew: true, saving: false }
 }
 
 async function saveServer() {
@@ -35,22 +37,22 @@ async function saveServer() {
     await invoke('agent_mcp_upsert', { request: { id: editor.value.id.trim(), name: editor.value.name.trim(), command: editor.value.command.trim(), args: editor.value.argsText.split('\n').map(item => item.trim()).filter(Boolean), enabled: editor.value.enabled } })
     editor.value = null
     await loadServers()
-  } catch (cause) { error.value = cause?.message || 'MCP 配置保存失败' }
+  } catch (cause) { error.value = errorMessage(cause, 'MCP 配置保存失败') }
   finally { if (editor.value) editor.value.saving = false }
 }
 
-async function refreshServer(server) {
+async function refreshServer(server: McpServer) {
   busyId.value = server.id
   error.value = ''
   try { await invoke('agent_mcp_refresh', { id: server.id }); await loadServers() }
-  catch (cause) { error.value = cause?.message || 'MCP 服务连接失败'; await loadServers() }
+  catch (cause) { error.value = errorMessage(cause, 'MCP 服务连接失败'); await loadServers() }
   finally { busyId.value = '' }
 }
 
-async function removeServer(server) {
+async function removeServer(server: McpServer) {
   if (!(await requestConfirmation({ title: '删除 MCP 服务', message: `确定删除「${server.name}」吗？`, tone: 'danger', confirmLabel: '删除' }))) return
   try { await invoke('agent_mcp_delete', { id: server.id }); await loadServers() }
-  catch (cause) { error.value = cause?.message || 'MCP 服务删除失败' }
+  catch (cause) { error.value = errorMessage(cause, 'MCP 服务删除失败') }
 }
 
 onMounted(loadServers)

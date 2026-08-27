@@ -1,4 +1,4 @@
-<script setup>
+<script setup lang="ts">
 import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { BarChart3, Brain, Cable, Sparkles } from 'lucide-vue-next'
@@ -27,7 +27,7 @@ function close() {
   visible.value = false
 }
 
-function handleEscape(event) {
+function handleEscape(event: KeyboardEvent) {
   if (event.key === 'Escape' && visible.value) close()
 }
 

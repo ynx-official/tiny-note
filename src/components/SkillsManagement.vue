@@ -1,33 +1,36 @@
-<script setup>
+<script setup lang="ts">
 import { computed, onMounted, ref } from 'vue'
 import DOMPurify from 'dompurify'
 import { marked } from 'marked'
 import { Eye, Pencil, Plus, Save, Sparkles, Trash2, X } from 'lucide-vue-next'
 import { invoke } from '../services/tauri'
 import { requestConfirmation } from '../services/appFeedback'
+import { errorMessage, type AgentSkill } from '../types/domain'
 
-const emit = defineEmits(['close'])
-const skills = ref([])
+interface SkillEditor extends Omit<AgentSkill, 'content'> { content: string; directoryName: string; mode: string; saving: boolean; isNew?: boolean }
+const emit = defineEmits<{ close: [] }>()
+const skills = ref<AgentSkill[]>([])
 const loading = ref(false)
 const error = ref('')
-const editor = ref(null)
+const editor = ref<SkillEditor | null>(null)
 const helpOpen = ref(false)
-const previewHtml = computed(() => DOMPurify.sanitize(marked.parse(editor.value?.content || '', { breaks: true, gfm: true })))
+const previewHtml = computed(() => DOMPurify.sanitize(String(marked.parse(editor.value?.content || '', { breaks: true, gfm: true }))))
 
 async function loadSkills() {
   loading.value = true
   error.value = ''
   try { skills.value = await invoke('agent_skill_list') }
-  catch (cause) { error.value = cause?.message || '技能读取失败' }
+  catch (cause) { error.value = errorMessage(cause, '技能读取失败') }
   finally { loading.value = false }
 }
 
-async function editSkill(skill) {
+async function editSkill(skill: AgentSkill) {
   error.value = ''
   try {
-    const full = await invoke('agent_skill_read', { name: skill.fileName.split('/')[0] })
-    editor.value = { ...full, directoryName: skill.fileName.split('/')[0], mode: 'edit', saving: false }
-  } catch (cause) { error.value = cause?.message || '技能读取失败' }
+    const directoryName = (skill.fileName || skill.name).split('/')[0] || skill.name
+    const full = await invoke('agent_skill_read', { name: directoryName })
+    editor.value = { ...full, content: full.content || '', directoryName, mode: 'edit', saving: false }
+  } catch (cause) { error.value = errorMessage(cause, '技能读取失败') }
 }
 
 function newSkill() {
@@ -44,15 +47,15 @@ async function saveSkill() {
     await invoke('agent_skill_upsert', { request: { name, content: editor.value.content } })
     editor.value = null
     await loadSkills()
-  } catch (cause) { error.value = cause?.message || '技能保存失败' }
+  } catch (cause) { error.value = errorMessage(cause, '技能保存失败') }
   finally { if (editor.value) editor.value.saving = false }
 }
 
-async function deleteSkill(skill) {
+async function deleteSkill(skill: AgentSkill) {
   if (skill.builtin || !(await requestConfirmation({ title: '删除技能', message: `确定删除「${skill.name}」吗？`, tone: 'danger', confirmLabel: '删除' }))) return
   error.value = ''
-  try { await invoke('agent_skill_delete', { name: skill.fileName.split('/')[0] }); await loadSkills() }
-  catch (cause) { error.value = cause?.message || '技能删除失败' }
+  try { await invoke('agent_skill_delete', { name: (skill.fileName || skill.name).split('/')[0] }); await loadSkills() }
+  catch (cause) { error.value = errorMessage(cause, '技能删除失败') }
 }
 
 onMounted(loadSkills)

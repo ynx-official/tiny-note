@@ -1,5 +1,5 @@
-<script setup>
-import { computed, onMounted, onUnmounted, reactive, ref } from 'vue'
+<script setup lang="ts">
+import { computed, onMounted, onUnmounted, reactive, ref, type CSSProperties } from 'vue'
 import { useRouter } from 'vue-router'
 import { storeToRefs } from 'pinia'
 import { Bell, CalendarDays, CalendarRange, Check, ChevronDown, ChevronLeft, ChevronRight, List, LoaderCircle, Plus, Trash2, X } from 'lucide-vue-next'
@@ -10,6 +10,12 @@ import { ensureReminderPermission, normalizedReminder } from '../services/remind
 import ReminderEditor from '../components/ReminderEditor.vue'
 import DateTimePicker from '../components/DateTimePicker.vue'
 import { compareLocalEventTimes, defaultEventSchedule, shiftEventStart } from '../utils/dateTime'
+import { errorMessage, type CalendarEvent } from '../types/domain'
+import type { CalendarDisplayItem } from '../utils/calendar'
+
+interface CalendarContext { visible: boolean; x: number; y: number; item: CalendarDisplayItem | null }
+interface CalendarOverflow { visible: boolean; x: number; y: number; date: string; items: CalendarDisplayItem[] }
+interface MonthSegment { item: CalendarDisplayItem; startColumn: number; span: number; lane: number }
 
 const router = useRouter()
 const calendar = useCalendarStore()
@@ -22,8 +28,8 @@ const modal = ref(false)
 const saving = ref(false)
 const formError = ref('')
 const selection = reactive({ active: false, start: '', end: '' })
-const context = reactive({ visible: false, x: 0, y: 0, item: null })
-const overflow = reactive({ visible: false, x: 0, y: 0, date: '', items: [] })
+const context = reactive<CalendarContext>({ visible: false, x: 0, y: 0, item: null })
+const overflow = reactive<CalendarOverflow>({ visible: false, x: 0, y: 0, date: '', items: [] })
 const form = reactive({ title: '', ...defaultEventSchedule(), allDay: false, description: '', color: '#1E88E5', priority: 'important', completed: false, reminder: { enabled: false, mode: 'at', triggerAt: '', offsetMinutes: 10, intervalMinutes: 10 } })
 const weekdayLabels = ['日', '一', '二', '三', '四', '五', '六']
 const views = [{ key: 'month', label: '月' }, { key: 'week', label: '周' }, { key: 'year', label: '年' }, { key: 'list', label: '列表' }]
@@ -40,8 +46,8 @@ const label = computed(() => view.value === 'year'
     ? formatDate(startOfWeek(anchor.value)) + ' — ' + formatDate(addDays(startOfWeek(anchor.value), 6))
     : anchor.value.getFullYear() + '年 ' + (anchor.value.getMonth() + 1) + '月')
 
-function setView(next) { view.value = next; viewMenu.value = false; localStorage.setItem('tiny-note-calendar-view', next) }
-function move(direction) {
+function setView(next: string) { view.value = next; viewMenu.value = false; localStorage.setItem('tiny-note-calendar-view', next) }
+function move(direction: number) {
   const date = new Date(anchor.value)
   if (view.value === 'year') date.setFullYear(date.getFullYear() + direction)
   else if (view.value === 'week') date.setDate(date.getDate() + direction * 7)
@@ -55,11 +61,11 @@ function resetForm(start = formatDate(new Date()), end = start) {
   formError.value = ''
   modal.value = true
 }
-function changeStartDate(value) { const end = shiftEventStart(form, value, form.startTime); form.startDate = value; Object.assign(form, end) }
-function changeEndDate(value) { form.endDate = value; if (!form.startDate || value < form.startDate) form.startDate = value }
-function changeStartTime(value) { const end = shiftEventStart(form, form.startDate, value); form.startTime = value; Object.assign(form, end) }
-function startSelect(date) { selection.active = true; selection.start = date; selection.end = date }
-function extendSelect(date) { if (selection.active) selection.end = date }
+function changeStartDate(value: string) { const end = shiftEventStart(form, value, form.startTime); form.startDate = value; Object.assign(form, end) }
+function changeEndDate(value: string) { form.endDate = value; if (!form.startDate || value < form.startDate) form.startDate = value }
+function changeStartTime(value: string) { const end = shiftEventStart(form, form.startDate, value); form.startTime = value; Object.assign(form, end) }
+function startSelect(date: string) { selection.active = true; selection.start = date; selection.end = date }
+function extendSelect(date: string) { if (selection.active) selection.end = date }
 function finishSelect() {
   if (!selection.active) return
   const start = selection.start < selection.end ? selection.start : selection.end
@@ -78,33 +84,34 @@ async function saveEvent() {
     if (reminder && !(await ensureReminderPermission())) { formError.value = '未获得系统通知权限，无法启用提醒'; return }
     await calendar.create({ title: form.title, startDate: form.startDate, endDate: form.endDate, startTime: form.allDay ? '' : form.startTime, endTime: form.allDay ? '' : form.endTime, allDay: form.allDay, description: form.description, color: form.color, priority: form.priority, completed: form.completed, reminder })
     modal.value = false
-  } catch (reason) { formError.value = reason?.message || String(reason) } finally { saving.value = false }
+  } catch (reason) { formError.value = errorMessage(reason, String(reason)) } finally { saving.value = false }
 }
-function openItem(item) { if (item.kind === 'todo') router.push({ path: '/todos', query: { id: item.id } }); else router.push('/calendar/' + item.id) }
-function openContext(event, item) { context.visible = true; context.x = event.clientX; context.y = event.clientY; context.item = item }
-function openOverflow(event, cell) {
+function openItem(item: CalendarDisplayItem) { if (item.kind === 'todo') router.push({ path: '/todos', query: { id: item.id } }); else router.push('/calendar/' + item.id) }
+function openContext(event: MouseEvent, item: CalendarDisplayItem) { context.visible = true; context.x = event.clientX; context.y = event.clientY; context.item = item }
+function openOverflow(event: MouseEvent, cell: { date: string; events: CalendarDisplayItem[] }) {
   overflow.visible = true
   overflow.x = Math.max(8, Math.min(event.clientX, window.innerWidth - 280))
   overflow.y = Math.max(8, Math.min(event.clientY, window.innerHeight - 260))
   overflow.date = cell.date
   overflow.items = cell.events
 }
-async function toggleItem(item) {
+async function toggleItem(item: CalendarDisplayItem | null) {
   if (!item) return
   if (item.kind === 'todo') await todosStore.setCompleted(item.id, !item.completed)
   else {
     const { kind, ...input } = item
     void kind
-    await calendar.update(item.id, { ...input, completed: !item.completed, reminder: item.reminder?.enabled ? { ...item.reminder } : null })
+    await calendar.update(item.id, { ...(input as Partial<CalendarEvent>), completed: !item.completed, reminder: item.reminder?.enabled ? { ...item.reminder } : null })
   }
 }
 async function toggleContext() { const item = context.item; context.visible = false; await toggleItem(item) }
+function openContextItem() { if (context.item) openItem(context.item); context.visible = false }
 async function deleteContext() { const item = context.item; context.visible = false; if (item?.kind === 'event' && window.confirm('确定删除这个日程吗？')) await calendar.remove(item.id) }
-function eventStyle(item) { return { '--item-color': item.color || '#4E83A8' } }
-function segmentStyle(segment) { return { gridColumn: segment.startColumn + ' / span ' + segment.span, gridRow: segment.lane + 1, ...eventStyle(segment.item) } }
-function monthClick(month) { anchor.value = new Date(anchor.value.getFullYear(), month, 1); setView('month') }
-function closeMenus(event) { if (!event.target.closest?.('.calendar-view-switch')) viewMenu.value = false; if (!event.target.closest?.('.calendar-context')) context.visible = false; if (!event.target.closest?.('.calendar-overflow')) overflow.visible = false }
-function onKey(event) { if (event.key === 'Escape') { modal.value = false; context.visible = false; overflow.visible = false; viewMenu.value = false } }
+function eventStyle(item: CalendarDisplayItem): CSSProperties { return { '--item-color': item.color || '#4E83A8' } as CSSProperties }
+function segmentStyle(segment: MonthSegment): CSSProperties { return { gridColumn: segment.startColumn + ' / span ' + segment.span, gridRow: segment.lane + 1, ...eventStyle(segment.item) } }
+function monthClick(month: number) { anchor.value = new Date(anchor.value.getFullYear(), month, 1); setView('month') }
+function closeMenus(event: PointerEvent) { const target = event.target instanceof Element ? event.target : null; if (!target?.closest('.calendar-view-switch')) viewMenu.value = false; if (!target?.closest('.calendar-context')) context.visible = false; if (!target?.closest('.calendar-overflow')) overflow.visible = false }
+function onKey(event: KeyboardEvent) { if (event.key === 'Escape') { modal.value = false; context.visible = false; overflow.visible = false; viewMenu.value = false } }
 onMounted(async () => { document.addEventListener('pointerdown', closeMenus); window.addEventListener('keydown', onKey); await Promise.allSettled([calendar.load(), todosStore.load()]) })
 onUnmounted(() => { document.removeEventListener('pointerdown', closeMenus); window.removeEventListener('keydown', onKey) })
 </script>
@@ -151,7 +158,7 @@ onUnmounted(() => { document.removeEventListener('pointerdown', closeMenus); win
 
     <div v-if="modal" class="calendar-modal-backdrop" @mousedown.self="modal = false"><form class="calendar-modal" @submit.prevent="saveEvent"><header><h2>新建日程</h2><button type="button" @click="modal = false"><X :size="18" /></button></header><label>标题<input v-model="form.title" autofocus placeholder="日程标题"></label><div class="form-grid"><label>开始日期<DateTimePicker mode="date" :model-value="form.startDate" placeholder="选择开始日期" :clearable="false" @update:model-value="changeStartDate" /></label><label>结束日期<DateTimePicker mode="date" :model-value="form.endDate" placeholder="选择结束日期" :clearable="false" @update:model-value="changeEndDate" /></label></div><label class="check"><input v-model="form.allDay" type="checkbox">全天</label><div v-if="!form.allDay" class="form-grid"><label>开始时间<DateTimePicker mode="time" :model-value="form.startTime" placeholder="选择开始时间" :clearable="false" @update:model-value="changeStartTime" /></label><label>结束时间<DateTimePicker v-model="form.endTime" mode="time" placeholder="选择结束时间" :clearable="false" /></label></div><p v-if="!form.allDay" class="time-hint">调整开始时间时，会自动保留日程时长。</p><label>描述<textarea v-model="form.description" rows="3" placeholder="添加描述…"></textarea></label><div class="form-grid"><label>优先级<select v-model="form.priority"><option value="urgent">紧急</option><option value="important">重要</option><option value="minor">次要</option></select></label><fieldset><legend>颜色</legend><div class="color-grid"><button v-for="color in EVENT_COLORS" :key="color" type="button" :class="{ active: form.color === color }" :style="{ background: color }" @click="form.color = color"></button></div></fieldset></div><ReminderEditor v-model="form.reminder" :has-anchor="!form.allDay && Boolean(form.startTime)" /><p v-if="formError" class="form-error">{{ formError }}</p><footer><button type="button" @click="modal = false">取消</button><button class="primary" :disabled="saving">{{ saving ? '保存中…' : '保存' }}</button></footer></form></div>
     <div v-if="overflow.visible" class="calendar-overflow" :style="{ left: overflow.x + 'px', top: overflow.y + 'px' }"><header><b>{{ overflow.date }}</b><button @click="overflow.visible = false"><X :size="15" /></button></header><button v-for="item in overflow.items" :key="item.kind + '-' + item.id" :class="{ completed: item.completed }" :data-status="item.completed ? 'completed' : 'active'" :style="{ '--item-color': item.color }" @click="openItem(item); overflow.visible = false"><i></i><span>{{ item.title }}</span><time>{{ item.allDay ? '全天' : item.startTime + (item.endTime ? `–${item.endTime}` : '') }}</time></button></div>
-    <div v-if="context.visible" class="calendar-context" :style="{ left: context.x + 'px', top: context.y + 'px' }"><button @click="toggleContext">{{ context.item?.completed ? '取消完成' : '标记完成' }}</button><button @click="openItem(context.item); context.visible = false">查看详情</button><button v-if="context.item?.kind === 'event'" class="danger" @click="deleteContext"><Trash2 :size="14" />删除日程</button></div>
+    <div v-if="context.visible" class="calendar-context" :style="{ left: context.x + 'px', top: context.y + 'px' }"><button @click="toggleContext">{{ context.item?.completed ? '取消完成' : '标记完成' }}</button><button @click="openContextItem">查看详情</button><button v-if="context.item?.kind === 'event'" class="danger" @click="deleteContext"><Trash2 :size="14" />删除日程</button></div>
   </section>
 </template>
 

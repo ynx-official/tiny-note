@@ -1,22 +1,21 @@
-<script setup>
+<script setup lang="ts">
 import { computed, nextTick, ref } from 'vue'
 
-const props = defineProps({
-  request: { type: Object, required: true },
-  interactive: { type: Boolean, default: false },
-  status: { type: String, default: 'awaiting_input' },
-  response: { type: Object, default: null }
-})
+interface InputOption { id: string; label: string; description?: string; recommended?: boolean }
+interface InputRequest { title: string; question: string; options?: InputOption[]; allowOther?: boolean }
+interface InputResponse { outcome?: string; selectedLabel?: string; selectedOptionId?: string | null; otherText?: string | null }
+const props = withDefaults(defineProps<{ request: InputRequest; interactive?: boolean; status?: string; response?: InputResponse | null }>(), { interactive: false, status: 'awaiting_input', response: null })
 const emit = defineEmits(['answer'])
 
 const activeIndex = ref(0)
 const otherOpen = ref(false)
 const otherText = ref('')
-const otherInput = ref(null)
+const otherInput = ref<HTMLInputElement | null>(null)
 const options = computed(() => Array.isArray(props.request?.options) ? props.request.options.slice(0, 4) : [])
-const shortcut = index => String.fromCharCode(65 + index)
+const shortcut = (index: number) => String.fromCharCode(65 + index)
 
-function answerOption(option) {
+function answerOption(option: InputOption | undefined) {
+  if (!option) return
   if (!props.interactive) return
   emit('answer', { outcome: 'answered', selectedOptionId: option.id, otherText: null })
 }
@@ -42,8 +41,8 @@ function cancel() {
   }
   emit('answer', { outcome: 'cancelled', selectedOptionId: null, otherText: null })
 }
-function onKeydown(event) {
-  if (!props.interactive || event.target?.tagName === 'INPUT') return
+function onKeydown(event: KeyboardEvent) {
+  if (!props.interactive || (event.target as HTMLElement | null)?.tagName === 'INPUT') return
   const key = event.key.toLowerCase()
   const shortcutIndex = key.charCodeAt(0) - 97
   if (key.length === 1 && shortcutIndex >= 0 && shortcutIndex < options.value.length) {
@@ -67,15 +66,16 @@ function onKeydown(event) {
 }
 
 const answerSummary = computed(() => {
-  if (!props.response) {
+  const response = props.response
+  if (!response) {
     if (props.status === 'skipped') return '已跳过'
     if (props.status === 'cancelled') return '已取消'
     return ''
   }
-  if (props.response.outcome === 'skipped') return '已跳过'
-  if (props.response.outcome === 'cancelled') return '已取消'
-  const label = props.response.selectedLabel || options.value.find(item => item.id === props.response.selectedOptionId)?.label
-  return label ? `已选择：${label}` : `已回答：${props.response.otherText || ''}`
+  if (response.outcome === 'skipped') return '已跳过'
+  if (response.outcome === 'cancelled') return '已取消'
+  const label = response.selectedLabel || options.value.find(item => item.id === response.selectedOptionId)?.label
+  return label ? `已选择：${label}` : `已回答：${response.otherText || ''}`
 })
 </script>
 

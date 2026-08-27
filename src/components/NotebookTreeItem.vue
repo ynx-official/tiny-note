@@ -1,26 +1,26 @@
-<script setup>
+<script setup lang="ts">
 import { FileText, Folder, Pin } from 'lucide-vue-next'
+import type { Note, Notebook } from '../types/domain'
+
+interface TreeNode extends Notebook { children: TreeNode[]; notes: Note[]; totalNoteCount: number }
 
 defineOptions({ name: 'NotebookTreeItem' })
-const props = defineProps({
-  node: { type: Object, required: true },
-  depth: { type: Number, default: 0 },
-  expanded: { type: Object, required: true },
-  selected: { type: Object, required: true }
-})
+const props = withDefaults(defineProps<{ node: TreeNode; depth?: number; expanded: Set<unknown>; selected: { type: string; id: string } }>(), { depth: 0 })
 const emit = defineEmits(['toggle', 'select-notebook', 'select-note', 'notebook-menu', 'note-menu', 'drop-node'])
 
-function dragStart(event, kind, id) {
+function dragStart(event: DragEvent, kind: string, id: string) {
+  if (!event.dataTransfer) return
   event.dataTransfer.effectAllowed = 'move'
   event.dataTransfer.setData('application/x-tiny-note-tree', JSON.stringify({ kind, id }))
 }
-function drop(event) {
+function drop(event: DragEvent) {
+  if (!event.dataTransfer) return
   try {
     const payload = JSON.parse(event.dataTransfer.getData('application/x-tiny-note-tree'))
     if (payload?.id) emit('drop-node', payload, props.node.id)
   } catch { /* ignore foreign drags */ }
 }
-function folderKeydown(event) {
+function folderKeydown(event: KeyboardEvent) {
   if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); emit('select-notebook', props.node) }
   if (event.key === 'ArrowRight' && !props.expanded.has(props.node.id)) { event.preventDefault(); emit('toggle', props.node.id) }
   if (event.key === 'ArrowLeft' && props.expanded.has(props.node.id)) { event.preventDefault(); emit('toggle', props.node.id) }

@@ -1,4 +1,4 @@
-<script setup>
+<script setup lang="ts">
 import { nextTick, ref, watch } from 'vue'
 import { CheckCircle2, ExternalLink, FolderOpen, LoaderCircle } from 'lucide-vue-next'
 import { useI18n } from 'vue-i18n'
@@ -10,7 +10,7 @@ import {
 } from '../services/exportSuccess'
 
 const { t } = useI18n()
-const openButton = ref(null)
+const openButton = ref<HTMLButtonElement | null>(null)
 
 watch(() => exportSuccessState.visible, async visible => {
   if (!visible) return

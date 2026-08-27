@@ -364,7 +364,9 @@ mod tests {
     fn state() -> AppState {
         let data_dir = std::env::temp_dir().join(format!("tiny-note-mcp-{}", Uuid::new_v4()));
         AppState {
-            db: Arc::new(Mutex::new(Connection::open_in_memory().unwrap())),
+            db: Arc::new(crate::Database::ready(
+                Connection::open_in_memory().unwrap(),
+            )),
             data_dir,
             cancels: Arc::new(Mutex::new(HashMap::new())),
             exported_files: Arc::new(Mutex::new(HashSet::new())),
