@@ -100,11 +100,22 @@ jobs:
           set -euo pipefail
           NOTES_FILE="${RUNNER_TEMP}/tiny-note-release-notes.md"
           printf '%s' "$RELEASE_BODY" > "$NOTES_FILE"
-          gh release create "$GITHUB_REF_NAME" release-assets/* \
+          if ! gh release view "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            gh release create "$GITHUB_REF_NAME" \
+              --repo "$GITHUB_REPOSITORY" \
+              --title "Tiny Note ${GITHUB_REF_NAME#tiny-note-v}" \
+              --notes-file "$NOTES_FILE" \
+              --verify-tag
+          fi
+
+          mapfile -d '' ASSETS < <(find release-assets -type f -print0)
+          if (( ${#ASSETS[@]} == 0 )); then
+            echo "No release assets found"
+            exit 1
+          fi
+          gh release upload "$GITHUB_REF_NAME" "${ASSETS[@]}" \
             --repo "$GITHUB_REPOSITORY" \
-            --title "Tiny Note ${GITHUB_REF_NAME#tiny-note-v}" \
-            --notes-file "$NOTES_FILE" \
-            --verify-tag
+            --clobber
 
   publish-manifest:
     needs: publish
