@@ -608,3 +608,25 @@ body, button, input, select, textarea { font-family: -apple-system, BlinkMacSyst
 .home-model-empty { width:100%; padding:10px 8px; color:var(--text-tertiary); font-size:11px; text-align:left; }
 .home-model-empty:hover { color:var(--text-primary); }
 
+/* Route styles are loaded on demand and still contain legacy shell selectors.
+   Keep the Friday shell geometry stable when a route stylesheet arrives. */
+.window-shell.window-shell > .topbar { height:46px; flex:0 0 46px; background:var(--bg-secondary); }
+.window-shell.window-shell .topbar-leading { width:56px; flex:0 0 56px; }
+.window-shell.window-shell .tab-strip { min-width:0; flex:1; height:100%; gap:3px; padding:7px 0 0 4px; }
+.window-shell.window-shell .tab { height:32px; min-width:150px; padding:0 12px; border-radius:10px; font-size:13px; font-weight:600; }
+.window-shell.window-shell .window-actions { height:100%; gap:2px; padding:0 8px; }
+.window-shell.window-shell .app-body { padding:0 6px 6px 0; }
+.window-shell.window-shell .rail { width:56px; flex:0 0 56px; padding:12px 0 10px; border-right:0; background:var(--bg-secondary); }
+.window-shell.window-shell .rail-add { width:40px; height:40px; margin-bottom:18px; background:transparent; box-shadow:none; }
+.window-shell.window-shell .rail nav { width:40px; gap:12px; }
+.window-shell.window-shell .rail-item { width:40px; height:40px; min-height:40px; padding:0; border-radius:10px; gap:0; font-size:0; }
+.window-shell.window-shell .rail-item span { display:none; }
+.window-shell.window-shell .rail-item.active { color:var(--text-primary); background:var(--bg-active); }
+.window-shell.window-shell .content-wrap { padding:0; }
+.window-shell.window-shell .content-card { width:100%; height:100%; border:0; border-radius:0; box-shadow:none; }
+.window-shell.window-shell > .topbar,
+.window-shell.window-shell > .app-body,
+.window-shell.window-shell .rail,
+.window-shell.window-shell .content-wrap,
+.window-shell.window-shell .content-card { transition:none; overflow-anchor:none; }
+

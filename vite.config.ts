@@ -8,7 +8,9 @@ ensureWebCrypto()
 export default defineConfig({
   plugins: [vue()],
   clearScreen: false,
-  server: { port: 1420, strictPort: true },
+  // Keep Tauri's dev URL on the same IPv4 listener on Windows. Using
+  // `localhost` can resolve to ::1 while Vite is not reachable on 127.0.0.1.
+  server: { host: '127.0.0.1', port: 1420, strictPort: true },
   envPrefix: ['VITE_', 'TAURI_'],
   build: {
     target: ['es2021', 'chrome105', 'safari13'],
