@@ -43,7 +43,12 @@ async function bootstrapMainWindow() {
       i18n.global.locale.value = appStore.settings.language === 'en' ? 'en' : 'zh-CN'
       localStorage.setItem('tiny-note-language', appStore.settings.language)
     },
-    startDeferredServices: () => externalMarkdownModule.startExternalMarkdownOpen({ pinia, router })
+    startDeferredServices: () => {
+      externalMarkdownModule.startExternalMarkdownOpen({ pinia, router })
+      const preload = () => { void routerModule.preloadWorkspaceRoutes() }
+      if (window.requestIdleCallback) window.requestIdleCallback(preload, { timeout: 2500 })
+      else window.setTimeout(preload, 1200)
+    }
   })
 }
 

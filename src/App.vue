@@ -28,7 +28,7 @@ onBeforeUnmount(() => unlistenNavigate?.())
 watch(locale, value => localStorage.setItem('tiny-note-language', value))
 </script>
 <template>
-  <AppShell :active="active"><router-view /></AppShell>
+  <AppShell :active="active"><router-view v-slot="{ Component }"><KeepAlive :max="12"><component :is="Component" :key="route.path" /></KeepAlive></router-view></AppShell>
   <AppPromptDialog />
   <AppFeedbackHost />
   <template v-if="deferredHostsReady"><AppUpdateDialog /><AppExportLocationDialog /><AppExportSuccessDialog /></template>
