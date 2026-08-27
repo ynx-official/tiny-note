@@ -18,7 +18,7 @@ use tauri::{
     ipc::Channel,
     menu::{Menu, MenuItem},
     tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent},
-    Emitter, Manager, State,
+    AppHandle, Emitter, Manager, PhysicalPosition, State, WebviewUrl, WebviewWindowBuilder,
 };
 use tauri_plugin_opener::OpenerExt;
 use thiserror::Error;
@@ -5684,6 +5684,67 @@ pub mod commands {
     }
 }
 
+const TRAY_PANEL_LABEL: &str = "tray-panel";
+
+fn show_main_window(app: &AppHandle) {
+    if let Some(window) = app.get_webview_window("main") {
+        let _ = window.unminimize();
+        let _ = window.show();
+        let _ = window.set_focus();
+    }
+}
+
+fn toggle_tray_panel(app: &AppHandle, click_position: PhysicalPosition<f64>) {
+    let Some(window) = app.get_webview_window(TRAY_PANEL_LABEL) else {
+        return;
+    };
+    if window.is_visible().unwrap_or(false) {
+        let _ = window.hide();
+        return;
+    }
+
+    if let (Ok(panel_size), Ok(Some(monitor))) = (
+        window.outer_size(),
+        app.monitor_from_point(click_position.x, click_position.y),
+    ) {
+        let work_area = monitor.work_area();
+        let margin = 8;
+        let min_x = work_area.position.x + margin;
+        let max_x =
+            (work_area.position.x + work_area.size.width as i32 - panel_size.width as i32 - margin)
+                .max(min_x);
+        let centered_x = click_position.x.round() as i32 - panel_size.width as i32 / 2;
+        let x = centered_x.clamp(min_x, max_x);
+        let y = work_area.position.y + margin;
+        let _ = window.set_position(PhysicalPosition::new(x, y));
+    }
+
+    let _ = app.emit_to(TRAY_PANEL_LABEL, "tiny-note://tray-open", ());
+    let _ = window.show();
+    let _ = window.set_focus();
+}
+
+#[tauri::command]
+fn tray_open_main(app: AppHandle, route: String) -> Result<(), AppError> {
+    let base_route = route.split('?').next().unwrap_or_default();
+    if !matches!(base_route, "/todos" | "/calendar" | "/settings") {
+        return Err(AppError::invalid(
+            "tray_route_invalid",
+            "状态栏面板只能打开待办、日历或设置页面",
+        ));
+    }
+    if let Some(panel) = app.get_webview_window(TRAY_PANEL_LABEL) {
+        let _ = panel.hide();
+    }
+    app.emit_to("main", "tiny-note://navigate", route)
+        .map_err(|error| AppError::Operation {
+            code: "tray_navigation_failed".into(),
+            message: error.to_string(),
+        })?;
+    show_main_window(&app);
+    Ok(())
+}
+
 pub fn run() {
     let app = tauri::Builder::default()
         .plugin(tauri_plugin_single_instance::init(|app, args, cwd| {
@@ -5706,6 +5767,11 @@ pub fn run() {
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_notification::init())
         .on_window_event(|window, event| {
+            if window.label() == TRAY_PANEL_LABEL {
+                if matches!(event, tauri::WindowEvent::Focused(false)) {
+                    let _ = window.hide();
+                }
+            }
             if let tauri::WindowEvent::CloseRequested { api, .. } = event {
                 api.prevent_close();
                 let _ = window.hide();
@@ -5724,6 +5790,22 @@ pub fn run() {
             );
             app.manage(pending);
 
+            WebviewWindowBuilder::new(app, TRAY_PANEL_LABEL, WebviewUrl::App("index.html".into()))
+                .title("Tiny Note 待办")
+                .inner_size(400.0, 640.0)
+                .resizable(false)
+                .maximizable(false)
+                .minimizable(false)
+                .closable(false)
+                .decorations(false)
+                .shadow(true)
+                .always_on_top(true)
+                .visible_on_all_workspaces(true)
+                .skip_taskbar(true)
+                .visible(false)
+                .initialization_script("window.__TINY_NOTE_TRAY_PANEL__ = true;")
+                .build()?;
+
             let show = MenuItem::with_id(app, "show", "打开 Tiny Note", true, None::<&str>)?;
             let quit = MenuItem::with_id(app, "quit", "彻底退出", true, None::<&str>)?;
             let menu = Menu::with_items(app, &[&show, &quit])?;
@@ -5732,30 +5814,20 @@ pub fn run() {
                 .show_menu_on_left_click(false)
                 .on_menu_event(|app, event| match event.id.as_ref() {
                     "show" => {
-                        if let Some(window) = app.get_webview_window("main") {
-                            let _ = window.unminimize();
-                            let _ = window.show();
-                            let _ = window.set_focus();
-                        }
+                        show_main_window(app);
                     }
                     "quit" => app.exit(0),
                     _ => {}
                 })
                 .on_tray_icon_event(|tray, event| {
-                    if matches!(
-                        event,
-                        TrayIconEvent::Click {
-                            button: MouseButton::Left,
-                            button_state: MouseButtonState::Up,
-                            ..
-                        }
-                    ) {
-                        let app = tray.app_handle();
-                        if let Some(window) = app.get_webview_window("main") {
-                            let _ = window.unminimize();
-                            let _ = window.show();
-                            let _ = window.set_focus();
-                        }
+                    if let TrayIconEvent::Click {
+                        position,
+                        button: MouseButton::Left,
+                        button_state: MouseButtonState::Up,
+                        ..
+                    } = event
+                    {
+                        toggle_tray_panel(tray.app_handle(), position);
                     }
                 });
             if let Some(icon) = app.default_window_icon() {
@@ -5876,6 +5948,7 @@ pub fn run() {
             planner::todo_delete,
             planner::todo_set_completed,
             planner::reminder_stop,
+            tray_open_main,
             agent::agent_invoke,
             agent::agent_resume,
             agent::agent_respond_input,

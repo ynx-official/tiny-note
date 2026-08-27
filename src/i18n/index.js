@@ -84,7 +84,8 @@ Object.assign(messages['zh-CN'], {
   todoSaveFailed: '保存失败', todoTitleRequired: '待办标题不能为空',
   todoLists: '清单', todoListAdd: '添加清单', todoListEdit: '编辑清单', todoListNamePlaceholder: '输入清单名称', todoListColor: '清单颜色', todoListSaving: '保存中…',
   todoListMore: '清单更多操作', todoListDelete: '删除清单', todoListDeleteTitle: '删除清单', todoListDeleteConfirm: '删除“{name}”后，其中的待办会保留并移回未归类状态。',
-  todoListNone: '无清单', todoListAssignment: '所属清单', todoListsExpand: '展开清单', todoListsCollapse: '收起清单'
+  todoListNone: '无清单', todoListAssignment: '所属清单', todoListsExpand: '展开清单', todoListsCollapse: '收起清单',
+  trayTodoOpenFull: '在主窗口打开待办'
 })
 
 Object.assign(messages.en, {
@@ -104,5 +105,6 @@ Object.assign(messages.en, {
   todoSaveFailed: 'Save failed', todoTitleRequired: 'A title is required',
   todoLists: 'Lists', todoListAdd: 'Add list', todoListEdit: 'Edit list', todoListNamePlaceholder: 'Enter a list name', todoListColor: 'List color', todoListSaving: 'Saving…',
   todoListMore: 'List actions', todoListDelete: 'Delete list', todoListDeleteTitle: 'Delete list', todoListDeleteConfirm: 'Deleting “{name}” keeps its todos and moves them back to the unassigned state.',
-  todoListNone: 'No list', todoListAssignment: 'List', todoListsExpand: 'Expand lists', todoListsCollapse: 'Collapse lists'
+  todoListNone: 'No list', todoListAssignment: 'List', todoListsExpand: 'Expand lists', todoListsCollapse: 'Collapse lists',
+  trayTodoOpenFull: 'Open todos in the main window'
 })
