@@ -1,14 +1,10 @@
-<script lang="ts">
-import { defineComponent, type PropType } from 'vue'
+<script setup lang="ts">
 import { BookOpen, ChevronRight, Copy, FolderInput, Pin, PinOff, Plus, RotateCcw, Tags, Trash2 } from 'lucide-vue-next'
 import type { NotesWorkspace } from '../../composables/useNotesWorkspace'
 
-export default defineComponent({
-  name: 'NoteContextMenus',
-  components: { BookOpen, ChevronRight, Copy, FolderInput, Pin, PinOff, Plus, RotateCcw, Tags, Trash2 },
-  props: { workspace: { type: Object as PropType<NotesWorkspace>, required: true } },
-  setup: props => props.workspace
-})
+const props = defineProps<{ workspace: NotesWorkspace }>()
+const workspace = props.workspace
+const { t, store, tagsStore, showDeleted, contextMenu, contextMenuRef, contextNote, contextMoveOpen, contextMoveAnchorRef, contextMoveSubmenuRef, contextMoveStyle, contextKnowledgeOpen, contextKnowledgeAnchorRef, contextKnowledgeSubmenuRef, contextKnowledgeStyle, contextTagsOpen, contextTagIds, knowledgeGroups, closeContextMenu, duplicateContextNote, togglePinned, showMoveSubmenu, hideMoveSubmenu, cancelHideMoveSubmenu, moveContextNote, createNotebookForContext, createKnowledgeBaseForContext, showKnowledgeSubmenu, hideKnowledgeSubmenu, cancelHideKnowledgeSubmenu, addContextNoteToKnowledge, toggleContextTag, createContextTag, deleteContextNote, restoreContextNote } = workspace
 </script>
 
 <template>

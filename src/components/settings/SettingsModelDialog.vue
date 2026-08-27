@@ -1,14 +1,10 @@
-<script lang="ts">
-import { defineComponent, type PropType } from 'vue'
+<script setup lang="ts">
 import { Check, ChevronDown, RefreshCw, X } from 'lucide-vue-next'
 import type { SettingsWorkspace } from '../../composables/useSettingsWorkspace'
 
-export default defineComponent({
-  name: 'SettingsModelDialog',
-  components: { Check, ChevronDown, RefreshCw, X },
-  props: { workspace: { type: Object as PropType<SettingsWorkspace>, required: true } },
-  setup: props => props.workspace
-})
+const props = defineProps<{ workspace: SettingsWorkspace }>()
+const workspace = props.workspace
+const { draft, isEditingModel, cancelModel, providerMenuOpen, primaryModelMenuOpen, selectedProvider, providerOptions, selectProvider, endpointMenuOpen, selectedEndpoint, endpointOptions, selectEndpoint, t, modelFetchBusy, fetchModels, modelFetchError, modelCatalog, selectedModelIds, selectedImageModelIds, toggleCatalogModel, toggleImageModel, toggleAllModels, saveModel, modelSaving, canSaveModel, locale } = workspace
 </script>
 
 <template>

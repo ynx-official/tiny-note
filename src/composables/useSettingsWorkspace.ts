@@ -3,6 +3,7 @@ import { storeToRefs } from 'pinia'
 import { useI18n } from 'vue-i18n'
 import { Cpu, FolderDown, Info, Keyboard, Moon, Monitor, Palette, Sparkles, Sun, Wrench } from 'lucide-vue-next'
 import { invoke } from '../services/tauri'
+import type { BalanceData as CommandBalanceData } from '../services/commandMap'
 import { appUpdater, BUNDLED_APP_VERSION, type UpdateCheckState } from '../services/appUpdater'
 import { requestConfirmation, showToast } from '../services/appFeedback'
 import { useAppStore } from '../stores/app'
@@ -29,7 +30,7 @@ export function useSettingsWorkspace() {
   
   interface ModelTestState { loading: boolean; status: string; message: string }
   
-  interface BalanceData { supported?: boolean; error?: string; totalBalance?: number; grantedBalance?: number; toppedUpBalance?: number; currency?: string; updatedAt?: string; [key: string]: unknown }
+  type BalanceData = CommandBalanceData & { error?: string }
   
   interface BalanceState { loading: boolean; data?: BalanceData; updatedAt?: string; error?: string }
   
@@ -593,7 +594,7 @@ export function useSettingsWorkspace() {
     return providerForModel(model).key === 'deepseek'
   }
   
-  function formatBalance(value: unknown, currency = '') {
+  function formatBalance(value: unknown, currency: string | null = '') {
     const amount = Number(value) || 0
     return (currency || '¥') + amount.toFixed(2)
   }

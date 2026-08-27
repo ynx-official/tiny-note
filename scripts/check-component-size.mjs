@@ -16,9 +16,14 @@ const failures = []
 for (const file of await files(sourceRoot)) {
   if (extname(file) !== '.vue' || file.endsWith('.spec.vue')) continue
   const name = relative(sourceRoot, file).replaceAll('\\', '/')
-  const count = (await readFile(file, 'utf8')).split(/\r?\n/).length
+  const source = await readFile(file, 'utf8')
+  const count = source.split(/\r?\n/).length
   const limit = legacyCeilings.get(name) ?? 300
   if (count > limit) failures.push(`${name}: ${count} lines (limit ${limit})`)
+  const scriptTags = [...source.matchAll(/<script\b[^>]*>/g)].map(match => match[0])
+  if (scriptTags.some(tag => !/^<script\s+setup\s+lang=["']ts["']\s*>$/.test(tag))) {
+    failures.push(`${name}: every script block must be <script setup lang="ts">`)
+  }
 }
 if (failures.length) {
   console.error(`Component size budget failed:\n${failures.join('\n')}`)

@@ -1,5 +1,4 @@
-<script lang="ts">
-import { defineComponent } from 'vue'
+<script setup lang="ts">
 import { Check, Menu as MenuIcon, SortAsc } from 'lucide-vue-next'
 import TodoListDialog from '../components/TodoListDialog.vue'
 import TodoNavigation from '../components/todos/TodoNavigation.vue'
@@ -8,14 +7,8 @@ import TodoGroups from '../components/todos/TodoGroups.vue'
 import TodoDetailEditor from '../components/todos/TodoDetailEditor.vue'
 import { useTodosWorkspace } from '../composables/useTodosWorkspace'
 
-export default defineComponent({
-  name: 'TodosView',
-  components: { Check, MenuIcon, SortAsc, TodoListDialog, TodoNavigation, TodoQuickAdd, TodoGroups, TodoDetailEditor },
-  setup() {
-    const workspace = useTodosWorkspace()
-    return { ...workspace, workspace }
-  }
-})
+const workspace = useTodosWorkspace()
+const { store, t, locale, loading, error, filter, activeListId, sortMode, sortOpen, navOpen, listsCollapsed, listMenuId, listDialogOpen, editingList, listDialogSaving, listDialogError, selectedId, quickTitle, quickStartAt, quickDueAt, quickReminder, quickInput, quickSaving, quickError, collapsedGroups, form, saveState, saveError, permissionWarning, navItems, completedNav, heading, headingCount, visible, groups, canQuickAdd, selected, sortOptions, saveLabel, groupLabel, changeFilter, openListDialog, changeList, deleteList, setSort, quickAdd, toggleGroup, toggle, select, formatDue, isOverdue, remove, closeListDialog, saveList, reminderSummary } = workspace
 </script>
 
 <template>

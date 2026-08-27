@@ -1,19 +1,13 @@
-<script lang="ts">
-import { defineComponent } from 'vue'
+<script setup lang="ts">
 import { ImagePlus, Settings } from 'lucide-vue-next'
 import ImageComposePanel from '../components/images/ImageComposePanel.vue'
 import ImageHistoryGrid from '../components/images/ImageHistoryGrid.vue'
 import ImageDialogs from '../components/images/ImageDialogs.vue'
 import { useImageGenerationWorkspace } from '../composables/useImageGenerationWorkspace'
 
-export default defineComponent({
-  name: 'ImageGenerationView',
-  components: { ImagePlus, Settings, ImageComposePanel, ImageHistoryGrid, ImageDialogs },
-  setup() {
-    const workspace = useImageGenerationWorkspace()
-    return { workspace, router: workspace.router }
-  }
-})
+const workspace = useImageGenerationWorkspace()
+const router = workspace.router
+const { appStore, images, notes, tasks, models, generations, loading, error, defaultModel, prompt, mode, size, count, selectedModelId, submitting, loadingAssets, pickerOpen, pickerSearch, pickerAsset, selectedNoteId, menuGenerationId, highlightedGenerationId, inputImages, inputFile, maskCanvas, maskTouched, maskBrushSize, drawingMask, optimizing, previousPrompt, historyPickerOpen, historyPickerLoading, previewItem, savingAssetIds, modeOptions, sizeOptions, configuredModels, visibleNotes, activeTasks, selectedModel, currentMode, promptPlaceholder, requiredImageCountText, reusableHistoryAssets, setDefaultModel, generationAssetUrl, openImagePreview, closeImagePreview, loadBrowserImage, readFile, normalizeToPng, setMode, openInputPicker, handleInputFiles, removeInputImage, openHistoryPicker, selectHistoryAsset, initializeMask, maskPoint, paintMask, startMask, finishMask, resetMask, compactOptimizedPrompt, previewOptimizedPrompt, imageOptimizationInstruction, optimizePrompt, undoPromptOptimization, ensureAssets, refresh, submit, useAssetAsInput, regenerate, copyPrompt, imageFileName, dataUriToBlob, isSavingAsset, imageSaveTitle, saveImage, escapeHtml, markdownLabel, openInsert, insertIntoNote, removeGeneration, handleTaskUpdate, handleImagePageKeydown, generationClass, generationModeLabel } = workspace
 </script>
 
 <template>

@@ -1,15 +1,11 @@
-<script lang="ts">
-import { defineComponent, type PropType } from 'vue'
+<script setup lang="ts">
 import { AlertCircle, Check, ChevronDown, ChevronRight, FlaskConical, FolderOpen, Globe2, Languages, LoaderCircle, Pencil, Plus, RefreshCw, Trash2 } from 'lucide-vue-next'
 import AgentToolsCatalog from '../AgentToolsCatalog.vue'
 import type { SettingsWorkspace } from '../../composables/useSettingsWorkspace'
 
-export default defineComponent({
-  name: 'SettingsDetail',
-  components: { AlertCircle, Check, ChevronDown, ChevronRight, FlaskConical, FolderOpen, Globe2, Languages, LoaderCircle, Pencil, Plus, RefreshCw, Trash2, AgentToolsCatalog },
-  props: { workspace: { type: Object as PropType<SettingsWorkspace>, required: true } },
-  setup: props => props.workspace
-})
+const props = defineProps<{ workspace: SettingsWorkspace }>()
+const workspace = props.workspace
+const { t, settings, models, activeSection, activeSectionId, themeOptions, selectTheme, showLanguageDropdown, currentLanguageLabel, selectLanguage, languageOptions, shortcutRecording, editorModeShortcutParts, beginShortcutRecording, recordEditorModeShortcut, cancelShortcutRecording, resetEditorModeShortcut, shortcutError, exportDirectoryBusy, settingsSections, chooseDefaultExportDirectory, clearDefaultExportDirectory, modelConnections, primaryModel, imageModels, primaryImageModel, providerLabel, providerIcon, providerForModel, editModel, editConnection, requestModelDelete, requestConnectionDelete, balanceModels, balanceRefreshingAll, queryAllBalances, balanceStates, formatBalance, formatBalanceTime, modelSaving, saving, addModel, primaryModelMenuOpen, imagePrimaryModelMenuOpen, providerMenuOpen, endpointLabel, modelTestStates, testModel, isDeepSeek, queryBalanceFor, appVersion, updateInfo, updateMessage, updateStatus, updateButtonLabel, handleUpdateAction, updateError, backupStatus, backupInput, exportWorkspace, restoreWorkspace, setPrimaryModel, setPrimaryImageModel, save, locale } = workspace
 </script>
 
 <template>

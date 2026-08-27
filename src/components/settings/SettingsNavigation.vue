@@ -1,14 +1,10 @@
-<script lang="ts">
-import { defineComponent, type PropType } from 'vue'
+<script setup lang="ts">
 import { ChevronRight, Search as SearchIcon } from 'lucide-vue-next'
 import type { SettingsWorkspace } from '../../composables/useSettingsWorkspace'
 
-export default defineComponent({
-  name: 'SettingsNavigation',
-  components: { ChevronRight, SearchIcon },
-  props: { workspace: { type: Object as PropType<SettingsWorkspace>, required: true } },
-  setup: props => props.workspace
-})
+const props = defineProps<{ workspace: SettingsWorkspace }>()
+const workspace = props.workspace
+const { t, searchQuery, filteredSections, activeSectionId, selectSection, locale } = workspace
 </script>
 
 <template>

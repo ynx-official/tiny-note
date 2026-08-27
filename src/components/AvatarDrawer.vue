@@ -6,6 +6,7 @@ import McpManagement from './McpManagement.vue'
 import MemoryManagement from './MemoryManagement.vue'
 import SkillsManagement from './SkillsManagement.vue'
 import UsageStatistics from './UsageStatistics.vue'
+import '../styles/assistant-drawer.css'
 
 const props = defineProps({ modelValue: { type: Boolean, default: false } })
 const emit = defineEmits(['update:modelValue'])

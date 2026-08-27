@@ -29,6 +29,34 @@ describe('HomeView startup data', () => {
     })
   })
 
+  it('shows the home loader until startup data is ready', async () => {
+    let resolveSettings: (value: unknown) => void = () => {}
+    let resolveModels: (value: unknown) => void = () => {}
+    mocks.invoke.mockImplementation((command: string) => {
+      if (command === 'settings_get') return new Promise(resolve => { resolveSettings = resolve })
+      if (command === 'model_list') return new Promise(resolve => { resolveModels = resolve })
+      return Promise.resolve([])
+    })
+
+    const wrapper = mount(HomeView, {
+      global: {
+        plugins: [createPinia(), createI18n({ legacy: false, locale: 'zh-CN', fallbackLocale: 'en', messages })]
+      }
+    })
+    await flushPromises()
+
+    expect(wrapper.get('.home-loader').attributes('role')).toBe('status')
+    expect(wrapper.findAll('.home-loader-grid span')).toHaveLength(6)
+    expect(wrapper.find('.home-content').exists()).toBe(false)
+
+    resolveSettings({ theme: 'system', language: 'zh-CN', fimEnabled: false, exportDirectory: '' })
+    resolveModels([])
+    await flushPromises()
+
+    expect(wrapper.find('.home-loader').exists()).toBe(false)
+    expect(wrapper.get('.home-content').exists()).toBe(true)
+  })
+
   it('keeps notes and library data off the startup path until a reference picker is opened', async () => {
     const wrapper = mount(HomeView, {
       global: {

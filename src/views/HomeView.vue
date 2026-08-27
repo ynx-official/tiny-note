@@ -25,7 +25,7 @@ const { locale, t } = useI18n()
 const notes = useNotesStore()
 const library = useLibraryStore()
 const appStore = useAppStore()
-const { models } = storeToRefs(appStore)
+const { initialized, models } = storeToRefs(appStore)
 const draft = ref('')
 const referenceMenuOpen = ref(false)
 const referencePicker = ref<'note' | 'file' | null>(null)
@@ -174,7 +174,18 @@ onMounted(async () => {
 
 <template>
   <div class="home-page" @click="closeMenus">
-    <div class="home-content">
+    <div v-if="!initialized" class="home-loader" role="status" aria-live="polite">
+      <div class="home-loader-grid" aria-hidden="true">
+        <span></span>
+        <span></span>
+        <span></span>
+        <span></span>
+        <span></span>
+        <span></span>
+      </div>
+      <span class="home-loader-label">{{ t('loading') }}</span>
+    </div>
+    <div v-else class="home-content">
       <section class="home-hero" aria-labelledby="home-title">
         <div class="home-wordmark" aria-label="Tiny Note">
           <div class="home-mark"><NotebookPen :size="66" :stroke-width="1.55" /></div>

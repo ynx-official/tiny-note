@@ -7,6 +7,7 @@ import { sanitizeEditorHtml, textFromEditorHtml } from '../utils/noteMarkdown'
 import { prepareTaskFlight } from '../utils/taskFlight'
 import type { BackgroundTask, EditProposal, JsonValue } from '../types/domain'
 import type { FeedbackTone } from '../services/appFeedback'
+import type { CommandArgs, ImageGenerateResult } from '../services/commandMap'
 
 interface TaskNotice { id: string; taskId: string | null; message: string; tone: FeedbackTone; createdAt: number }
 interface TasksState { tasks: BackgroundTask[]; initialized: boolean; loading: boolean; error: string; notices: TaskNotice[]; readTaskIds: string[] }
@@ -97,7 +98,7 @@ export const useTasksStore = defineStore('tasks', {
         this.execute(task).finally(() => { activeExecutions.delete(task.id); this.dispatch() })
       }
     },
-    async transition(task: BackgroundTask, status: string, extra: Record<string, unknown> = {}) {
+    async transition(task: BackgroundTask, status: string, extra: Partial<Omit<CommandArgs<'background_task_transition'>['input'], 'id' | 'status'>> = {}) {
       const updated = await invoke('background_task_transition', { input: { id: task.id, status, ...extra } })
       return this.upsert(updated)
     },
@@ -113,10 +114,12 @@ export const useTasksStore = defineStore('tasks', {
           next.finally(() => { if (eventChains.get(task.id) === next) eventChains.delete(task.id) })
         }
         if (task.kind === 'image_generation') {
-          const result = await invoke('image_generate', { request: { ...task.payload.request, requestId: task.id } })
+          const request = { ...task.payload.request, requestId: task.id } as CommandArgs<'image_generate'>['request']
+          const result = await invoke('image_generate', { request })
           await this.complete(task.id, '', result)
         } else {
-          await invoke('note_ai_stream', { request: { ...task.payload.request, requestId: task.id }, onEvent: channel })
+          const request = { ...task.payload.request, requestId: task.id } as CommandArgs<'note_ai_stream'>['request']
+          await invoke('note_ai_stream', { request, onEvent: channel })
         }
       } catch (error) {
         await this.fail(task.id, error)
@@ -125,12 +128,13 @@ export const useTasksStore = defineStore('tasks', {
     async executePreview(task: BackgroundTask) {
       if (task.kind === 'image_generation') {
         try {
-          const result = await invoke('image_generate', { request: { ...task.payload.request, requestId: task.id } })
+          const request = { ...task.payload.request, requestId: task.id } as CommandArgs<'image_generate'>['request']
+          const result = await invoke('image_generate', { request })
           await this.complete(task.id, '', result)
         } catch (error) { await this.fail(task.id, error) }
         return
       }
-      const content = task.payload.previewOutput || task.payload.request?.instruction || '浏览器预览任务已完成。'
+      const content = task.payload.previewOutput || String(task.payload.request?.instruction || '浏览器预览任务已完成。')
       await this.transition(task, 'running', { outputDelta: content })
       await this.complete(task.id)
     },
@@ -153,11 +157,11 @@ export const useTasksStore = defineStore('tasks', {
         }
       } catch (error) { await this.fail(id, error) }
     },
-    async complete(id: string, fallbackContent = '', taskResult: unknown = null) {
+    async complete(id: string, fallbackContent = '', taskResult: JsonValue | ImageGenerateResult | null = null) {
       let task = this.tasks.find(item => item.id === id)
       if (!task || TERMINAL.has(task.status)) return task
       const content = task.output || fallbackContent || ''
-      let result: unknown = {}
+      let result: JsonValue = {}
       if (task.kind === 'conversation_summary') {
         const html = sanitizeEditorHtml(String(marked.parse(content)))
         const note = await useNotesStore().createFromContent({ title: taskTitleFromMarkdown(content, task.payload.fallbackTitle), contentHtml: html, contentText: textFromEditorHtml(html), contentMarkdown: content })

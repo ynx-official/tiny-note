@@ -9,7 +9,7 @@
     <link rel="stylesheet" href="/boot.css" />
   </head>
   <body>
-    <div id="app"><div class="boot-shell" aria-label="Tiny Note 正在启动"><div class="boot-titlebar"></div><div class="boot-body"><aside></aside><main><span></span><span></span><span></span></main></div></div></div>
+    <div id="app"><div class="boot-shell" role="status" aria-label="Tiny Note 正在启动"><div class="boot-loader" aria-hidden="true"><span></span><span></span><span></span><span></span><span></span><span></span></div></div></div>
     <script>window.__TINY_NOTE_BOOT_TIMINGS__={...(window.__TINY_NOTE_BOOT_TIMINGS__||{}),'static-shell':performance.now()};performance.mark('tiny-note:static-shell');window.__TAURI_INTERNALS__?.invoke('startup_probe',{state:'static-shell',browserTimestamp:performance.timeOrigin+performance.now()}).catch(()=>{})</script>
     <script type="module" src="/src/main.ts"></script>
   </body>

@@ -210,6 +210,18 @@ body, button, input, select, textarea { font-family: -apple-system, BlinkMacSyst
 /* Note list context menu. It is fixed to the viewport so it remains aligned
 /* Tiny Note welcome page: Friday-inspired composition using Tiny Note's own mark and copy. */
 .home-page { width:100%; height:100%; min-height:0; display:flex; align-items:center; justify-content:center; overflow:auto; background:var(--bg-secondary); }
+.home-loader { display:grid; justify-items:center; gap:14px; color:var(--text-tertiary); }
+.home-loader-grid { --home-loader-color:var(--text-tertiary); --home-loader-size:70px; width:var(--home-loader-size); height:var(--home-loader-size); display:grid; grid-template-columns:repeat(3,1fr); gap:5px; }
+.home-loader-grid span { width:100%; height:100%; background-color:var(--home-loader-color); animation:home-loader-blink .6s alternate infinite linear; }
+.home-loader-grid span:nth-child(1) { animation-delay:0ms; }
+.home-loader-grid span:nth-child(2) { animation-delay:200ms; }
+.home-loader-grid span:nth-child(3) { animation-delay:300ms; }
+.home-loader-grid span:nth-child(4) { animation-delay:400ms; }
+.home-loader-grid span:nth-child(5) { animation-delay:500ms; }
+.home-loader-grid span:nth-child(6) { animation-delay:600ms; }
+.home-loader-label { font-size:12px; line-height:1.4; }
+@keyframes home-loader-blink { 0% { opacity:.3; transform:scale(.5) rotate(5deg); } 50% { opacity:1; transform:scale(1); } }
+@media (prefers-reduced-motion:reduce) { .home-loader-grid span { animation:none; opacity:.72; transform:none; } }
 .home-content { width:min(100%, 860px); display:flex; flex-direction:column; align-items:center; gap:34px; padding:52px 28px 38px; }
 .home-hero { display:flex; flex-direction:column; align-items:center; gap:10px; }
 .home-wordmark { display:flex; align-items:center; gap:12px; color:var(--text-primary); }

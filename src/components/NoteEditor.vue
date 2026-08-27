@@ -1,5 +1,4 @@
-<script lang="ts">
-import { defineComponent, type PropType } from 'vue'
+<script setup lang="ts">
 import { EditorContent } from '@tiptap/vue-3'
 import { BubbleMenu } from '@tiptap/vue-3/menus'
 import MarkdownSourceEditor from './MarkdownSourceEditor.vue'
@@ -10,28 +9,16 @@ import { Bold, CalendarDays, Check, CircleHelp, Columns2, Copy, FileCode2, FileO
 import { useNoteEditor, type NoteEditorEmit, type NoteEditorProps } from '../composables/useNoteEditor'
 import type { Note } from '../types/domain'
 
-export default defineComponent({
-  name: 'NoteEditor',
-  components: {
-    EditorContent, BubbleMenu, MarkdownSourceEditor, MarkdownMessage, NoteAssistantSidebar, FridayDropdownChevron,
-    Bold, CalendarDays, Check, CircleHelp, Columns2, Copy, FileCode2, FileOutput, FileText, Italic, Languages,
-    LoaderCircle, Maximize2, MessageSquare, RotateCcw, Send, ShieldCheck, Table2, ThumbsDown, ThumbsUp,
-    UnderlineIcon, Strikethrough, List, ListOrdered, ListChecks, Quote, Code2, Undo2, Redo2, Eraser, Link2,
-    Highlighter, PenLine, AlignLeft, AlignCenter, AlignRight, PlusCircle, Layers, Sparkles, Trash2, Download,
-    Printer, Workflow, X, Zap
-  },
-  props: {
-    note: { type: Object as PropType<NoteEditorProps['note']>, default: null },
-    tocVisible: { type: Boolean, default: false },
-    proposalId: { type: String, default: '' }
-  },
-  emits: ['deleted', 'toggle-toc', 'proposal-reviewed', 'import-external'],
-  setup(props, { emit, expose }) {
-    const workspace = useNoteEditor(props, emit as NoteEditorEmit)
-    expose({ saveLatestContent: () => workspace.flushLatestContent({ save: true }) })
-    return { ...workspace, emit }
-  }
-})
+const inputProps = defineProps<{ note?: NoteEditorProps['note']; tocVisible?: boolean; proposalId?: string }>()
+const props: NoteEditorProps = {
+  get note() { return inputProps.note ?? null },
+  get tocVisible() { return inputProps.tocVisible ?? false },
+  get proposalId() { return inputProps.proposalId ?? '' }
+}
+const emit = defineEmits<NoteEditorEmit>()
+const workspace = useNoteEditor(props, emit)
+defineExpose({ saveLatestContent: () => workspace.flushLatestContent({ save: true }) })
+const { lowlight, store, library, appStore, tasksStore, t, locale, aiBusy, aiText, aiRequestId, aiAction, aiResultAction, aiProposal, aiSources, aiConsentOpen, assistantOpen, assistantTriggerVisible, assistantBusy, assistantRequestId, assistantStreamingText, assistantMessages, assistantSelection, assistantResponseSources, assistantResponseProposal, aiPanelOpen, aiPanelSelectionText, commandMenuOpen, aiPrompt, aiInputRef, commandMenuDirection, moreOpen, moreTriggerRef, moreMenuRef, insertOpen, tablePickerOpen, textColorOpen, highlightOpen, headingOpen, imageDialogOpen, imageUrl, imageAlt, imageInput, imageFileInput, tableRows, tableCols, fimEnabled, fimSuggestion, editorStateTick, fimTimer, assistantTriggerTimer, savedSelection, pendingAiRequest, pendingAiChange, modeIcons, noteLinks, editorModes, editorMode, modeMenuOpen, modeMenuIndex, modeMenuRef, markdownDraft, markdownParseError, sourceDirty, markdownPasteNotice, markdownPreview, splitRatio, splitVertical, splitWorkspace, sourceEditorRef, previewScroller, pendingSourceDrafts, persistedSignatures, exportingFormat, exportStatusLabel, externalFileName, EXTERNAL_NOTICE_DISMISSED_PREFIX, externalNoticeDismissed, showExternalNoteBanner, applyingEditorContent, markdownParseTimer, markdownPasteTimer, splitResizeObserver, splitDragState, scrollSyncFrame, scrollSyncSource, modeShortcutSwitching, externalNoticeStorageKey, readExternalNoticeDismissed, dismissExternalNoteBanner, currentMode, modeShortcutParts, modeShortcutLabel, richMode, codeMode, splitMode, splitPaneStyle, aiActionLabels, aiErrorMessages, aiEventErrorMessage, aiActionLabel, unknownErrorCode, contextConsentModelId, aiFeedback, aiOutputOpen, aiOriginalText, aiChangePending, AI_CHANGE_HIGHLIGHT, aiCharCount, aiDialogPosition, aiDialogStyle, aiDragState, refreshEditorState, looksLikeMarkdown, isPlainInlineAiReplacement, handleMarkdownPaste, prepareEditorContent, extractNoteTitle, textFromPreparedEditorContent, syncNoteTitle, getEditorMarkdown, editor, canUndo, canRedo, linkActive, canEditLink, selectedText, shouldShowBubbleMenu, textColorPalette, highlightPalette, currentHeadingLabel, canSetNoteTitle, noteContentSignature, scheduleNoteSave, saveDirtyNote, handleRichEditorUpdate, deriveMarkdown, commitMarkdown, queueMarkdownParse, updateMarkdownDraft, flushLatestContent, resetEditorSession, changeEditorMode, handleEditorModeShortcut, toggleModeMenu, focusModeOption, moveModeFocus, handleModeMenuKeydown, focusMoreItem, toggleMoreMenu, handleMoreMenuKeydown, handleDocumentPointerDown, updateSplitOrientation, setupSplitObserver, stopSplitResize, resizeSplitPane, startSplitResize, synchronizeSplitScroll, handlePreviewScroll, toggleMarkdownPreview, viewPastedMarkdown, resetTransientEditorState, handleBackgroundNoteTask, setEditorEditable, loadExternalProposal, toggle, applyMarkdownFormat, setMarkdownHeading, setMarkdownSmallBody, hasNoteContextConsent, cancelAiConsent, confirmAiConsent, runAi, captureAssistantSelection, openAssistant, closeAssistant, toggleAssistant, assistantContext, assistantReferences, pushAssistantResponse, assistantEditIntent, sendAssistantMessage, stopAssistant, copyAssistantMessage, stopAi, exportBodyHtml, prepareExportSnapshot, runArticleExport, exportMarkdown, exportHtml, exportPdf, printNote, restoreSavedSelection, clearAiResultState, syncNoteFromEditor, selectedContentMarks, insertPendingAiContent, stagePendingAiChange, restoreAiChange, persistAiChange, confirmPendingAiChange, applyAiResult, insertAi, replaceWithAi, copyAi, toggleAiFeedback, dismissAiResult, closeAiResult, stopAiDrag, moveAiDialog, startAiDrag, rewriteAi, saveCurrentSelection, closeAiPanel, positionCommandMenu, openAiPanel, toggleCommandMenu, selectAiCommand, sendCustomAi, runSelectedAi, openInConversation, runFim, acceptFim, handleEditorTab, dismissFim, insertCodeBlock, mermaidTemplates, insertMermaidDiagram, closeToolbarMenus, toggleInsertMenu, selectTableCell, insertTable, openImageDialog, normalizeImageUrl, confirmImage, insertLocalImage, setTextColor, setHighlightColor, setHeading, setNoteTitle, setSmallBody, clearRichFormatting, normalizeLinkHref, editLink, saveNoteMetadata, importExternalSource } = workspace
 </script>
 <template>
   <div v-if="note" class="note-editor-shell">

@@ -1,19 +1,10 @@
-<script lang="ts">
-import { defineComponent, type PropType } from 'vue'
+<script setup lang="ts">
 import { AlertTriangle, Check, Copy, Expand, Maximize2, Minimize2, Minus, Plus, RefreshCw, Scan, Workflow, X } from 'lucide-vue-next'
 import { useMermaidDiagram, type MermaidDiagramEmit, type MermaidDiagramProps } from '../composables/useMermaidDiagram'
 
-export default defineComponent({
-  name: 'MermaidDiagram',
-  components: { AlertTriangle, Check, Copy, Expand, Maximize2, Minimize2, Minus, Plus, RefreshCw, Scan, Workflow, X },
-  props: {
-    source: { type: String as PropType<MermaidDiagramProps['source']>, default: '' }
-  },
-  emits: ['show-source', 'rendered'],
-  setup(props, { emit }) {
-    return { ...useMermaidDiagram(props, emit as MermaidDiagramEmit), emit }
-  }
-})
+const props = withDefaults(defineProps<MermaidDiagramProps>(), { source: '' })
+const emit = defineEmits<MermaidDiagramEmit>()
+const { svg, loading, error, zoom, fullscreenZoom, fullscreen, screenFullscreen, sourceCopied, inlineStage, fullscreenStage, fullscreenClose, fullscreenDialog, dragging, diagramKind, zoomStyle, empty, renderDiagram, zoomIn, zoomOut, fitWidth, openFullscreen, toggleScreenFullscreen, closeFullscreen, copySource, handleStageKeydown, handleWheel, startPan, movePan, finishPan } = useMermaidDiagram(props, emit)
 </script>
 
 <template>

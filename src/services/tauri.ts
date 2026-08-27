@@ -10,7 +10,7 @@ type InvokeArgs<K extends CommandName> = CommandArgs<K> extends NoCommandArgs
   : [args: CommandArgs<K>]
 
 export async function invoke<K extends CommandName>(command: K, ...parameters: InvokeArgs<K>): Promise<CommandResult<K>> {
-  const args = (parameters[0] ?? {}) as CommandArgs<K>
+  const args = (parameters[0] ?? {}) as CommandArgs<K> & Record<string, unknown>
   if (window.__TAURI_INTERNALS__) return tauriInvoke<CommandResult<K>>(command, args)
 
   const { browserInvoke } = await (browserBackend ?? import('./browserBackend'))

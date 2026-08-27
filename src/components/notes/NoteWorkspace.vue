@@ -1,14 +1,10 @@
-<script lang="ts">
-import { defineComponent, type PropType } from 'vue'
+<script setup lang="ts">
 import NoteEditor from '../NoteEditor.vue'
 import type { NotesWorkspace } from '../../composables/useNotesWorkspace'
 
-export default defineComponent({
-  name: 'NoteWorkspace',
-  components: { NoteEditor },
-  props: { workspace: { type: Object as PropType<NotesWorkspace>, required: true } },
-  setup: props => props.workspace
-})
+const props = defineProps<{ workspace: NotesWorkspace }>()
+const workspace = props.workspace
+const { t, sidebarCollapsed, showDeleted, store, tocVisible, route, clearReviewedProposal, toggleToc, remove, importExternalNote } = workspace
 </script>
 
 <template>

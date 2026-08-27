@@ -6,13 +6,31 @@ import type {
   ModelOption, ModelProfile, ModelTestResult, Note, Notebook, NoteLink,
   NoteTemplate, Reminder, Tag, Todo, TodoList, UpdateInfo, UsageStats
 } from '../types/domain'
+import type { Channel } from '@tauri-apps/api/core'
 
 export interface CommandDefinition<Args extends object, Result> { args: Args; result: Result }
 type Command<Args extends object, Result = void> = CommandDefinition<Args, Result>
 export type NoCommandArgs = Record<string, never>
 type NoArgs<Result = void> = Command<NoCommandArgs, Result>
 type IdArgs = { id: string }
-type UnknownInput = Record<string, unknown>
+type JsonObject = { [key: string]: JsonValue }
+type CommandChannel = Channel<never>
+
+export interface ModelFetchRequest { provider: string; profileId: string | null; baseUrl: string; apiKey: string | null; endpointType: string }
+export interface BalanceData { supported: boolean; available: boolean | null; currency: string | null; totalBalance: number; grantedBalance: number; toppedUpBalance: number; voucherBalance: number; cashBalance: number; updatedAt: string }
+export interface BackgroundTaskFilter { statuses: string[]; kinds: string[] }
+export interface BackgroundTaskTransition { id: string; status: string; outputDelta?: string | null; result?: JsonValue | null; errorCode?: string | null; errorMessage?: string | null; agentRunId?: string | null }
+export interface ImageInput { name: string; mimeType: string; dataUrl: string }
+export interface ImageGenerateRequest { requestId: string; imageModelProfileId: string; prompt: string; size: string; count: number; mode?: string; inputImages?: ImageInput[]; maskImage?: ImageInput | null }
+export interface ImageGenerateResult { generationId: string; assets: ImageAsset[]; usage: JsonValue | null }
+export interface ChatReferenceInput { key: string; type: string; name: string; noteId?: string; knowledgeBaseId?: string | null; baseId?: string | null; baseName?: string; relativePath?: string }
+export interface ChatAddMessage { conversationId: string; role: string; content: string; references?: ChatReferenceInput[]; sources?: JsonValue[]; proposalId?: string | null; agentRunId?: string | null }
+export interface AgentInvokeRequest { requestId: string; conversationId: string; message: string; modelProfileId: string | null; thinkingMode: string | null; references: JsonValue[] }
+export interface AgentResumeRequest { runId: string; toolCallId: string; approvalHash: string; decision: string; reason: string | null }
+export interface AgentInputResponseRequest { runId: string; toolCallId: string; inputHash: string; outcome: string; selectedOptionId?: string | null; otherText?: string | null }
+export interface McpServerRequest { id: string; name: string; command: string; args: string[]; enabled: boolean }
+export interface AiRequest { requestId: string; action: string; text: string; instruction: string | null; modelProfileId: string | null; thinkingMode?: string | null; source?: string | null; conversationId?: string | null; mode?: string | null; references?: JsonValue[]; targetNoteId?: string | null; selection?: JsonObject | null; targetLanguage?: string | null }
+export interface ExportWriteRequest { directory: string; fileName: string; contentBase64: string }
 
 export interface CommandMap {
   settings_get: NoArgs<AppSettings>
@@ -20,9 +38,9 @@ export interface CommandMap {
   model_list: NoArgs<ModelProfile[]>
   model_upsert: Command<{ profile: ModelProfile; apiKey: string | null }, ModelProfile>
   model_delete: Command<IdArgs>
-  model_fetch_models: Command<{ request: UnknownInput }, ModelOption[]>
+  model_fetch_models: Command<{ request: ModelFetchRequest }, ModelOption[]>
   model_test: Command<{ modelId: string }, ModelTestResult>
-  model_query_balance: Command<{ modelId: string }, Record<string, unknown>>
+  model_query_balance: Command<{ modelId: string }, BalanceData>
 
   note_list: Command<{ search?: string | null; deleted?: boolean; pinned?: boolean | null; knowledgeBaseId?: string | null }, Note[]>
   note_get: Command<IdArgs, Note | null>
@@ -96,17 +114,17 @@ export interface CommandMap {
   todo_custom_list_delete: Command<IdArgs>
   reminder_stop: Command<{ ownerType: string; ownerId: string }>
 
-  background_task_list: Command<{ filter?: UnknownInput | null }, BackgroundTask[]>
+  background_task_list: Command<{ filter?: BackgroundTaskFilter | null }, BackgroundTask[]>
   background_task_get: Command<IdArgs, BackgroundTask | null>
   background_task_enqueue: Command<{ input: Partial<BackgroundTask> }, BackgroundTask>
-  background_task_transition: Command<{ input: UnknownInput }, BackgroundTask>
+  background_task_transition: Command<{ input: BackgroundTaskTransition }, BackgroundTask>
   background_task_retry: Command<IdArgs, BackgroundTask>
   background_task_cancel: Command<IdArgs, BackgroundTask>
   background_task_clear_finished: NoArgs<number>
   image_model_list: NoArgs<ModelProfile[]>
   image_generation_list: Command<{ limit?: number }, ImageGeneration[]>
   image_generation_delete: Command<{ generationId: string }>
-  image_generate: Command<{ request: UnknownInput }, { generationId: string; assets: ImageAsset[]; usage: JsonValue | null }>
+  image_generate: Command<{ request: ImageGenerateRequest }, ImageGenerateResult>
   image_asset_read: Command<{ assetId: string }, ImageAsset>
 
   chat_list: NoArgs<ChatConversation[]>
@@ -114,19 +132,19 @@ export interface CommandMap {
   chat_create: Command<{ modelProfileId?: string | null; mode?: string }, ChatConversation>
   chat_delete: Command<IdArgs>
   chat_set_mode: Command<IdArgs & { mode: string }, ChatConversation>
-  chat_add_message: Command<{ conversationId: string; role: string; content: string; references?: unknown[]; sources?: JsonValue[]; proposalId?: string | null; agentRunId?: string | null }, ChatMessage>
+  chat_add_message: Command<ChatAddMessage, ChatMessage>
   chat_generate_title: Command<{ conversationId: string; modelProfileId?: string | null }, string>
   agent_list_tools: NoArgs<AgentTool[]>
   agent_tool_policy_update: Command<{ request: { toolNames: string[]; requireApproval?: boolean | null } }, AgentTool[]>
-  agent_invoke: Command<{ request: UnknownInput; onEvent: unknown }, AgentRun>
-  agent_resume: Command<{ request: UnknownInput; onEvent: unknown }, AgentRun>
+  agent_invoke: Command<{ request: AgentInvokeRequest; onEvent: CommandChannel }, AgentRun>
+  agent_resume: Command<{ request: AgentResumeRequest; onEvent: CommandChannel }, AgentRun>
   agent_get_run: Command<{ runId: string | null }, AgentRun>
   agent_get_pending_run: Command<{ conversationId?: string }, AgentRun | null>
-  agent_respond_input: Command<{ request: UnknownInput; onEvent: unknown }, AgentRun>
+  agent_respond_input: Command<{ request: AgentInputResponseRequest; onEvent: CommandChannel }, AgentRun>
   agent_cancel: Command<IdArgs>
 
   agent_mcp_list: NoArgs<McpServer[]>
-  agent_mcp_upsert: Command<{ request: UnknownInput }, McpServer>
+  agent_mcp_upsert: Command<{ request: McpServerRequest }, McpServer>
   agent_mcp_delete: Command<IdArgs>
   agent_mcp_refresh: Command<IdArgs, McpServer>
   agent_skill_list: NoArgs<AgentSkill[]>
@@ -138,13 +156,13 @@ export interface CommandMap {
   usage_get_stats: Command<{ range: string }, UsageStats>
   usage_clear: NoArgs
 
-  note_ai_stream: Command<{ request: UnknownInput; onEvent: unknown }, string>
+  note_ai_stream: Command<{ request: AiRequest; onEvent: CommandChannel }, string>
   note_ai_cancel: Command<{ requestId: string }>
-  note_fim_stream: Command<{ request: UnknownInput; onEvent: unknown }, string>
+  note_fim_stream: Command<{ request: AiRequest; onEvent: CommandChannel }, string>
   image_cancel: Command<{ requestId: string }>
-  workspace_export: NoArgs<Record<string, unknown>>
-  workspace_import: Command<{ request: { backup: unknown; replaceExisting: boolean } }, Record<string, unknown>>
-  export_write_file: Command<{ request: UnknownInput }, ExportWriteResult>
+  workspace_export: NoArgs<JsonValue>
+  workspace_import: Command<{ request: { backup: JsonValue; replaceExisting: boolean } }>
+  export_write_file: Command<{ request: ExportWriteRequest }, ExportWriteResult>
   export_open_file: Command<{ path: string }>
   export_reveal_file: Command<{ path: string }>
   app_update_check: NoArgs<UpdateInfo>

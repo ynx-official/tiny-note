@@ -1,15 +1,11 @@
-<script lang="ts">
-import { defineComponent, type PropType } from 'vue'
+<script setup lang="ts">
 import { ArrowDownAZ, BookOpen, Download, FileClock, FolderInput, FolderPlus, Pin, Plus, Search as SearchIcon, Trash2 } from 'lucide-vue-next'
 import NotebookTreeItem from '../NotebookTreeItem.vue'
 import type { NotesWorkspace } from '../../composables/useNotesWorkspace'
 
-export default defineComponent({
-  name: 'NotesSidebar',
-  components: { ArrowDownAZ, BookOpen, Download, FileClock, FolderInput, FolderPlus, Pin, Plus, SearchIcon, Trash2, NotebookTreeItem },
-  props: { workspace: { type: Object as PropType<NotesWorkspace>, required: true } },
-  setup: props => props.workspace
-})
+const props = defineProps<{ workspace: NotesWorkspace }>()
+const workspace = props.workspace
+const { t, store, library, route, showDeleted, searchMode, query, sidebarCollapsed, sidebarWidth, isResizing, onResizeStart, newNoteMenu, folderItemMenu, folderItemMenuStyle, importInput, expandedNotebookIds, externalSourcesOpen, notebookTree, list, create, createFromTemplate, importFiles, createRootNotebook, toggleNewNoteMenu, selectAllNotes, selectFolder, selectNote, toggleNotebook, toggleExternalSources, clearExternalSources, openExternalSource, openFolderItemMenu, closeMenus, closeContextMenu, restoreContextNote, deleteContextNote, renameNotebook, deleteNotebook, createChildNotebook, moveNotebookByPrompt, dropTreeNode, openContextMenu } = workspace
 </script>
 
 <template>
