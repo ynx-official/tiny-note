@@ -1,12 +1,13 @@
 import { describe, expect, it, vi } from 'vitest'
+import packageMetadata from '../../package.json'
 import { BUNDLED_APP_VERSION, createAppUpdater, UPDATE_CHECKED_AT_KEY, UPDATE_CHECK_INTERVAL_MS } from './appUpdater'
 
 describe('app updater', () => {
   it('uses the package version as the browser fallback', async () => {
     const client = createAppUpdater({ isDesktop: () => false })
 
-    await expect(client.currentVersion()).resolves.toBe('0.1.10')
-    expect(BUNDLED_APP_VERSION).toBe('0.1.10')
+    await expect(client.currentVersion()).resolves.toBe(packageMetadata.version)
+    expect(BUNDLED_APP_VERSION).toBe(packageMetadata.version)
   })
 
   it('reports browser previews as unsupported without loading native plugins', async () => {
