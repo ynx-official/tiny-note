@@ -2,6 +2,7 @@ import { defineConfig } from 'vite'
 import vue from '@vitejs/plugin-vue'
 import { resolve } from 'node:path'
 import { ensureWebCrypto } from './scripts/webCryptoCompat'
+import { VITE_SERVER_CONFIG } from './scripts/viteServerConfig'
 
 ensureWebCrypto()
 
@@ -10,7 +11,7 @@ export default defineConfig({
   clearScreen: false,
   // Keep Tauri's dev URL on the same IPv4 listener on Windows. Using
   // `localhost` can resolve to ::1 while Vite is not reachable on 127.0.0.1.
-  server: { host: '127.0.0.1', port: 1420, strictPort: true },
+  server: VITE_SERVER_CONFIG,
   envPrefix: ['VITE_', 'TAURI_'],
   build: {
     target: ['es2021', 'chrome105', 'safari13'],
