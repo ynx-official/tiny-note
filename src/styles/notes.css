@@ -287,10 +287,6 @@ body, button, input, select, textarea { font-family: -apple-system, BlinkMacSyst
 :root[data-theme=dark] .editor-render-pane:not(.split-preview-pane)::-webkit-scrollbar-thumb:hover,:root[data-theme=dark] .split-preview-pane::-webkit-scrollbar-thumb:hover { background:rgba(255,255,255,.26); background-clip:padding-box; }
 .split-preview-content { padding:20px 40px 64px; }
 .split-preview-content .note-prose { min-height:100%; }
-.editor-workspace.mode-reading .editor-render-pane { padding-top:24px; }
-.reading-content { padding-right:56px; padding-left:56px; }
-.reading-content .note-prose { max-width:760px; font-size:16px; line-height:1.75; cursor:default; }
-.reading-content .note-prose > h1[data-note-title] { margin-bottom:.85em; font-size:28px; font-weight:600; line-height:1.25; }
 .split-divider { position:relative; z-index:3; flex:0 0 7px; width:7px; cursor:col-resize; touch-action:none; background:var(--surface-2); border-left:1px solid var(--line); border-right:1px solid var(--line); }
 .split-divider span { position:absolute; top:50%; left:2px; width:2px; height:34px; border-radius:2px; background:var(--text-tertiary); opacity:.45; transform:translateY(-50%); }
 .split-divider:hover span { background:var(--accent-color); opacity:1; }

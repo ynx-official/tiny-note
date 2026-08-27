@@ -19,7 +19,7 @@ import yaml from 'highlight.js/lib/languages/yaml'
 import rust from 'highlight.js/lib/languages/rust'
 import { VueNodeViewRenderer } from '@tiptap/vue-3'
 import CodeBlockComponent from '../components/CodeBlockComponent.vue'
-import { BookOpenText, FileCode2, PenLine } from 'lucide-vue-next'
+import { FileCode2, PenLine } from 'lucide-vue-next'
 import { useNotesStore } from '../stores/notes'
 import { useLibraryStore } from '../stores/library'
 import { useAppStore } from '../stores/app'
@@ -54,7 +54,7 @@ export type NoteEditorEmit = {
 export function useNoteEditor(props: Readonly<NoteEditorProps>, emit: NoteEditorEmit) {  
   const lowlight = createLowlight()
   lowlight.register('javascript', javascript); lowlight.register('typescript', typescript); lowlight.register('python', python); lowlight.register('json', json); lowlight.register('html', xml); lowlight.register('xml', xml); lowlight.register('css', css); lowlight.register('bash', bash); lowlight.register('sql', sql); lowlight.register('markdown', markdown); lowlight.register('yaml', yaml); lowlight.register('rust', rust)
-  type EditorMode = 'rich' | 'markdown' | 'reading'
+  type EditorMode = 'rich' | 'markdown'
   type AiAction = 'interpret' | 'refine' | 'polish' | 'expand' | 'translate' | 'summarize' | 'continue_write' | 'fix_grammar' | 'generate_plan' | 'generate_table' | 'custom'
   type ExportFormat = '' | 'html' | 'pdf' | 'print'
   type TaskFlight = () => void
@@ -124,7 +124,7 @@ export function useNoteEditor(props: Readonly<NoteEditorProps>, emit: NoteEditor
   let savedSelection: SelectionRange | null = null
   let pendingAiRequest: PendingAiRequest | null = null
   let pendingAiChange: PendingAiChange | null = null
-  const modeIcons = { rich: PenLine, markdown: FileCode2, reading: BookOpenText }
+  const modeIcons = { rich: PenLine, markdown: FileCode2 }
   const noteLinks = ref<NoteLink[]>([])
   const editorModes = NOTE_MODES.map(mode => ({ ...mode, id: mode.id as EditorMode, icon: modeIcons[mode.id as EditorMode] }))
   const editorMode = ref<EditorMode>(DEFAULT_NOTE_MODE as EditorMode)
@@ -189,7 +189,6 @@ export function useNoteEditor(props: Readonly<NoteEditorProps>, emit: NoteEditor
   const modeShortcutLabel = computed(() => modeShortcutParts.value.join(' + '))
   const richMode = computed(() => editorMode.value === 'rich')
   const codeMode = computed(() => editorMode.value === 'markdown')
-  const readingMode = computed(() => editorMode.value === 'reading')
   const splitMode = computed(() => codeMode.value && markdownPreview.value)
   const splitPaneStyle = computed(() => splitVertical.value ? { height: `${splitRatio.value}%` } : { width: `${splitRatio.value}%` })
   const aiActionLabels: Record<AiAction, string> = { interpret: '解读', refine: '精炼', polish: '润色', expand: '扩写', translate: '翻译', summarize: '总结', continue_write: '续写', fix_grammar: '语法修正', generate_plan: '生成任务计划', generate_table: '生成表格', custom: 'AI 写作' }
@@ -1450,7 +1449,7 @@ export function useNoteEditor(props: Readonly<NoteEditorProps>, emit: NoteEditor
     markdownPreview, splitRatio, splitVertical, splitWorkspace, sourceEditorRef, previewScroller, pendingSourceDrafts, persistedSignatures,
     exportingFormat, exportStatusLabel, externalFileName, EXTERNAL_NOTICE_DISMISSED_PREFIX, externalNoticeDismissed, showExternalNoteBanner, applyingEditorContent, markdownParseTimer,
     markdownPasteTimer, splitResizeObserver, splitDragState, scrollSyncFrame, scrollSyncSource, modeShortcutSwitching, externalNoticeStorageKey, readExternalNoticeDismissed,
-    dismissExternalNoteBanner, currentMode, modeShortcutParts, modeShortcutLabel, richMode, codeMode, readingMode, splitMode, splitPaneStyle,
+    dismissExternalNoteBanner, currentMode, modeShortcutParts, modeShortcutLabel, richMode, codeMode, splitMode, splitPaneStyle,
     aiActionLabels, aiErrorMessages, aiEventErrorMessage, aiActionLabel, unknownErrorCode, contextConsentModelId, aiFeedback, aiOutputOpen,
     aiOriginalText, aiChangePending, AI_CHANGE_HIGHLIGHT, aiCharCount, aiDialogPosition, aiDialogStyle, aiDragState, refreshEditorState,
     looksLikeMarkdown, isPlainInlineAiReplacement, handleMarkdownPaste, prepareEditorContent, extractNoteTitle, textFromPreparedEditorContent, syncNoteTitle, getEditorMarkdown,

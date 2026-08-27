@@ -12,10 +12,10 @@ import {
 } from './noteMarkdown'
 
 describe('note Markdown safety and mode helpers', () => {
-  it('defines the three article experiences in the product order and defaults to instant editing', () => {
+  it('defines the two editor experiences in the product order and defaults to instant editing', () => {
     expect(DEFAULT_NOTE_MODE).toBe('rich')
-    expect(NOTE_MODES.map(mode => mode.id)).toEqual(['rich', 'markdown', 'reading'])
-    expect(NOTE_MODES.map(mode => mode.label)).toEqual(['即时编辑', 'Markdown', '阅读模式'])
+    expect(NOTE_MODES.map(mode => mode.id)).toEqual(['rich', 'markdown'])
+    expect(NOTE_MODES.map(mode => mode.label)).toEqual(['即时编辑', 'Markdown'])
   })
 
   it('keeps supported presentation styles and removes executable content', () => {

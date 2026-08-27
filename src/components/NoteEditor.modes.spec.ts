@@ -28,7 +28,7 @@ describe('NoteEditor modes and menus', () => {
     wrapper.unmount()
   })
 
-  it('opens in instant editing and exposes instant editing, Markdown, and reading mode', async () => {
+  it('opens in instant editing and exposes only instant editing and Markdown', async () => {
     const wrapper = await mountEditor()
     expect(wrapper.get('.editor-mode-trigger').text()).toBe('')
     expect(wrapper.get('.editor-mode-trigger').attributes('aria-label')).toContain('即时编辑')
@@ -37,7 +37,7 @@ describe('NoteEditor modes and menus', () => {
 
     await wrapper.get('.editor-mode-trigger').trigger('click')
     const modeItems = wrapper.findAll('[role="menuitemradio"]')
-    expect(modeItems.map(item => item.find('strong').text())).toEqual(['即时编辑', 'Markdown', '阅读模式'])
+    expect(modeItems.map(item => item.find('strong').text())).toEqual(['即时编辑', 'Markdown'])
     await modeItems[1].trigger('click')
     await flushPromises()
     expect(wrapper.find('.markdown-source-editor').exists()).toBe(true)
@@ -45,12 +45,7 @@ describe('NoteEditor modes and menus', () => {
     expect(wrapper.get('.toolbar-left-group').isVisible()).toBe(true)
     expect(wrapper.find('.markdown-toolbar-controls').exists()).toBe(true)
 
-    await wrapper.get('.editor-mode-trigger').trigger('click')
-    await wrapper.findAll('[role="menuitemradio"]')[2].trigger('click')
-    await flushPromises()
-    expect(wrapper.find('.editor-workspace.mode-reading').exists()).toBe(true)
-    expect(wrapper.get('.note-prose').attributes('contenteditable')).toBe('false')
-    expect(wrapper.find('.markdown-toolbar-controls').exists()).toBe(false)
+    expect(wrapper.text()).not.toContain('阅读模式')
     wrapper.unmount()
   })
 
