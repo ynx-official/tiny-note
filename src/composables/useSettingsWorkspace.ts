@@ -5,11 +5,13 @@ import { Cpu, FolderDown, Info, Keyboard, Moon, Monitor, Palette, Sparkles, Sun,
 import { invoke } from '../services/tauri'
 import type { BalanceData as CommandBalanceData } from '../services/commandMap'
 import { appUpdater, BUNDLED_APP_VERSION, type UpdateCheckState } from '../services/appUpdater'
+import { CURRENT_RELEASE_NOTES } from '../services/releaseNotes'
 import { requestConfirmation, showToast } from '../services/appFeedback'
 import { useAppStore } from '../stores/app'
 import { shortcutDisplayParts, shortcutFromKeyboardEvent } from '../utils/keyboardShortcut'
 import { modelProviderLabel } from '../utils/modelProvider'
 import { pickNativeExportDirectory } from '../services/exportLocation'
+import { renderMarkdown } from '../utils/markdown'
 import doubaoIcon from '../assets/providers/doubao.png'
 import qwenIcon from '../assets/providers/qwen.png'
 import zhipuIcon from '../assets/providers/zhipu.png'
@@ -41,7 +43,7 @@ export function useSettingsWorkspace() {
   const { t, locale } = useI18n()
   
   const appStore = useAppStore()
-  
+
   const { settings, models, editorModeShortcut } = storeToRefs(appStore)
   
   const draft = ref<ModelDraft | null>(null)
@@ -79,6 +81,10 @@ export function useSettingsWorkspace() {
   const balanceRefreshingAll = ref(false)
   
   const appVersion = ref(BUNDLED_APP_VERSION)
+
+  const currentReleaseNotes = CURRENT_RELEASE_NOTES
+
+  const currentReleaseNotesHtml = computed(() => renderMarkdown(currentReleaseNotes.body))
   
   const updateStatus = ref('idle')
   
@@ -680,7 +686,7 @@ export function useSettingsWorkspace() {
     t, locale, appStore, settings, models, editorModeShortcut, draft, showLanguageDropdown,
     providerMenuOpen, endpointMenuOpen, primaryModelMenuOpen, imagePrimaryModelMenuOpen, searchQuery, activeSectionId, saving, modelSaving,
     modelCatalog, selectedModelIds, modelFetchBusy, modelFetchError, modelTestStates, balanceStates, balanceRefreshingAll, appVersion,
-    updateStatus, updateInfo, updateProgress, updateError, backupInput, backupStatus, selectedImageModelIds, shortcutRecording,
+    updateStatus, updateInfo, updateProgress, updateError, currentReleaseNotes, currentReleaseNotesHtml, backupInput, backupStatus, selectedImageModelIds, shortcutRecording,
     shortcutError, exportDirectoryBusy, providerOptions, endpointOptions, themeOptions, languageOptions, currentLanguageLabel, editorModeShortcutParts,
     settingsSections, filteredSections, activeSection, selectedProvider, isEditingModel, selectedEndpoint, selectedCatalogModels, canSaveModel,
     primaryModel, imageModels, primaryImageModel, modelConnections, balanceModels, updateButtonLabel, updateMessage, emptyDraft,

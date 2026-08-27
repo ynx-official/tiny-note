@@ -1,11 +1,13 @@
 <script setup lang="ts">
-import { AlertCircle, Check, ChevronDown, ChevronRight, FlaskConical, FolderOpen, Globe2, Languages, LoaderCircle, Pencil, Plus, RefreshCw, Trash2 } from 'lucide-vue-next'
+import { computed } from 'vue'
+import { AlertCircle, Check, ChevronDown, ChevronRight, FlaskConical, FolderOpen, Globe2, Languages, LoaderCircle, Monitor, Pencil, Plus, RefreshCw, Trash2 } from 'lucide-vue-next'
 import AgentToolsCatalog from '../AgentToolsCatalog.vue'
 import type { SettingsWorkspace } from '../../composables/useSettingsWorkspace'
 
 const props = defineProps<{ workspace: SettingsWorkspace }>()
 const workspace = props.workspace
-const { t, settings, models, activeSection, activeSectionId, themeOptions, selectTheme, showLanguageDropdown, currentLanguageLabel, selectLanguage, languageOptions, shortcutRecording, editorModeShortcutParts, beginShortcutRecording, recordEditorModeShortcut, cancelShortcutRecording, resetEditorModeShortcut, shortcutError, exportDirectoryBusy, settingsSections, chooseDefaultExportDirectory, clearDefaultExportDirectory, modelConnections, primaryModel, imageModels, primaryImageModel, providerLabel, providerIcon, providerForModel, editModel, editConnection, requestModelDelete, requestConnectionDelete, balanceModels, balanceRefreshingAll, queryAllBalances, balanceStates, formatBalance, formatBalanceTime, modelSaving, saving, addModel, primaryModelMenuOpen, imagePrimaryModelMenuOpen, providerMenuOpen, endpointLabel, modelTestStates, testModel, isDeepSeek, queryBalanceFor, appVersion, updateInfo, updateMessage, updateStatus, updateButtonLabel, handleUpdateAction, updateError, backupStatus, backupInput, exportWorkspace, restoreWorkspace, setPrimaryModel, setPrimaryImageModel, save, locale } = workspace
+const { t, settings, models, activeSection, activeSectionId, themeOptions, selectTheme, showLanguageDropdown, currentLanguageLabel, selectLanguage, languageOptions, shortcutRecording, editorModeShortcutParts, beginShortcutRecording, recordEditorModeShortcut, cancelShortcutRecording, resetEditorModeShortcut, shortcutError, exportDirectoryBusy, settingsSections, chooseDefaultExportDirectory, clearDefaultExportDirectory, modelConnections, primaryModel, imageModels, primaryImageModel, providerLabel, providerIcon, providerForModel, editModel, editConnection, requestModelDelete, requestConnectionDelete, balanceModels, balanceRefreshingAll, queryAllBalances, balanceStates, formatBalance, formatBalanceTime, modelSaving, saving, addModel, primaryModelMenuOpen, imagePrimaryModelMenuOpen, providerMenuOpen, endpointLabel, modelTestStates, testModel, isDeepSeek, queryBalanceFor, appVersion, currentReleaseNotes, currentReleaseNotesHtml, updateInfo, updateMessage, updateStatus, updateButtonLabel, handleUpdateAction, updateError, backupStatus, backupInput, exportWorkspace, restoreWorkspace, setPrimaryModel, setPrimaryImageModel, save, locale } = workspace
+const runtimeLabel = computed(() => typeof window !== 'undefined' && window.__TAURI_INTERNALS__ ? 'Tauri' : (locale.value === 'zh-CN' ? '浏览器预览' : 'Browser preview'))
 </script>
 
 <template>
@@ -164,7 +166,16 @@ const { t, settings, models, activeSection, activeSectionId, themeOptions, selec
 
           <section v-else class="settings-detail-section settings-about-section">
             <div class="settings-section-kicker">{{ t('about') }}</div>
-            <div class="settings-setting-row"><div class="settings-setting-copy"><strong>{{ t('appName') }}</strong><span>{{ t('localFirstHint') }}</span></div><span class="settings-value">v{{ appVersion }}</span></div>
+            <div class="settings-version-card">
+              <div class="settings-version-mark" aria-hidden="true">TN</div>
+              <div class="settings-version-copy"><strong>{{ t('appName') }}</strong><span>{{ locale === 'zh-CN' ? '专注于笔记与知识整理的本地优先工作区' : 'A local-first workspace for notes and knowledge' }}</span></div>
+              <span class="settings-version-number">v{{ appVersion }}</span>
+            </div>
+            <div class="settings-version-grid">
+              <div><small>{{ locale === 'zh-CN' ? '当前版本' : 'Current version' }}</small><strong>v{{ appVersion }}</strong></div>
+              <div><small>{{ locale === 'zh-CN' ? '发布日期' : 'Release date' }}</small><strong>{{ currentReleaseNotes.date || '—' }}</strong></div>
+              <div><small>{{ locale === 'zh-CN' ? '运行环境' : 'Runtime' }}</small><strong><Monitor :size="13" />{{ runtimeLabel }}</strong></div>
+            </div>
             <div class="settings-setting-row settings-update-row">
               <div class="settings-setting-copy">
                 <strong>{{ locale === 'zh-CN' ? '软件更新' : 'Software update' }}</strong>
@@ -176,6 +187,11 @@ const { t, settings, models, activeSection, activeSectionId, themeOptions, selec
               <button type="button" class="settings-action-button" :class="{ primary: updateStatus === 'available' || updateStatus === 'manual' }" :disabled="updateStatus === 'checking' || updateStatus === 'downloading' || updateStatus === 'unsupported'" @click="handleUpdateAction">
                 <RefreshCw :size="14" :class="{ spinning: updateStatus === 'checking' || updateStatus === 'downloading' }" />{{ updateButtonLabel }}
               </button>
+            </div>
+            <div class="settings-release-notes">
+              <div class="settings-subheading settings-release-heading"><span>{{ locale === 'zh-CN' ? `v${currentReleaseNotes.version || appVersion} 更新日志` : `v${currentReleaseNotes.version || appVersion} release notes` }}</span><span class="settings-release-date">{{ currentReleaseNotes.date }}</span></div>
+              <div v-if="currentReleaseNotes.body" class="settings-release-notes-body" v-html="currentReleaseNotesHtml"></div>
+              <p v-else class="settings-inline-note">{{ locale === 'zh-CN' ? '暂无当前版本更新日志。' : 'No release notes are available for this version.' }}</p>
             </div>
             <div class="settings-setting-row"><div class="settings-setting-copy"><strong>{{ t('localFirst') }}</strong><span>{{ t('noteScope') }}</span></div><Globe2 :size="17" class="settings-value-icon" /></div>
             <div class="settings-subheading">数据备份与恢复</div>
