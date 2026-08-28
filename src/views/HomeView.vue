@@ -42,7 +42,8 @@ const modelSelectButton = ref<HTMLButtonElement | null>(null)
 const personalBases = computed(() => library.bases.filter(item => item.category === 'personal'))
 const localBases = computed(() => library.bases.filter(item => item.category === 'local'))
 const noteCandidates = computed(() => notes.notes.filter(note => !note.deletedAt))
-const selectedModel = computed(() => models.value.find(model => model.id === selectedModelId.value) || models.value.find(model => model.isDefault) || models.value[0] || null)
+const chatModels = computed(() => models.value.filter(model => !model.imageEnabled))
+const selectedModel = computed(() => chatModels.value.find(model => model.id === selectedModelId.value) || chatModels.value.find(model => model.isDefault) || chatModels.value[0] || null)
 const providerIcons: Record<string, string> = { doubao: doubaoIcon, qwen: qwenIcon, zhipu: zhipuIcon, deepseek: deepseekIcon, kimi: kimiIcon, minimax: minimaxIcon, custom: otherIcon }
 const providerAliases: Record<string, string[]> = { doubao: ['doubao', '豆包'], qwen: ['qwen', '千问', '通义'], zhipu: ['zhipu', '智谱'], deepseek: ['deepseek'], kimi: ['kimi', 'moonshot'], minimax: ['minimax'], custom: ['custom', '其他', 'openai'] }
 const modelButtonLabel = computed(() => {
@@ -168,7 +169,7 @@ function restoreAssistantDraft() {
 onMounted(async () => {
   restoreAssistantDraft()
   await appStore.initialize()
-  selectedModelId.value = models.value.find(model => model.isDefault)?.id || models.value[0]?.id || ''
+  selectedModelId.value = chatModels.value.find(model => model.isDefault)?.id || chatModels.value[0]?.id || ''
 })
 </script>
 
@@ -219,8 +220,8 @@ onMounted(async () => {
               <div v-if="modelMenuOpen" class="home-model-menu" :class="{ 'is-above': modelMenuPlacement === 'above' }" :style="{ '--home-model-menu-max-height': `${modelMenuMaxHeight}px` }">
                 <div class="home-thinking-row"><span><Sparkles :size="15" />思考模式</span><div class="home-thinking-tabs"><button type="button" :class="{ active: thinkingMode === 'fast' }" @click="thinkingMode = 'fast'"><span>快速</span></button><button type="button" :class="{ active: thinkingMode === 'deep' }" @click="thinkingMode = 'deep'"><span>深度</span></button></div></div>
                 <div class="home-model-divider"></div>
-                <button v-for="model in models" :key="model.id" type="button" class="home-model-option" :class="{ active: model.id === selectedModel?.id }" @click="selectModel(model)"><img :src="providerIcon(model)" :alt="modelProviderLabel(model.provider)" class="home-model-provider-icon" /><span><b>{{ model.connectionName || model.name }}</b><small>{{ model.model }}</small></span><span v-if="model.id === selectedModel?.id" class="home-model-check">✓</span></button>
-                <button v-if="!models.length" type="button" class="home-model-empty" @click="open('/settings'); modelMenuOpen = false">请先在设置中添加模型</button>
+                <button v-for="model in chatModels" :key="model.id" type="button" class="home-model-option" :class="{ active: model.id === selectedModel?.id }" @click="selectModel(model)"><img :src="providerIcon(model)" :alt="modelProviderLabel(model.provider)" class="home-model-provider-icon" /><span><b>{{ model.connectionName || model.name }}</b><small>{{ model.model }}</small></span><span v-if="model.id === selectedModel?.id" class="home-model-check">✓</span></button>
+                <button v-if="!chatModels.length" type="button" class="home-model-empty" @click="open('/settings'); modelMenuOpen = false">请先在设置中添加对话模型</button>
               </div>
             </div>
           </div>

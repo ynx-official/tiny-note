@@ -81,4 +81,30 @@ describe('HomeView startup data', () => {
     expect(invokedCommands()).toContain('note_purge_expired')
     expect(invokedCommands()).not.toContain('knowledge_base_list')
   })
+
+  it('excludes image generation models from the home chat model menu', async () => {
+    mocks.invoke.mockImplementation((command: string) => {
+      if (command === 'settings_get') return Promise.resolve({ theme: 'system', language: 'zh-CN', fimEnabled: false, exportDirectory: '' })
+      if (command === 'model_list') return Promise.resolve([
+        { id: 'image-model', name: 'Image Model', connectionName: 'Image Service', provider: 'OpenAI', model: 'gpt-image-1', isDefault: true, imageEnabled: true },
+        { id: 'chat-model', name: 'Chat Model', connectionName: 'Chat Service', provider: 'OpenAI', model: 'gpt-4.1-mini', isDefault: false, imageEnabled: false }
+      ])
+      return Promise.resolve([])
+    })
+
+    const wrapper = mount(HomeView, {
+      global: {
+        plugins: [createPinia(), createI18n({ legacy: false, locale: 'zh-CN', fallbackLocale: 'en', messages })]
+      }
+    })
+    await flushPromises()
+
+    expect(wrapper.get('.home-model-anchor .home-select-button').text()).toContain('gpt-4.1-mini')
+    await wrapper.get('.home-model-anchor .home-select-button').trigger('click')
+
+    const options = wrapper.findAll('.home-model-option')
+    expect(options).toHaveLength(1)
+    expect(options[0].text()).toContain('gpt-4.1-mini')
+    expect(wrapper.text()).not.toContain('gpt-image-1')
+  })
 })
