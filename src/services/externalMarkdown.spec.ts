@@ -63,6 +63,26 @@ describe('openPendingMarkdownFiles', () => {
     expect(notify).toHaveBeenCalledWith('无法打开 broken.md：文件不是 UTF-8 编码', { tone: 'error' })
   })
 
+  it('continues after one file fails and reports a partial result', async () => {
+    const store = {
+      openExternalMarkdown: vi.fn()
+        .mockRejectedValueOnce(new Error('写入失败'))
+        .mockResolvedValueOnce({ id: 'note-2' })
+    }
+    const router = { push: vi.fn().mockResolvedValue() }
+    const notify = vi.fn()
+
+    const count = await openPendingMarkdownFiles([
+      { fileName: 'broken.md', path: 'C:\\notes\\broken.md', content: 'Broken' },
+      { fileName: 'working.md', path: 'C:\\notes\\working.md', content: 'Working' }
+    ], { store, router, notify })
+
+    expect(count).toBe(1)
+    expect(store.openExternalMarkdown).toHaveBeenCalledTimes(2)
+    expect(router.push).toHaveBeenCalledWith({ path: '/notes', query: { note: 'note-2' } })
+    expect(notify).toHaveBeenCalledWith('已打开 1 个 Markdown 源文件，1 个失败', { tone: 'success' })
+  })
+
   it('starts the file-open listener without loading the whole notes workspace', async () => {
     window.__TAURI_INTERNALS__ = {}
     mocks.listen.mockResolvedValue(vi.fn())

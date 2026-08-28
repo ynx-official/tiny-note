@@ -1,11 +1,11 @@
 <script setup lang="ts">
-import { ArrowDownAZ, BookOpen, Download, FileClock, FolderInput, FolderPlus, Pin, Plus, Search as SearchIcon, Trash2 } from 'lucide-vue-next'
+import { ArrowDownAZ, BookOpen, Download, FileClock, FilePlus2, FolderInput, FolderOpen, FolderPlus, Pin, Plus, Search as SearchIcon, Trash2 } from 'lucide-vue-next'
 import NotebookTreeItem from '../NotebookTreeItem.vue'
 import type { NotesWorkspace } from '../../composables/useNotesWorkspace'
 
 const props = defineProps<{ workspace: NotesWorkspace }>()
 const workspace = props.workspace
-const { t, store, library, route, showDeleted, searchMode, query, sidebarCollapsed, sidebarWidth, isResizing, onResizeStart, newNoteMenu, folderItemMenu, folderItemMenuStyle, importInput, expandedNotebookIds, externalSourcesOpen, notebookTree, list, create, createFromTemplate, importFiles, createRootNotebook, toggleNewNoteMenu, selectAllNotes, selectFolder, selectNote, toggleNotebook, toggleExternalSources, clearExternalSources, openExternalSource, openFolderItemMenu, closeMenus, closeContextMenu, restoreContextNote, deleteContextNote, renameNotebook, deleteNotebook, createChildNotebook, moveNotebookByPrompt, dropTreeNode, openContextMenu } = workspace
+const { t, store, library, route, showDeleted, searchMode, query, sidebarCollapsed, sidebarWidth, isResizing, onResizeStart, newNoteMenu, folderItemMenu, folderItemMenuStyle, externalAreaMenu, externalSourceMenu, externalPickerBusy, importInput, expandedNotebookIds, externalSourcesOpen, notebookTree, list, create, createFromTemplate, importFiles, createRootNotebook, toggleNewNoteMenu, selectAllNotes, selectFolder, selectNote, toggleNotebook, toggleExternalSources, clearExternalSources, openExternalSource, openExternalAreaMenu, openExternalSourceMenu, pickExternalFiles, pickExternalFolder, removeExternalSource, openFolderItemMenu, closeMenus, closeContextMenu, restoreContextNote, deleteContextNote, renameNotebook, deleteNotebook, createChildNotebook, moveNotebookByPrompt, dropTreeNode, openContextMenu } = workspace
 </script>
 
 <template>
@@ -36,7 +36,7 @@ const { t, store, library, route, showDeleted, searchMode, query, sidebarCollaps
           <svg class="search-icon" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
           <input v-model="query" class="search-input" autofocus placeholder="搜索笔记" @keydown.escape="searchMode = false; query = ''" />
         </div>
-        <div class="notebook-tree" role="tree" aria-label="笔记本和笔记">
+        <div class="notebook-tree" role="tree" aria-label="笔记本和笔记" @contextmenu.self.prevent.stop="openExternalAreaMenu">
           <button class="tree-row tree-all-row" :class="{ active: store.selectedTreeNode.type === 'all' && !showDeleted }" @click="selectAllNotes">
             <BookOpen :size="16" :stroke-width="1.9" /><span class="tree-label">{{ t('allNotes') }}</span><small>{{ store.listed.length }}</small>
           </button>
@@ -61,8 +61,8 @@ const { t, store, library, route, showDeleted, searchMode, query, sidebarCollaps
             <button v-if="store.externalSources.length" type="button" class="external-sources-clear" title="清空外部来源记录" aria-label="清空外部来源记录" @click.stop="clearExternalSources"><Trash2 :size="13" /></button>
             <small class="tree-external-count">{{ store.externalSources.length }}</small>
           </div>
-          <div v-if="externalSourcesOpen" class="external-source-tree" role="group" aria-label="外部来源记录">
-            <button v-for="source in store.externalSources" :key="source.id" type="button" class="tree-row tree-external-source" :class="{ active: store.selectedTreeNode.type === 'external-note' && store.selectedTreeNode.id === source.id, unavailable: !source.available }" :title="source.path" @click="openExternalSource(source)">
+          <div v-if="externalSourcesOpen" class="external-source-tree" role="group" aria-label="外部来源记录" @contextmenu.prevent.stop="openExternalAreaMenu">
+            <button v-for="source in store.externalSources" :key="source.id" type="button" class="tree-row tree-external-source" :class="{ active: store.selectedTreeNode.type === 'external-note' && store.selectedTreeNode.id === source.id, unavailable: !source.available }" :title="source.path" @click="openExternalSource(source)" @contextmenu.prevent.stop="openExternalSourceMenu($event, source)">
               <span class="external-source-status" aria-hidden="true"></span><span class="tree-label">{{ source.fileName }}</span>
             </button>
             <div v-if="!store.externalSources.length" class="external-source-empty">暂无外部打开记录</div>
@@ -73,6 +73,13 @@ const { t, store, library, route, showDeleted, searchMode, query, sidebarCollaps
           <button v-if="folderItemMenu.name !== '未分类'" class="folder-item-menu-option" @click="renameNotebook">重命名</button>
           <button v-if="folderItemMenu.name !== '未分类'" class="folder-item-menu-option" @click="moveNotebookByPrompt"><FolderInput :size="13" />移动</button>
           <button v-if="folderItemMenu.name !== '未分类'" class="folder-item-menu-option danger" @click="deleteNotebook"><Trash2 :size="12" />{{ t('delete') }}</button>
+        </div>
+        <div v-if="externalAreaMenu" class="note-context-menu external-source-context-menu" :style="{ left: externalAreaMenu.x + 'px', top: externalAreaMenu.y + 'px' }" role="menu" aria-label="外部来源区域操作" @click.stop @contextmenu.prevent.stop>
+          <button type="button" role="menuitem" :disabled="externalPickerBusy" @click="pickExternalFiles"><FilePlus2 :size="14" />打开文件…</button>
+          <button type="button" role="menuitem" :disabled="externalPickerBusy" @click="pickExternalFolder"><FolderOpen :size="14" />打开文件夹…</button>
+        </div>
+        <div v-if="externalSourceMenu" class="note-context-menu external-source-context-menu" :style="{ left: externalSourceMenu.x + 'px', top: externalSourceMenu.y + 'px' }" role="menu" aria-label="外部文件操作" @click.stop @contextmenu.prevent.stop>
+          <button type="button" role="menuitem" title="只移除 Tiny Note 记录，不删除源文件" @click="removeExternalSource"><Trash2 :size="14" />移除</button>
         </div>
       </div>
     </aside>

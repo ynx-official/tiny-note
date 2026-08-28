@@ -30,6 +30,7 @@ export interface AgentRun { id: string; conversationId: string; requestId: strin
 export interface EditProposal { id: string; noteId: string; before?: string; after?: string; status?: string; replacementMarkdown?: string; action?: string; originalText?: string; sources?: JsonValue[]; selectionFrom?: number; selectionTo?: number; baseUpdatedAt?: string }
 export interface ExternalMarkdownSource { id: string; path: string; title: string; updatedAt?: string; available?: boolean; fileName?: string }
 export interface ExternalMarkdownFile { path: string; fileName: string; content?: string; changed?: boolean; error?: string }
+export interface ExternalMarkdownSelection { selected: boolean; files: ExternalMarkdownFile[] }
 export interface ExportWriteResult { path: string; fileName: string }
 export interface UpdateInfo { available: boolean; version?: string; notes?: string; body?: string; date?: string; assetName?: string }
 export interface MemoryFile { fileName: string; nameKey: string; description: string; content: string; size: number; updatedAt: string | null }

@@ -107,6 +107,25 @@ describe('notes store', () => {
     expect(store.notes.some(note => note.external)).toBe(false)
   })
 
+  it('removes one external-source record without affecting other notes', async () => {
+    const store = useNotesStore()
+    await store.load()
+    const regularIds = store.notes.map(note => note.id)
+    const external = await store.openExternalMarkdown({
+      path: 'C:\\docs\\remove-only-record.md',
+      title: 'remove-only-record',
+      contentHtml: '<p>source</p>',
+      contentText: 'source',
+      contentMarkdown: 'source'
+    })
+
+    await store.removeExternalSource(external.id)
+
+    expect(store.externalSources.some(source => source.id === external.id)).toBe(false)
+    expect(store.notes.some(note => note.id === external.id)).toBe(false)
+    expect(regularIds.every(id => store.notes.some(note => note.id === id))).toBe(true)
+  })
+
   it('supports context-menu note actions', async () => {
     const store = useNotesStore()
     await store.load()

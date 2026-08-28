@@ -1,7 +1,7 @@
 import type {
   AgentRun, AgentSkill, AgentTool, AppSettings, BackgroundTask, CalendarEvent,
   ChatConversation, ChatMessage, ChatThread, EditProposal, ExportWriteResult,
-  ExternalMarkdownFile, ExternalMarkdownSource, ImageAsset, ImageGeneration,
+  ExternalMarkdownFile, ExternalMarkdownSelection, ExternalMarkdownSource, ImageAsset, ImageGeneration,
   JsonValue, KnowledgeBase, LibraryEntry, LibraryPreview, McpServer, MemoryFile,
   ModelOption, ModelProfile, ModelTestResult, Note, Notebook, NoteLink,
   NoteTemplate, Reminder, Tag, Todo, TodoList, UpdateInfo, UsageStats
@@ -82,6 +82,9 @@ export interface CommandMap {
 
   external_markdown_list: NoArgs<ExternalMarkdownSource[]>
   external_markdown_read: Command<IdArgs, ExternalMarkdownFile>
+  external_markdown_pick_files: NoArgs<ExternalMarkdownSelection>
+  external_markdown_pick_folder: NoArgs<ExternalMarkdownSelection>
+  external_markdown_remove: Command<IdArgs>
   external_markdown_clear: NoArgs<number>
   app_take_pending_markdown_files: NoArgs<ExternalMarkdownFile[]>
   knowledge_base_list: NoArgs<KnowledgeBase[]>

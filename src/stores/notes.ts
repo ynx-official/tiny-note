@@ -138,6 +138,12 @@ export const useNotesStore = defineStore('notes', {
       this.externalSources = []
       if (this.activeId && externalIds.has(this.activeId)) this.activeId = this.notes[0]?.id || null
     },
+    async removeExternalSource(id: string) {
+      await invoke('external_markdown_remove', { id })
+      this.externalSources = this.externalSources.filter(source => source.id !== id)
+      this.notes = this.notes.filter(note => note.id !== id)
+      if (this.activeId === id) this.activeId = null
+    },
     async importExternal(note: Note) {
       if (!note?.external) return note
       const imported = await this.createFromContent({

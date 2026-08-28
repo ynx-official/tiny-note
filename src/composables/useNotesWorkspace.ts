@@ -6,6 +6,8 @@ import { useLibraryStore } from '../stores/library'
 import { useTagsStore } from '../stores/tags'
 import { requestPrompt } from '../services/promptDialog'
 import { requestConfirmation, showToast } from '../services/appFeedback'
+import { invoke } from '../services/tauri'
+import { openPendingMarkdownFiles } from '../services/externalMarkdown'
 import { useWorkspaceSidebar } from '../utils/workspaceSidebar'
 import { errorMessage, type ExternalMarkdownSource, type Note, type Notebook, type Tag } from '../types/domain'
 
@@ -83,6 +85,12 @@ export function useNotesWorkspace() {
   const expandedNotebookIds = ref(new Set<string>())
   
   const externalSourcesOpen = ref(false)
+
+  const externalAreaMenu = ref<{ x: number; y: number } | null>(null)
+
+  const externalSourceMenu = ref<{ source: ExternalMarkdownSource; x: number; y: number } | null>(null)
+
+  const externalPickerBusy = ref(false)
   
   const list = computed(() => showDeleted.value ? store.deleted : store.listed)
   
@@ -224,6 +232,97 @@ export function useNotesWorkspace() {
       showToast(errorMessage(error, '外部文件无法打开'), { tone: 'error' })
     }
   }
+
+  function openExternalSourceMenu(event: MouseEvent, source: ExternalMarkdownSource) {
+    const menuWidth = 188
+    const menuHeight = 42
+    newNoteMenu.value = false
+    folderItemMenu.value = null
+    closeContextMenu()
+    externalAreaMenu.value = null
+    externalSourceMenu.value = {
+      source,
+      x: Math.max(8, Math.min(event.clientX, window.innerWidth - menuWidth - 8)),
+      y: Math.max(8, Math.min(event.clientY, window.innerHeight - menuHeight - 8))
+    }
+  }
+
+  function openExternalAreaMenu(event: MouseEvent) {
+    const menuWidth = 188
+    const menuHeight = 82
+    newNoteMenu.value = false
+    folderItemMenu.value = null
+    closeContextMenu()
+    externalSourceMenu.value = null
+    externalAreaMenu.value = {
+      x: Math.max(8, Math.min(event.clientX, window.innerWidth - menuWidth - 8)),
+      y: Math.max(8, Math.min(event.clientY, window.innerHeight - menuHeight - 8))
+    }
+  }
+
+  async function pickExternalMarkdown(command: 'external_markdown_pick_files' | 'external_markdown_pick_folder', fallbackMessage: string) {
+    if (externalPickerBusy.value) return
+    externalAreaMenu.value = null
+    externalPickerBusy.value = true
+    try {
+      const selection = await invoke(command)
+      if (!selection.selected) return
+      if (!selection.files.length) {
+        showToast('所选位置没有 Markdown 文件', { tone: 'info' })
+        return
+      }
+      externalSourcesOpen.value = true
+      const opened = await openPendingMarkdownFiles(selection.files, { store, router })
+      if (opened && store.activeId) store.selectedTreeNode = { type: 'external-note', id: store.activeId }
+    } catch (error) {
+      showToast(errorMessage(error, fallbackMessage), { tone: 'error' })
+    } finally {
+      externalPickerBusy.value = false
+    }
+  }
+
+  function pickExternalFiles() {
+    return pickExternalMarkdown('external_markdown_pick_files', '无法打开所选 Markdown 文件')
+  }
+
+  function pickExternalFolder() {
+    return pickExternalMarkdown('external_markdown_pick_folder', '无法打开文件夹中的 Markdown 文件')
+  }
+
+  async function removeExternalSource() {
+    const source = externalSourceMenu.value?.source
+    if (!source) return
+    externalSourceMenu.value = null
+    const wasActive = store.activeId === source.id
+    const sourceIndex = store.externalSources.findIndex(item => item.id === source.id)
+    const nextSource = store.externalSources[sourceIndex + 1] || store.externalSources[sourceIndex - 1] || null
+
+    if (wasActive) {
+      try {
+        if (!await noteEditorRef.value?.saveLatestContent()) return
+      } catch (error) {
+        showToast(errorMessage(error, '外部文件尚未保存，暂时不能移除'), { tone: 'error' })
+        return
+      }
+    }
+
+    try {
+      await store.removeExternalSource(source.id)
+    } catch (error) {
+      showToast(errorMessage(error, '移除外部来源失败'), { tone: 'error' })
+      return
+    }
+
+    if (wasActive && nextSource) {
+      await openExternalSource(nextSource)
+    }
+    if (wasActive && !store.activeId) {
+      store.selectedNotebook = 'all'
+      store.selectedTreeNode = { type: 'all', id: 'all' }
+      await router.replace({ path: '/notes' })
+    }
+    showToast('已从外部来源移除，源文件未删除', { tone: 'success' })
+  }
   
   async function clearExternalSources() {
     if (!store.externalSources.length) return
@@ -261,6 +360,8 @@ export function useNotesWorkspace() {
   function closeMenus() {
     newNoteMenu.value = false
     folderItemMenu.value = null
+    externalAreaMenu.value = null
+    externalSourceMenu.value = null
     closeContextMenu()
   }
   
@@ -558,9 +659,9 @@ export function useNotesWorkspace() {
     query, sidebarCollapsed, sidebarWidth, isResizing, onResizeStart, newNoteMenu, folderItemMenu, folderItemMenuStyle,
     importInput, noteEditorRef, tocVisible, contextMenu, contextMoveOpen, contextMenuRef, contextMoveAnchorRef, contextMoveSubmenuRef,
     contextMoveStyle, contextKnowledgeOpen, contextTagsOpen, contextTagIds, contextKnowledgeAnchorRef, contextKnowledgeSubmenuRef, contextKnowledgeStyle, contextMoveTimer,
-    contextKnowledgeTimer, expandedNotebookIds, externalSourcesOpen, list, contextNote, notebookTree, knowledgeGroups, creatingFromQuery,
+    contextKnowledgeTimer, expandedNotebookIds, externalSourcesOpen, externalAreaMenu, externalSourceMenu, externalPickerBusy, list, contextNote, notebookTree, knowledgeGroups, creatingFromQuery,
     createFromQuery, openRoutedNote, clearReviewedProposal, create, createFromTemplate, togglePinned, remove, importExternalNote,
-    toggleExternalSources, openExternalSource, clearExternalSources, importFiles, toggleNewNoteMenu, closeMenus, selectFolder, selectAllNotes,
+    toggleExternalSources, openExternalSource, openExternalAreaMenu, openExternalSourceMenu, pickExternalFiles, pickExternalFolder, removeExternalSource, clearExternalSources, importFiles, toggleNewNoteMenu, closeMenus, selectFolder, selectAllNotes,
     selectNote, toggleNotebook, createRootNotebook, openFolderItemMenu, renameNotebook, deleteNotebook, createChildNotebook, moveNotebookByPrompt,
     dropTreeNode, closeContextMenu, openContextMenu, toggleContextTag, createContextTag, duplicateContextNote, showMoveSubmenu, hideMoveSubmenu,
     cancelHideMoveSubmenu, showKnowledgeSubmenu, hideKnowledgeSubmenu, cancelHideKnowledgeSubmenu, positionKnowledgeSubmenu, addContextNoteToKnowledge, createKnowledgeBaseForContext, positionMoveSubmenu,

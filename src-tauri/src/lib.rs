@@ -21,6 +21,7 @@ use tauri::{
     tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent},
     AppHandle, Emitter, Manager, PhysicalPosition, State, WebviewUrl, WebviewWindowBuilder,
 };
+use tauri_plugin_dialog::DialogExt;
 use tauri_plugin_opener::OpenerExt;
 use thiserror::Error;
 use uuid::Uuid;
@@ -202,6 +203,13 @@ pub struct PendingMarkdownFileDto {
     content: Option<String>,
     error: Option<String>,
     changed: bool,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ExternalMarkdownSelectionDto {
+    selected: bool,
+    files: Vec<PendingMarkdownFileDto>,
 }
 
 #[derive(Debug, Serialize)]
@@ -407,6 +415,60 @@ fn clear_external_markdown_records(conn: &Connection) -> Result<u64, AppError> {
     .map_err(AppError::db)?;
     rebuild_note_links(conn)?;
     Ok(count.max(0) as u64)
+}
+
+fn remove_external_markdown_record(conn: &Connection, note_id: &str) -> Result<(), AppError> {
+    let removed = conn
+        .execute(
+            "DELETE FROM notes WHERE id=?1 AND EXISTS(SELECT 1 FROM external_markdown_sources WHERE note_id=?1)",
+            params![note_id],
+        )
+        .map_err(AppError::db)?;
+    if removed == 0 {
+        return Err(AppError::not_found(
+            "external_source_not_found",
+            "外部来源记录不存在",
+        ));
+    }
+    rebuild_note_links(conn)
+}
+
+fn markdown_paths_in_folder(root: &Path) -> Vec<PathBuf> {
+    let mut paths = WalkDir::new(root)
+        .follow_links(false)
+        .into_iter()
+        .filter_map(Result::ok)
+        .filter(|entry| entry.file_type().is_file() && is_markdown_path(entry.path()))
+        .map(walkdir::DirEntry::into_path)
+        .collect::<Vec<_>>();
+    paths.sort();
+    paths.dedup();
+    paths
+}
+
+fn authorize_selected_markdown_files(
+    pending: &PendingMarkdownFiles,
+    paths: impl IntoIterator<Item = PathBuf>,
+) -> Result<Vec<PendingMarkdownFileDto>, AppError> {
+    let files = paths
+        .into_iter()
+        .scan(HashSet::new(), |seen, path| {
+            let key = fs::canonicalize(&path).unwrap_or_else(|_| path.clone());
+            Some(seen.insert(key).then_some(path))
+        })
+        .flatten()
+        .map(pending_markdown_file)
+        .collect::<Vec<_>>();
+    let mut pending = pending.0.lock().map_err(|_| AppError::Operation {
+        code: "pending_file_lock_failed".into(),
+        message: "无法授权打开外部文件".into(),
+    })?;
+    for file in &files {
+        if file.content.is_some() {
+            pending.authorized.insert(PathBuf::from(&file.path));
+        }
+    }
+    Ok(files)
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -2923,6 +2985,68 @@ pub mod commands {
                 .insert(PathBuf::from(&file.path));
         }
         Ok(file)
+    }
+
+    #[tauri::command]
+    pub fn external_markdown_pick_files(
+        app: tauri::AppHandle,
+        pending: State<'_, PendingMarkdownFiles>,
+    ) -> Result<ExternalMarkdownSelectionDto, AppError> {
+        let Some(paths) = app
+            .dialog()
+            .file()
+            .set_title("打开 Markdown 文件")
+            .add_filter("Markdown", &["md", "markdown"])
+            .blocking_pick_files()
+        else {
+            return Ok(ExternalMarkdownSelectionDto {
+                selected: false,
+                files: Vec::new(),
+            });
+        };
+        let paths = paths
+            .into_iter()
+            .map(|path| path.into_path().map_err(AppError::fs))
+            .collect::<Result<Vec<_>, _>>()?;
+        Ok(ExternalMarkdownSelectionDto {
+            selected: true,
+            files: authorize_selected_markdown_files(&pending, paths)?,
+        })
+    }
+
+    #[tauri::command]
+    pub fn external_markdown_pick_folder(
+        app: tauri::AppHandle,
+        pending: State<'_, PendingMarkdownFiles>,
+    ) -> Result<ExternalMarkdownSelectionDto, AppError> {
+        let Some(folder) = app
+            .dialog()
+            .file()
+            .set_title("打开 Markdown 文件夹")
+            .blocking_pick_folder()
+        else {
+            return Ok(ExternalMarkdownSelectionDto {
+                selected: false,
+                files: Vec::new(),
+            });
+        };
+        let folder = folder.into_path().map_err(AppError::fs)?;
+        Ok(ExternalMarkdownSelectionDto {
+            selected: true,
+            files: authorize_selected_markdown_files(&pending, markdown_paths_in_folder(&folder))?,
+        })
+    }
+
+    #[tauri::command]
+    pub fn external_markdown_remove(
+        state: State<'_, AppState>,
+        id: String,
+    ) -> Result<(), AppError> {
+        let conn = state
+            .db
+            .lock()
+            .map_err(|_| AppError::db("database lock poisoned"))?;
+        remove_external_markdown_record(&conn, &id)
     }
 
     #[tauri::command]
@@ -6009,6 +6133,9 @@ pub fn run() {
             commands::note_open_external_markdown,
             commands::external_markdown_list,
             commands::external_markdown_read,
+            commands::external_markdown_pick_files,
+            commands::external_markdown_pick_folder,
+            commands::external_markdown_remove,
             commands::external_markdown_clear,
             commands::note_create,
             commands::note_update,
@@ -6324,6 +6451,55 @@ mod tests {
                 .unwrap(),
             0
         );
+    }
+
+    #[test]
+    fn removing_an_external_source_keeps_its_file() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("source.md");
+        fs::write(&path, "source").unwrap();
+        let conn = Connection::open_in_memory().unwrap();
+        init_database(&conn).unwrap();
+        let timestamp = now();
+        conn.execute(
+            "INSERT INTO notes(id,notebook_id,title,content_html,content_text,content_markdown,created_at,updated_at) VALUES('external-note',NULL,'source','<p>source</p>','source','source',?1,?1)",
+            params![timestamp],
+        )
+        .unwrap();
+        conn.execute(
+            "INSERT INTO external_markdown_sources(note_id,path,content_hash) VALUES('external-note',?1,'hash')",
+            params![path.to_string_lossy()],
+        )
+        .unwrap();
+
+        remove_external_markdown_record(&conn, "external-note").unwrap();
+
+        assert_eq!(fs::read_to_string(path).unwrap(), "source");
+        assert_eq!(
+            conn.query_row(
+                "SELECT COUNT(*) FROM external_markdown_sources",
+                [],
+                |row| row.get::<_, i64>(0)
+            )
+            .unwrap(),
+            0
+        );
+    }
+
+    #[test]
+    fn recursively_collects_markdown_files_without_following_links() {
+        let directory = tempfile::tempdir().unwrap();
+        let nested = directory.path().join("nested");
+        fs::create_dir(&nested).unwrap();
+        fs::write(directory.path().join("root.md"), "root").unwrap();
+        fs::write(nested.join("child.markdown"), "child").unwrap();
+        fs::write(nested.join("ignored.txt"), "ignored").unwrap();
+
+        let files = markdown_paths_in_folder(directory.path());
+
+        assert_eq!(files.len(), 2);
+        assert!(files.iter().all(|path| is_markdown_path(path)));
+        assert!(files.windows(2).all(|pair| pair[0] <= pair[1]));
     }
 
     #[test]
