@@ -1,6 +1,7 @@
 import { defineStore } from 'pinia'
 import { invoke } from '../services/tauri'
 import DOMPurify from 'dompurify'
+import { requireResourceVersion } from '../services/resourceVersion'
 import { errorMessage, type KnowledgeBase, type LibraryEntry, type LibraryPreview, type Note } from '../types/domain'
 
 type LibrarySort = 'name' | 'size' | 'modified'
@@ -137,11 +138,12 @@ export const useLibraryStore = defineStore('library', {
       await this.selectBase(kb.id)
     },
     async updateBase(base: KnowledgeBase, name: string) {
-      await invoke('knowledge_base_update', { id: base.id, name, description: base.description || '', cover: base.cover || null })
-      base.name = name
+      const updated = await invoke('knowledge_base_update', { id: base.id, name, description: base.description || '', cover: base.cover || null, version: requireResourceVersion(base, '知识库') })
+      Object.assign(base, updated)
     },
     async deleteBase(id: string) {
-      await invoke('knowledge_base_delete', { id })
+      const base = this.bases.find(item => item.id === id)
+      await invoke('knowledge_base_delete', { id, version: requireResourceVersion(base, '知识库') })
       this.bases = this.bases.filter(base => base.id !== id)
       if (this.activeId === id) {
         this.activeId = this.bases[0]?.id || null
@@ -196,7 +198,7 @@ export const useLibraryStore = defineStore('library', {
     },
     async addNoteReference(knowledgeBaseId: string, note: Note) {
       if (!knowledgeBaseId || !note?.id) throw new Error('缺少知识库或笔记信息')
-      const result = await invoke('note_move_to_knowledge_base', { id: note.id, knowledgeBaseId })
+      const result = await invoke('note_move_to_knowledge_base', { id: note.id, knowledgeBaseId, version: requireResourceVersion(note, '笔记') })
       if (result) Object.assign(note, result)
       return result
     }

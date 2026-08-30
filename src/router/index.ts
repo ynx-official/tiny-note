@@ -1,6 +1,6 @@
 import { createRouter, createWebHashHistory } from 'vue-router'
 import HomeView from '../views/HomeView.vue'
-import { getAuthSnapshot } from '../services/apiClient'
+import { getAuthSnapshot, subscribeAuth } from '../services/apiClient'
 
 const lazyView = <T>(styles: () => Promise<unknown>, view: () => Promise<T>) => async () => {
   await styles()
@@ -32,6 +32,13 @@ router.beforeEach(to => {
   if (to.meta.public) return authenticated && to.path === '/login' ? '/home' : true
   if (!authenticated) return { path: '/login', query: { redirect: to.fullPath } }
   return true
+})
+
+subscribeAuth(() => {
+  const current = router.currentRoute.value
+  if (!getAuthSnapshot().authenticated && current.meta.public !== true) {
+    void router.replace({ path: '/login', query: { redirect: current.fullPath } })
+  }
 })
 
 export default router

@@ -13,6 +13,8 @@ type Command<Args extends object, Result = void> = CommandDefinition<Args, Resul
 export type NoCommandArgs = Record<string, never>
 type NoArgs<Result = void> = Command<NoCommandArgs, Result>
 type IdArgs = { id: string }
+type VersionedIdArgs = IdArgs & { version: number }
+type Versioned<T extends object> = T & { version: number }
 type JsonObject = { [key: string]: JsonValue }
 type CommandChannel = EventChannel<never>
 
@@ -45,15 +47,15 @@ export interface CommandMap {
   note_list: Command<{ search?: string | null; deleted?: boolean; pinned?: boolean | null; knowledgeBaseId?: string | null }, Note[]>
   note_get: Command<IdArgs, Note | null>
   note_create: Command<{ input: Partial<Note> }, Note>
-  note_update: Command<IdArgs & { input: Partial<Note> }, Note>
+  note_update: Command<IdArgs & { input: Versioned<Partial<Note>> }, Note>
   note_copy: Command<IdArgs, Note>
-  note_delete: Command<IdArgs>
+  note_delete: Command<VersionedIdArgs>
   note_purge: Command<IdArgs>
   note_purge_expired: NoArgs<number>
-  note_restore: Command<IdArgs>
-  note_set_pinned: Command<IdArgs & { pinned: boolean }, Note>
-  note_move: Command<IdArgs & { notebookId: string | null }>
-  note_move_to_knowledge_base: Command<IdArgs & { knowledgeBaseId: string | null }, Note>
+  note_restore: Command<VersionedIdArgs>
+  note_set_pinned: Command<VersionedIdArgs & { pinned: boolean }, Note>
+  note_move: Command<VersionedIdArgs & { notebookId: string | null }, Note>
+  note_move_to_knowledge_base: Command<VersionedIdArgs & { knowledgeBaseId: string | null }, Note>
   note_open_external_markdown: Command<{ input: Partial<Note> & { path: string } }, Note>
   note_template_list: NoArgs<NoteTemplate[]>
   note_template_upsert: Command<{ template: Partial<NoteTemplate> }, NoteTemplate>
@@ -68,12 +70,12 @@ export interface CommandMap {
 
   notebook_list: NoArgs<Notebook[]>
   notebook_create: Command<{ name: string; description: string; parentId: string | null }, Notebook>
-  notebook_update: Command<IdArgs & { name: string; description: string; parentId: string | null }, Notebook>
-  notebook_move: Command<IdArgs & { parentId: string | null }, Notebook>
+  notebook_update: Command<VersionedIdArgs & { name: string; description: string; parentId: string | null }, Notebook>
+  notebook_move: Command<VersionedIdArgs & { parentId: string | null }, Notebook>
   notebook_delete: Command<IdArgs>
   tag_list: NoArgs<Tag[]>
   tag_create: Command<{ name: string }, Tag>
-  tag_update: Command<IdArgs & { name: string }, Tag>
+  tag_update: Command<VersionedIdArgs & { name: string }, Tag>
   tag_delete: Command<IdArgs>
   note_tag_list: Command<{ noteId: string }, Tag[]>
   tag_note_list: Command<{ tagId: string | null; untagged: boolean }, Note[]>
@@ -86,8 +88,8 @@ export interface CommandMap {
   app_take_pending_markdown_files: NoArgs<ExternalMarkdownFile[]>
   knowledge_base_list: NoArgs<KnowledgeBase[]>
   knowledge_base_create: Command<{ input: Pick<KnowledgeBase, 'name' | 'category'> & Partial<KnowledgeBase> }, KnowledgeBase>
-  knowledge_base_update: Command<IdArgs & Pick<KnowledgeBase, 'name' | 'description' | 'cover'>, KnowledgeBase>
-  knowledge_base_delete: Command<IdArgs>
+  knowledge_base_update: Command<VersionedIdArgs & Pick<KnowledgeBase, 'name' | 'description' | 'cover'>, KnowledgeBase>
+  knowledge_base_delete: Command<VersionedIdArgs>
   library_list: Command<{ knowledgeBaseId: string; relativePath: string; search?: string | null }, LibraryEntry[]>
   library_preview: Command<{ knowledgeBaseId: string | null; relativePath: string }, LibraryPreview>
   library_create_folder: Command<{ knowledgeBaseId: string | null; relativePath: string; name: string }>
@@ -100,17 +102,17 @@ export interface CommandMap {
   calendar_event_list: Command<{ start?: string; end?: string }, CalendarEvent[]>
   calendar_event_get: Command<IdArgs, CalendarEvent | null>
   calendar_event_create: Command<{ input: Omit<Partial<CalendarEvent>, 'reminder'> & { reminder?: Partial<Reminder> | null } }, CalendarEvent>
-  calendar_event_update: Command<IdArgs & { input: Omit<Partial<CalendarEvent>, 'reminder'> & { reminder?: Partial<Reminder> | null } }, CalendarEvent>
+  calendar_event_update: Command<VersionedIdArgs & { input: Omit<Partial<CalendarEvent>, 'reminder'> & { reminder?: Partial<Reminder> | null } }, CalendarEvent>
   calendar_event_delete: Command<IdArgs>
   todo_list: NoArgs<Todo[]>
   todo_get: Command<IdArgs, Todo | null>
   todo_create: Command<{ input: Omit<Partial<Todo>, 'reminder'> & { reminder?: Partial<Reminder> | null } }, Todo>
-  todo_update: Command<IdArgs & { input: Omit<Partial<Todo>, 'reminder'> & { reminder?: Partial<Reminder> | null } }, Todo>
-  todo_set_completed: Command<IdArgs & { completed: boolean }, Todo>
+  todo_update: Command<VersionedIdArgs & { input: Omit<Partial<Todo>, 'reminder'> & { reminder?: Partial<Reminder> | null } }, Todo>
+  todo_set_completed: Command<VersionedIdArgs & { completed: boolean }, Todo>
   todo_delete: Command<IdArgs>
   todo_custom_list_list: NoArgs<TodoList[]>
   todo_custom_list_create: Command<{ input: Partial<TodoList> }, TodoList>
-  todo_custom_list_update: Command<IdArgs & { input: Partial<TodoList> }, TodoList>
+  todo_custom_list_update: Command<VersionedIdArgs & { input: Partial<TodoList> }, TodoList>
   todo_custom_list_delete: Command<IdArgs>
   reminder_stop: Command<{ ownerType: string; ownerId: string }>
 
@@ -131,7 +133,7 @@ export interface CommandMap {
   chat_get: Command<IdArgs, ChatThread>
   chat_create: Command<{ modelProfileId?: string | null; mode?: string }, ChatConversation>
   chat_delete: Command<IdArgs>
-  chat_set_mode: Command<IdArgs & { mode: string }, ChatConversation>
+  chat_set_mode: Command<VersionedIdArgs & { mode: string }, ChatConversation>
   chat_add_message: Command<ChatAddMessage, ChatMessage>
   chat_generate_title: Command<{ conversationId: string; modelProfileId?: string | null }, string>
   agent_list_tools: NoArgs<AgentTool[]>

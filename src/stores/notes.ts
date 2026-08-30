@@ -2,6 +2,7 @@ import { defineStore } from 'pinia'
 import { invoke } from '../services/tauri'
 import { markdownToEditorHtml, sanitizeEditorHtml, textFromEditorHtml } from '../utils/noteMarkdown'
 import { showToast } from '../services/appFeedback'
+import { requireResourceVersion } from '../services/resourceVersion'
 import { errorMessage, type ExternalMarkdownSource, type JsonValue, type Note, type Notebook, type NoteTemplate } from '../types/domain'
 
 interface CreateNoteContent { title?: string; contentHtml?: string; contentText?: string; contentMarkdown?: string; notebookId?: string | null; knowledgeBaseId?: string | null; pinned?: boolean }
@@ -123,7 +124,10 @@ export const useNotesStore = defineStore('notes', {
       })
     },
     async clearExternalSources() {
-      await Promise.all(this.externalSources.map(source => invoke('note_delete', { id: source.id }).catch(() => undefined)))
+      await Promise.all(this.externalSources.map(source => {
+        const note = this.notes.find(item => item.id === source.id)
+        return note ? invoke('note_delete', { id: source.id, version: requireResourceVersion(note, '笔记') }).catch(() => undefined) : Promise.resolve()
+      }))
       await invoke('external_markdown_clear')
       const externalIds = new Set(this.notes.filter(note => note.external).map(note => note.id))
       this.notes = this.notes.filter(note => !note.external)
@@ -146,7 +150,7 @@ export const useNotesStore = defineStore('notes', {
     async save(note: Note) {
       this.saving = true
       try {
-        const updated = await invoke('note_update', { id: note.id, input: { title: note.title, notebookId: note.notebookId, knowledgeBaseId: note.knowledgeBaseId || null, contentHtml: note.contentHtml, contentText: note.contentText, contentMarkdown: note.contentMarkdown || '', pinned: Boolean(note.pinned) } })
+        const updated = await invoke('note_update', { id: note.id, input: { title: note.title, notebookId: note.notebookId, knowledgeBaseId: note.knowledgeBaseId || null, contentHtml: note.contentHtml, contentText: note.contentText, contentMarkdown: note.contentMarkdown || '', pinned: Boolean(note.pinned), version: requireResourceVersion(note, '笔记') } })
         if (updated) Object.assign(note, updated)
       } finally {
         this.saving = false
@@ -165,8 +169,8 @@ export const useNotesStore = defineStore('notes', {
       }, 800)
     },
     async setPinned(id: string, pinned: boolean) {
-      const updated = await invoke('note_set_pinned', { id, pinned })
       const note = [...this.notes, ...this.deleted].find(item => item.id === id)
+      const updated = await invoke('note_set_pinned', { id, pinned, version: requireResourceVersion(note, '笔记') })
       if (note && updated) Object.assign(note, updated)
       return updated || note
     },
@@ -174,7 +178,8 @@ export const useNotesStore = defineStore('notes', {
       return invoke('note_link_list', { noteId: id })
     },
     async remove(id: string) {
-      await invoke('note_delete', { id })
+      const note = this.notes.find(item => item.id === id)
+      await invoke('note_delete', { id, version: requireResourceVersion(note, '笔记') })
       this.notes = this.notes.filter(note => note.id !== id)
       if (this.activeId === id) this.activeId = this.notes[0]?.id || null
       await this.load()
@@ -185,13 +190,14 @@ export const useNotesStore = defineStore('notes', {
       await this.load()
     },
     async restore(id: string) {
-      await invoke('note_restore', { id })
+      const note = this.deleted.find(item => item.id === id)
+      await invoke('note_restore', { id, version: requireResourceVersion(note, '笔记') })
       await this.load()
     },
     async rename(id: string, title: string) {
       const note = [...this.notes, ...this.deleted].find(item => item.id === id)
       if (!note || !title?.trim()) return null
-      const updated = await invoke('note_update', { id, input: { title: title.trim(), notebookId: note.notebookId, knowledgeBaseId: note.knowledgeBaseId || null, contentHtml: note.contentHtml, contentText: note.contentText, contentMarkdown: note.contentMarkdown || '', pinned: Boolean(note.pinned) } })
+      const updated = await invoke('note_update', { id, input: { title: title.trim(), notebookId: note.notebookId, knowledgeBaseId: note.knowledgeBaseId || null, contentHtml: note.contentHtml, contentText: note.contentText, contentMarkdown: note.contentMarkdown || '', pinned: Boolean(note.pinned), version: requireResourceVersion(note, '笔记') } })
       if (updated) Object.assign(note, updated)
       return updated
     },
@@ -204,14 +210,15 @@ export const useNotesStore = defineStore('notes', {
       return copy
     },
     async move(id: string, notebookId: string | null) {
-      await invoke('note_move', { id, notebookId: notebookId || null })
       const note = [...this.notes, ...this.deleted].find(item => item.id === id)
+      const updated = await invoke('note_move', { id, notebookId: notebookId || null, version: requireResourceVersion(note, '笔记') })
+      if (note && updated) Object.assign(note, updated)
       if (note) note.notebookId = notebookId || this.notebooks.find(book => book.name === '未分类')?.id || null
       return note
     },
     async moveToKnowledge(id: string, knowledgeBaseId: string | null) {
-      const updated = await invoke('note_move_to_knowledge_base', { id, knowledgeBaseId: knowledgeBaseId || null })
       const note = [...this.notes, ...this.deleted].find(item => item.id === id)
+      const updated = await invoke('note_move_to_knowledge_base', { id, knowledgeBaseId: knowledgeBaseId || null, version: requireResourceVersion(note, '笔记') })
       if (note && updated) Object.assign(note, updated)
       return updated || note
     },
@@ -221,11 +228,13 @@ export const useNotesStore = defineStore('notes', {
       return notebook
     },
     async updateNotebook(id: string, name: string, parentId: string | null = null) {
-      await invoke('notebook_update', { id, name, description: '', parentId })
+      const notebook = this.notebooks.find(item => item.id === id)
+      await invoke('notebook_update', { id, name, description: '', parentId, version: requireResourceVersion(notebook, '笔记本') })
       await this.load()
     },
     async moveNotebook(id: string, parentId: string | null = null) {
-      await invoke('notebook_move', { id, parentId })
+      const notebook = this.notebooks.find(item => item.id === id)
+      await invoke('notebook_move', { id, parentId, version: requireResourceVersion(notebook, '笔记本') })
       await this.load()
     },
     async deleteNotebook(id: string) {

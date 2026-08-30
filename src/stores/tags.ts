@@ -1,5 +1,6 @@
 import { defineStore } from 'pinia'
 import { invoke } from '../services/tauri'
+import { requireResourceVersion } from '../services/resourceVersion'
 import type { Note, Tag } from '../types/domain'
 
 export const useTagsStore = defineStore('tags', {
@@ -42,7 +43,8 @@ export const useTagsStore = defineStore('tags', {
       return tag
     },
     async rename(id: string, name: string) {
-      const updated = await invoke('tag_update', { id, name })
+      const tag = this.tags.find(item => item.id === id)
+      const updated = await invoke('tag_update', { id, name, version: requireResourceVersion(tag, '标签') })
       this.tags = await invoke('tag_list') || []
       return updated
     },

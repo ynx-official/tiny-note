@@ -2,6 +2,7 @@ import { defineStore } from 'pinia'
 import { invoke } from '../services/tauri'
 import type { CalendarEvent, Reminder } from '../types/domain'
 import { errorMessage } from '../types/domain'
+import { requireResourceVersion } from '../services/resourceVersion'
 
 export const EVENT_COLORS = ['#E53935', '#FB8C00', '#558B2F', '#43A047', '#00897B', '#1E88E5', '#5C6BC0', '#8E24AA', '#D81B60', '#8D6E63', '#546E7A']
 type CalendarEventInput = Omit<Partial<CalendarEvent>, 'reminder'> & { reminder?: Partial<Reminder> | null }
@@ -18,7 +19,7 @@ export const useCalendarStore = defineStore('calendar', {
       return this.events
     },
     async create(input: CalendarEventInput) { const item = await invoke('calendar_event_create', { input }); this.events.push(item); return item },
-    async update(id: string, input: CalendarEventInput) { const item = await invoke('calendar_event_update', { id, input }); const index = this.events.findIndex(value => value.id === id); if (index >= 0) this.events[index] = item; return item },
+    async update(id: string, input: CalendarEventInput) { const current = this.byId(id); const item = await invoke('calendar_event_update', { id, input, version: requireResourceVersion(current, '日程') }); const index = this.events.findIndex(value => value.id === id); if (index >= 0) this.events[index] = item; return item },
     async remove(id: string) { await invoke('calendar_event_delete', { id }); this.events = this.events.filter(item => item.id !== id) }
   }
 })

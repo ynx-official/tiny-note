@@ -1,6 +1,6 @@
 import { apiRequest, ApiError } from './apiClient'
 import type { CommandArgs, CommandName, CommandResult } from './commandMap'
-import type { CalendarEvent, ChatConversation, KnowledgeBase, ModelProfile, Note, Notebook, Tag, Todo, TodoList } from '../types/domain'
+import type { ModelProfile, Note } from '../types/domain'
 import type { AgentRun, BackgroundTask } from '../types/domain'
 import type { ImageAsset } from '../types/domain'
 import type { EventChannel } from './eventChannel'
@@ -13,31 +13,6 @@ function query(values: Record<string, unknown>): string {
   const result = params.toString()
   return result ? `?${result}` : ''
 }
-
-async function currentNote(id: string): Promise<Note> {
-  const note = await apiRequest<Note | null>(`/notes/${encodeURIComponent(id)}`)
-  if (!note) throw new ApiError('not_found', '笔记不存在', 404)
-  return note
-}
-async function currentNotebook(id: string): Promise<Notebook> {
-  const item = (await apiRequest<Notebook[]>('/notebooks')).find(value => value.id === id)
-  if (!item) throw new ApiError('not_found', '笔记本不存在', 404)
-  return item
-}
-async function currentTag(id: string): Promise<Tag> {
-  const item = (await apiRequest<Tag[]>('/tags')).find(value => value.id === id)
-  if (!item) throw new ApiError('not_found', '标签不存在', 404)
-  return item
-}
-async function currentKnowledgeBase(id: string): Promise<KnowledgeBase> {
-  const item = (await apiRequest<KnowledgeBase[]>('/knowledge-bases')).find(value => value.id === id)
-  if (!item) throw new ApiError('not_found', '知识库不存在', 404)
-  return item
-}
-async function currentTodo(id: string): Promise<Todo> { const item = await apiRequest<Todo | null>(`/todos/${encodeURIComponent(id)}`); if (!item) throw new ApiError('not_found', '待办不存在', 404); return item }
-async function currentTodoList(id: string): Promise<TodoList> { const item = (await apiRequest<TodoList[]>('/todo-lists')).find(value => value.id === id); if (!item) throw new ApiError('not_found', '清单不存在', 404); return item }
-async function currentCalendarEvent(id: string): Promise<CalendarEvent> { const item = await apiRequest<CalendarEvent | null>(`/calendar-events/${encodeURIComponent(id)}`); if (!item) throw new ApiError('not_found', '日历事件不存在', 404); return item }
-async function currentChat(id: string): Promise<ChatConversation> { const item = (await apiRequest<ChatConversation[]>('/chats')).find(value => value.id === id); if (!item) throw new ApiError('not_found', '会话不存在', 404); return item }
 
 async function runAI(request: Record<string, unknown>, channel: EventChannel<unknown>, kind: string): Promise<string> {
   const requestId = String(request.requestId || crypto.randomUUID())
@@ -117,15 +92,15 @@ export async function remoteInvoke<K extends CommandName>(command: K, args: Comm
     case 'note_list': result = await apiRequest(`/notes${query(input)}`); break
     case 'note_get': result = await apiRequest(`/notes/${encodeURIComponent(input.id)}`); break
     case 'note_create': result = await apiRequest('/notes', { method: 'POST', body: input.input }); break
-    case 'note_update': { const version = input.input.version ?? (await currentNote(input.id)).version; result = await apiRequest(`/notes/${encodeURIComponent(input.id)}`, { method: 'PUT', body: { ...input.input, version } }); break }
+    case 'note_update': result = await apiRequest(`/notes/${encodeURIComponent(input.id)}`, { method: 'PUT', body: input.input }); break
     case 'note_copy': result = await apiRequest(`/notes/${encodeURIComponent(input.id)}/copy`, { method: 'POST' }); break
-    case 'note_delete': { const note = await currentNote(input.id); result = await apiRequest(`/notes/${encodeURIComponent(input.id)}${query({ version: note.version })}`, { method: 'DELETE' }); break }
+    case 'note_delete': result = await apiRequest(`/notes/${encodeURIComponent(input.id)}${query({ version: input.version })}`, { method: 'DELETE' }); break
     case 'note_purge': result = await apiRequest(`/notes/${encodeURIComponent(input.id)}/purge`, { method: 'DELETE' }); break
     case 'note_purge_expired': result = await apiRequest('/notes/purge-expired', { method: 'DELETE' }); break
-    case 'note_restore': { const note = await currentNote(input.id); result = await apiRequest(`/notes/${encodeURIComponent(input.id)}/restore`, { method: 'POST', body: { version: note.version } }); break }
-    case 'note_set_pinned': { const note = await currentNote(input.id); result = await apiRequest(`/notes/${encodeURIComponent(input.id)}`, { method: 'PUT', body: { version: note.version, pinned: input.pinned } }); break }
-    case 'note_move': { const note = await currentNote(input.id); result = await apiRequest(`/notes/${encodeURIComponent(input.id)}`, { method: 'PUT', body: { version: note.version, notebookId: input.notebookId } }); break }
-    case 'note_move_to_knowledge_base': { const note = await currentNote(input.id); result = await apiRequest(`/notes/${encodeURIComponent(input.id)}`, { method: 'PUT', body: { version: note.version, knowledgeBaseId: input.knowledgeBaseId } }); break }
+    case 'note_restore': result = await apiRequest(`/notes/${encodeURIComponent(input.id)}/restore`, { method: 'POST', body: { version: input.version } }); break
+    case 'note_set_pinned': result = await apiRequest(`/notes/${encodeURIComponent(input.id)}`, { method: 'PUT', body: { version: input.version, pinned: input.pinned } }); break
+    case 'note_move': result = await apiRequest(`/notes/${encodeURIComponent(input.id)}`, { method: 'PUT', body: { version: input.version, notebookId: input.notebookId } }); break
+    case 'note_move_to_knowledge_base': result = await apiRequest(`/notes/${encodeURIComponent(input.id)}`, { method: 'PUT', body: { version: input.version, knowledgeBaseId: input.knowledgeBaseId } }); break
     case 'note_open_external_markdown': result = await openExternalMarkdown(input.input); break
     case 'note_template_list': result = await apiRequest('/note-templates'); break
     case 'note_template_upsert': { const id = input.template.id || crypto.randomUUID(); result = await apiRequest(`/note-templates/${encodeURIComponent(id)}`, { method: 'PUT', body: { ...input.template, id } }); break }
@@ -139,12 +114,12 @@ export async function remoteInvoke<K extends CommandName>(command: K, args: Comm
     case 'note_edit_discard': result = await apiRequest(`/edit-proposals/${encodeURIComponent(input.proposalId)}`, { method: 'DELETE' }); break
     case 'notebook_list': result = await apiRequest('/notebooks'); break
     case 'notebook_create': result = await apiRequest('/notebooks', { method: 'POST', body: input }); break
-    case 'notebook_update': { const item = await currentNotebook(input.id); result = await apiRequest(`/notebooks/${encodeURIComponent(input.id)}`, { method: 'PUT', body: { ...input, version: item.version } }); break }
-    case 'notebook_move': { const item = await currentNotebook(input.id); result = await apiRequest(`/notebooks/${encodeURIComponent(input.id)}`, { method: 'PUT', body: { ...item, parentId: input.parentId, version: item.version } }); break }
+    case 'notebook_update': result = await apiRequest(`/notebooks/${encodeURIComponent(input.id)}`, { method: 'PUT', body: input }); break
+    case 'notebook_move': result = await apiRequest(`/notebooks/${encodeURIComponent(input.id)}`, { method: 'PUT', body: input }); break
     case 'notebook_delete': result = await apiRequest(`/notebooks/${encodeURIComponent(input.id)}`, { method: 'DELETE' }); break
     case 'tag_list': result = await apiRequest('/tags'); break
     case 'tag_create': result = await apiRequest('/tags', { method: 'POST', body: input }); break
-    case 'tag_update': { const item = await currentTag(input.id); result = await apiRequest(`/tags/${encodeURIComponent(input.id)}`, { method: 'PUT', body: { name: input.name, version: item.version } }); break }
+    case 'tag_update': result = await apiRequest(`/tags/${encodeURIComponent(input.id)}`, { method: 'PUT', body: { name: input.name, version: input.version } }); break
     case 'tag_delete': result = await apiRequest(`/tags/${encodeURIComponent(input.id)}`, { method: 'DELETE' }); break
     case 'note_tag_list': result = await apiRequest(`/notes/${encodeURIComponent(input.noteId)}/tags`); break
     case 'tag_note_list': result = await apiRequest(`/tags/notes${query(input)}`); break
@@ -152,8 +127,8 @@ export async function remoteInvoke<K extends CommandName>(command: K, args: Comm
     case 'tag_note_remove': result = await apiRequest('/notes/tags', { method: 'DELETE', body: input }); break
     case 'knowledge_base_list': result = await apiRequest('/knowledge-bases'); break
     case 'knowledge_base_create': result = await apiRequest('/knowledge-bases', { method: 'POST', body: input.input }); break
-    case 'knowledge_base_update': { const item = await currentKnowledgeBase(input.id); result = await apiRequest(`/knowledge-bases/${encodeURIComponent(input.id)}`, { method: 'PUT', body: { ...input, version: item.version } }); break }
-    case 'knowledge_base_delete': { const item = await currentKnowledgeBase(input.id); result = await apiRequest(`/knowledge-bases/${encodeURIComponent(input.id)}${query({ version: item.version })}`, { method: 'DELETE' }); break }
+    case 'knowledge_base_update': result = await apiRequest(`/knowledge-bases/${encodeURIComponent(input.id)}`, { method: 'PUT', body: input }); break
+    case 'knowledge_base_delete': result = await apiRequest(`/knowledge-bases/${encodeURIComponent(input.id)}${query({ version: input.version })}`, { method: 'DELETE' }); break
     case 'library_list': result = await apiRequest(`${knowledgeBasePath(input.knowledgeBaseId)}${query({ relativePath: input.relativePath, search: input.search })}`); break
     case 'library_preview': result = await apiRequest(`${knowledgeBasePath(input.knowledgeBaseId)}/preview${query({ relativePath: input.relativePath })}`); break
     case 'library_create_folder': result = await apiRequest(`${knowledgeBasePath(input.knowledgeBaseId)}/folders`, { method: 'POST', body: { relativePath: input.relativePath, name: input.name } }); break
@@ -167,24 +142,24 @@ export async function remoteInvoke<K extends CommandName>(command: K, args: Comm
     case 'todo_list': result = await apiRequest('/todos'); break
     case 'todo_get': result = await apiRequest(`/todos/${encodeURIComponent(input.id)}`); break
     case 'todo_create': result = await apiRequest('/todos', { method: 'POST', body: input.input }); break
-    case 'todo_update': { const item = await currentTodo(input.id); result = await apiRequest(`/todos/${encodeURIComponent(input.id)}`, { method: 'PUT', body: { ...input.input, version: item.version } }); break }
-    case 'todo_set_completed': { const item = await currentTodo(input.id); result = await apiRequest(`/todos/${encodeURIComponent(input.id)}/completed`, { method: 'POST', body: { completed: input.completed, version: item.version } }); break }
+    case 'todo_update': result = await apiRequest(`/todos/${encodeURIComponent(input.id)}`, { method: 'PUT', body: { ...input.input, version: input.version } }); break
+    case 'todo_set_completed': result = await apiRequest(`/todos/${encodeURIComponent(input.id)}/completed`, { method: 'POST', body: { completed: input.completed, version: input.version } }); break
     case 'todo_delete': result = await apiRequest(`/todos/${encodeURIComponent(input.id)}`, { method: 'DELETE' }); break
     case 'todo_custom_list_list': result = await apiRequest('/todo-lists'); break
     case 'todo_custom_list_create': result = await apiRequest('/todo-lists', { method: 'POST', body: input.input }); break
-    case 'todo_custom_list_update': { const item = await currentTodoList(input.id); result = await apiRequest(`/todo-lists/${encodeURIComponent(input.id)}`, { method: 'PUT', body: { ...input.input, version: item.version } }); break }
+    case 'todo_custom_list_update': result = await apiRequest(`/todo-lists/${encodeURIComponent(input.id)}`, { method: 'PUT', body: { ...input.input, version: input.version } }); break
     case 'todo_custom_list_delete': result = await apiRequest(`/todo-lists/${encodeURIComponent(input.id)}`, { method: 'DELETE' }); break
     case 'calendar_event_list': result = await apiRequest(`/calendar-events${query(input)}`); break
     case 'calendar_event_get': result = await apiRequest(`/calendar-events/${encodeURIComponent(input.id)}`); break
     case 'calendar_event_create': result = await apiRequest('/calendar-events', { method: 'POST', body: input.input }); break
-    case 'calendar_event_update': { const item = await currentCalendarEvent(input.id); result = await apiRequest(`/calendar-events/${encodeURIComponent(input.id)}`, { method: 'PUT', body: { ...input.input, version: item.version } }); break }
+    case 'calendar_event_update': result = await apiRequest(`/calendar-events/${encodeURIComponent(input.id)}`, { method: 'PUT', body: { ...input.input, version: input.version } }); break
     case 'calendar_event_delete': result = await apiRequest(`/calendar-events/${encodeURIComponent(input.id)}`, { method: 'DELETE' }); break
     case 'reminder_stop': result = await apiRequest(`/reminders/${encodeURIComponent(input.ownerType)}/${encodeURIComponent(input.ownerId)}/stop`, { method: 'POST' }); break
     case 'chat_list': result = await apiRequest('/chats'); break
     case 'chat_get': result = await apiRequest(`/chats/${encodeURIComponent(input.id)}`); break
     case 'chat_create': result = await apiRequest('/chats', { method: 'POST', body: input }); break
     case 'chat_delete': result = await apiRequest(`/chats/${encodeURIComponent(input.id)}`, { method: 'DELETE' }); break
-    case 'chat_set_mode': { const item = await currentChat(input.id); result = await apiRequest(`/chats/${encodeURIComponent(input.id)}/mode`, { method: 'PUT', body: { mode: input.mode, version: item.version } }); break }
+    case 'chat_set_mode': result = await apiRequest(`/chats/${encodeURIComponent(input.id)}/mode`, { method: 'PUT', body: { mode: input.mode, version: input.version } }); break
     case 'chat_add_message': result = await apiRequest(`/chats/${encodeURIComponent(input.conversationId)}/messages`, { method: 'POST', body: input }); break
     case 'chat_generate_title': result = await apiRequest(`/chats/${encodeURIComponent(input.conversationId)}/title`, { method: 'POST' }); break
     case 'background_task_list': result = await apiRequest(`/tasks${query({ statuses: input.filter?.statuses?.join(','), kinds: input.filter?.kinds?.join(',') })}`); break

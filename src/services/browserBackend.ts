@@ -31,13 +31,14 @@ function normalizeBrowserState(record: Record<string, unknown>): BrowserState {
   const state = record as BrowserState
   for (const key of ['notes', 'notebooks', 'tags', 'noteTags', 'kbs', 'libraryFiles', 'memories', 'agentSkills', 'mcpServers', 'usageRecords', 'imageGenerations', 'imageAssets', 'chatConversations', 'chatMessages', 'backgroundTasks', 'calendarEvents', 'todos', 'todoLists', 'reminders', 'editProposals', 'noteRevisions', 'noteLinks', 'templates', 'models'] as const) {
     state[key] = browserItems(record[key])
+    state[key].forEach(value => { if (!Number.isInteger(value.version) || Number(value.version) <= 0) value.version = 1 })
   }
   state.agentToolPolicies = isBrowserRecord(record.agentToolPolicies)
     ? Object.fromEntries(Object.entries(record.agentToolPolicies).filter((entry): entry is [string, boolean] => typeof entry[1] === 'boolean'))
     : {}
   const timestamp = new Date().toISOString()
-  if (!present.has('notebooks')) state.notebooks = browserItemList([{ id: 'uncategorized', parentId: null, name: '未分类', description: '', createdAt: timestamp, updatedAt: timestamp }])
-  if (!present.has('kbs')) state.kbs = browserItemList([{ id: 'personal-demo', category: 'personal', name: '我的笔记', description: '', rootPath: '', createdAt: timestamp, updatedAt: timestamp }, { id: 'local-demo', category: 'local', name: '我的书籍', description: '', rootPath: '', createdAt: timestamp, updatedAt: timestamp }])
+  if (!present.has('notebooks')) state.notebooks = browserItemList([{ id: 'uncategorized', parentId: null, name: '未分类', description: '', version: 1, createdAt: timestamp, updatedAt: timestamp }])
+  if (!present.has('kbs')) state.kbs = browserItemList([{ id: 'personal-demo', category: 'personal', name: '我的笔记', description: '', rootPath: '', version: 1, createdAt: timestamp, updatedAt: timestamp }, { id: 'local-demo', category: 'local', name: '我的书籍', description: '', rootPath: '', version: 1, createdAt: timestamp, updatedAt: timestamp }])
   if (!present.has('memories')) state.memories = browserItemList(browserMemorySeed.map(file => ({ ...file, updatedAt: timestamp })))
   if (!present.has('agentSkills')) state.agentSkills = browserItemList(browserSkillSeed.map(skill => ({ ...skill, updatedAt: timestamp })))
   if (!present.has('templates')) state.templates = browserItemList(browserTemplateSeed.map(template => ({ ...template, updatedAt: timestamp })))
@@ -220,7 +221,6 @@ export async function browserInvoke<K extends CommandName>(command: K, commandAr
   else result = []
   writeBrowserState(state); return result as CommandResult<K>
 }
-
 
 
 

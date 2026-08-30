@@ -65,7 +65,7 @@ export class EventChannel<T = Record<string, unknown>> {
           if (received) retryDelay = 300
         } catch (error) {
           if (controller.signal.aborted) break
-          if (error instanceof ApiError && error.status >= 400 && error.status < 500 && error.status !== 401) throw error
+          if (error instanceof ApiError && error.status >= 400 && error.status < 500) throw error
         }
         if (!terminal.length && !controller.signal.aborted) {
           await abortableDelay(retryDelay, controller.signal)

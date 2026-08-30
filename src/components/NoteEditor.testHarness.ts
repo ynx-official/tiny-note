@@ -48,6 +48,7 @@ export function note(id = 'note-1'): Note {
     contentText: '标题\n正文',
     contentMarkdown: '# 标题\n\n正文',
     pinned: false,
+    version: 1,
     deletedAt: null,
     createdAt: '2026-08-21T00:00:00.000Z',
     updatedAt: '2026-08-21T00:00:00.000Z'

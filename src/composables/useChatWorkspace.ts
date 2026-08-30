@@ -66,6 +66,8 @@ export function useChatWorkspace() {
   const messagesRef = ref<HTMLElement | null>(null)
   
   const conversationId = ref('')
+
+  const conversationVersion = ref(0)
   
   const conversationTitle = ref('新对话')
   
@@ -127,6 +129,7 @@ export function useChatWorkspace() {
     if (conversationId.value) return conversationId.value
     const conversation = await invoke('chat_create', { modelProfileId: selectedModel.value?.id || null, mode: currentMode.value })
     conversationId.value = conversation.id
+    conversationVersion.value = conversation.version || 0
     conversationTitle.value = conversation.title
     await router.replace({ path: '/chat', query: { id: conversation.id, ...(fromHome.value ? { from: 'home' } : {}) } })
     window.dispatchEvent(new CustomEvent('tiny-note-chat-updated'))
@@ -136,6 +139,7 @@ export function useChatWorkspace() {
   async function saveMessage(role: string, content: string, messageReferences: ChatReference[] = [], sources: JsonValue[] = [], proposalId: string | null = null, agentRunId: string | null = null): Promise<ViewMessage> {
     const id = await ensureConversation()
     const saved = await invoke('chat_add_message', { conversationId: id, role, content, references: messageReferences, sources, proposalId, agentRunId })
+    conversationVersion.value += 1
     window.dispatchEvent(new CustomEvent('tiny-note-chat-updated'))
     return saved
   }
@@ -146,7 +150,10 @@ export function useChatWorkspace() {
     titlesGenerating.add(id)
     try {
       const title = await invoke('chat_generate_title', { conversationId: id, modelProfileId: selectedModel.value?.id || null })
-      if (conversationId.value === id) conversationTitle.value = title
+      if (conversationId.value === id) {
+        conversationTitle.value = title
+        conversationVersion.value += 1
+      }
       window.dispatchEvent(new CustomEvent('tiny-note-chat-updated'))
     } catch (cause) {
       console.warn('Conversation title generation failed', cause)
@@ -511,6 +518,7 @@ export function useChatWorkspace() {
     draft.value = ''
     error.value = ''
     conversationId.value = ''
+    conversationVersion.value = 0
     conversationTitle.value = '新对话'
     currentMode.value = 'chat'
     agentSegments.value = []
@@ -575,6 +583,7 @@ export function useChatWorkspace() {
       const thread = await invoke('chat_get', { id })
       if (!thread) throw new Error('对话不存在')
       conversationId.value = thread.conversation.id
+      conversationVersion.value = thread.conversation.version || 0
       conversationTitle.value = thread.conversation.title
       currentMode.value = thread.conversation.mode || 'chat'
       selectedModelId.value = thread.conversation.modelProfileId || selectedModelId.value
@@ -608,6 +617,7 @@ export function useChatWorkspace() {
     } catch (cause) {
       error.value = errorMessage(cause, '历史对话读取失败')
       conversationId.value = ''
+      conversationVersion.value = 0
       messages.value = []
     }
   }
@@ -616,7 +626,7 @@ export function useChatWorkspace() {
   
   watch(() => [messages.value.length, streamingText.value, busy.value], scrollToBottom, { flush: 'post' })
   
-  watch(() => route.query.id, id => { if (id) loadConversation(String(id)); else if (conversationId.value && !isBusy.value) { conversationId.value = ''; conversationTitle.value = '新对话'; messages.value = [] } })
+  watch(() => route.query.id, id => { if (id) loadConversation(String(id)); else if (conversationId.value && !isBusy.value) { conversationId.value = ''; conversationVersion.value = 0; conversationTitle.value = '新对话'; messages.value = [] } })
   
   onMounted(async () => {
     await appStore.initialize()
@@ -654,8 +664,9 @@ export function useChatWorkspace() {
     }
     modeSaving.value = true
     try {
-      await invoke('chat_set_mode', { id: conversationId.value, mode })
+      const updated = await invoke('chat_set_mode', { id: conversationId.value, mode, version: conversationVersion.value })
       currentMode.value = mode
+      conversationVersion.value = updated.version || conversationVersion.value + 1
       window.dispatchEvent(new CustomEvent('tiny-note-chat-updated'))
     } catch (cause) {
       error.value = errorMessage(cause, '对话模式切换失败')

@@ -1,7 +1,10 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 const apiFetch = vi.hoisted(() => vi.fn())
-vi.mock('./apiClient', () => ({ apiFetch }))
+const MockApiError = vi.hoisted(() => class extends Error {
+  constructor(public code: string | number, message: string, public status: number) { super(message) }
+})
+vi.mock('./apiClient', () => ({ apiFetch, ApiError: MockApiError }))
 
 function streamResponse(chunks: string[]) {
   const encoder = new TextEncoder()
@@ -47,5 +50,16 @@ describe('EventChannel', () => {
 
     expect(new Headers(apiFetch.mock.calls[1]?.[1]?.headers).get('Last-Event-ID')).toBe('7')
     expect(terminal).toHaveLength(1)
+  })
+
+  it('stops immediately when authentication expires', async () => {
+    apiFetch.mockImplementationOnce(() => { throw new MockApiError(401, 'expired', 401) })
+    const { EventChannel } = await import('./eventChannel')
+    const channel = new EventChannel()
+
+    let caught: unknown
+    try { await channel.connect('run-expired') } catch (error) { caught = error }
+    expect(caught).toMatchObject({ status: 401 })
+    expect(apiFetch).toHaveBeenCalledTimes(1)
   })
 })
