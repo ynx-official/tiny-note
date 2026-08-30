@@ -21,16 +21,19 @@ const i18n = createI18n({
 const pinia = createPinia()
 
 async function bootstrapMainWindow() {
-  const [appModule, routerModule, appStoreModule, externalMarkdownModule] = await Promise.all([
+  const [appModule, routerModule, appStoreModule, authStoreModule, externalMarkdownModule, reminderEventsModule] = await Promise.all([
     import('./App.vue'),
     import('./router'),
     import('./stores/app'),
-    import('./services/externalMarkdown')
+    import('./stores/auth'),
+    import('./services/externalMarkdown'),
+    import('./services/reminderEvents')
   ])
   const router = routerModule.default
   const app = createApp(appModule.default).use(pinia).use(router).use(i18n)
 
   const appStore = appStoreModule.useAppStore(pinia)
+  const authStore = authStoreModule.useAuthStore(pinia)
   const bootShell = document.querySelector<HTMLElement>('.boot-shell')
   if (bootShell) {
     bootShell.classList.add('is-ready')
@@ -39,11 +42,20 @@ async function bootstrapMainWindow() {
   void runMainWindowBootstrap({
     mountShell: () => app.mount('#app'),
     hydrate: async () => {
-      await appStore.initialize()
+      const authenticated = await authStore.initialize()
+      if (authenticated) {
+        if (router.currentRoute.value.path === '/login') await router.replace('/home')
+        await appStore.initialize()
+      } else if (router.currentRoute.value.path !== '/login') {
+        await router.replace({ path: '/login', query: { redirect: router.currentRoute.value.fullPath } })
+      }
       i18n.global.locale.value = appStore.settings.language === 'en' ? 'en' : 'zh-CN'
       localStorage.setItem('tiny-note-language', appStore.settings.language)
     },
-    startDeferredServices: () => externalMarkdownModule.startExternalMarkdownOpen({ pinia, router })
+    startDeferredServices: () => {
+      externalMarkdownModule.startExternalMarkdownOpen({ pinia, router })
+      reminderEventsModule.startReminderEvents()
+    }
   })
 }
 

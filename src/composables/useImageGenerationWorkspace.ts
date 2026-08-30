@@ -1,5 +1,5 @@
 import { computed, nextTick, onMounted, onUnmounted, ref, watch, type Component } from 'vue'
-import { Channel } from '@tauri-apps/api/core'
+import { EventChannel } from '../services/eventChannel'
 import { useRoute, useRouter } from 'vue-router'
 import { storeToRefs } from 'pinia'
 import { Brush, Images, Pencil, Sparkles } from 'lucide-vue-next'
@@ -332,7 +332,7 @@ export function useImageGenerationWorkspace() {
         return
       }
       const requestId = crypto.randomUUID()
-      const channel = new Channel<ImageEvent>()
+      const channel = new EventChannel<ImageEvent>()
       let output = ''
       const optimized = await new Promise<string>((resolve, reject) => {
         const timer = window.setTimeout(() => reject(new Error('提示词优化超时')), 90000)

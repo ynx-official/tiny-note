@@ -40,6 +40,8 @@ export const useNotesStore = defineStore('notes', {
           invoke('notebook_list'),
           invoke('external_markdown_list')
         ])
+        const externalById = new Map(this.externalSources.map(source => [source.id, source]))
+        this.notes = this.notes.map(note => externalById.has(note.id) ? { ...note, external: true, externalPath: externalById.get(note.id)?.path } : note)
         if (!this.activeId && this.notes[0]) this.activeId = this.notes[0].id
         if (this.activeId && !this.notes.some(note => note.id === this.activeId) && this.notes[0]) this.activeId = this.notes[0].id
       } finally {
@@ -121,6 +123,7 @@ export const useNotesStore = defineStore('notes', {
       })
     },
     async clearExternalSources() {
+      await Promise.all(this.externalSources.map(source => invoke('note_delete', { id: source.id }).catch(() => undefined)))
       await invoke('external_markdown_clear')
       const externalIds = new Set(this.notes.filter(note => note.external).map(note => note.id))
       this.notes = this.notes.filter(note => !note.external)

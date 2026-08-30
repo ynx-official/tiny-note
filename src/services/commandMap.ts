@@ -6,7 +6,7 @@ import type {
   ModelOption, ModelProfile, ModelTestResult, Note, Notebook, NoteLink,
   NoteTemplate, Reminder, Tag, Todo, TodoList, UpdateInfo, UsageStats
 } from '../types/domain'
-import type { Channel } from '@tauri-apps/api/core'
+import type { EventChannel } from './eventChannel'
 
 export interface CommandDefinition<Args extends object, Result> { args: Args; result: Result }
 type Command<Args extends object, Result = void> = CommandDefinition<Args, Result>
@@ -14,7 +14,7 @@ export type NoCommandArgs = Record<string, never>
 type NoArgs<Result = void> = Command<NoCommandArgs, Result>
 type IdArgs = { id: string }
 type JsonObject = { [key: string]: JsonValue }
-type CommandChannel = Channel<never>
+type CommandChannel = EventChannel<never>
 
 export interface ModelFetchRequest { provider: string; profileId: string | null; baseUrl: string; apiKey: string | null; endpointType: string }
 export interface BalanceData { supported: boolean; available: boolean | null; currency: string | null; totalBalance: number; grantedBalance: number; toppedUpBalance: number; voucherBalance: number; cashBalance: number; updatedAt: string }

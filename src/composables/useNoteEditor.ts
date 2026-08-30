@@ -4,7 +4,7 @@ import { TextSelection, type EditorState } from '@tiptap/pm/state'
 import type { Editor } from '@tiptap/core'
 import type { Mark, Node as ProseMirrorNode } from '@tiptap/pm/model'
 import type { EditorView } from '@tiptap/pm/view'
-import { Channel } from '@tauri-apps/api/core'
+import { EventChannel } from '../services/eventChannel'
 import { createLowlight } from 'lowlight'
 import javascript from 'highlight.js/lib/languages/javascript'
 import typescript from 'highlight.js/lib/languages/typescript'
@@ -1231,7 +1231,7 @@ export function useNoteEditor(props: Readonly<NoteEditorProps>, emit: NoteEditor
     closeAiPanel()
     openAssistant(captureAssistantSelection())
   }
-  async function runFim() { if (editorMode.value !== 'rich' || !fimEnabled.value || !editor.value || !props.note?.contentText) return; const id = crypto.randomUUID(); const channel = new Channel<{ type: string; text?: string }>(); let result = ''; channel.onmessage = event => { if (event.type === 'delta') result += event.text || ''; if (event.type === 'completed') fimSuggestion.value = result }; try { await (await import('../services/tauri')).invoke('note_fim_stream', { request: { requestId: id, action: 'continue_write', text: props.note.contentText.slice(-800), instruction: `Continue naturally. Context after cursor: ${props.note.contentText.slice(-400)}`, modelProfileId: null }, onEvent: channel }) } catch { fimSuggestion.value = '' } }
+  async function runFim() { if (editorMode.value !== 'rich' || !fimEnabled.value || !editor.value || !props.note?.contentText) return; const id = crypto.randomUUID(); const channel = new EventChannel<{ type: string; text?: string }>(); let result = ''; channel.onmessage = event => { if (event.type === 'delta') result += event.text || ''; if (event.type === 'completed') fimSuggestion.value = result }; try { await (await import('../services/tauri')).invoke('note_fim_stream', { request: { requestId: id, action: 'continue_write', text: props.note.contentText.slice(-800), instruction: `Continue naturally. Context after cursor: ${props.note.contentText.slice(-400)}`, modelProfileId: null }, onEvent: channel }) } catch { fimSuggestion.value = '' } }
   function acceptFim() { if (fimSuggestion.value && editor.value) { editor.value.commands.insertContent(fimSuggestion.value); fimSuggestion.value = '' } }
   function handleEditorTab(event: KeyboardEvent) {
     if (!fimSuggestion.value || !editor.value || editorMode.value !== 'rich') return
@@ -1432,4 +1432,3 @@ export function useNoteEditor(props: Readonly<NoteEditorProps>, emit: NoteEditor
     clearRichFormatting, normalizeLinkHref, editLink, saveNoteMetadata, importExternalSource,
   }
 }
-

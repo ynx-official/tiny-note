@@ -1,14 +1,16 @@
 import { createRouter, createWebHashHistory } from 'vue-router'
 import HomeView from '../views/HomeView.vue'
+import { getAuthSnapshot } from '../services/apiClient'
 
 const lazyView = <T>(styles: () => Promise<unknown>, view: () => Promise<T>) => async () => {
   await styles()
   return view()
 }
 
-export default createRouter({
+const router = createRouter({
   history: createWebHashHistory(),
   routes: [
+    { path: '/login', component: () => import('../views/LoginView.vue'), meta: { public: true } },
     { path: '/', component: HomeView },
     { path: '/home', component: HomeView },
     { path: '/chat', component: lazyView(() => import('../styles/chat.css'), () => import('../views/ChatView.vue')) },
@@ -24,3 +26,12 @@ export default createRouter({
     { path: '/:pathMatch(.*)*', redirect: '/' }
   ]
 })
+
+router.beforeEach(to => {
+  const authenticated = getAuthSnapshot().authenticated
+  if (to.meta.public) return authenticated && to.path === '/login' ? '/home' : true
+  if (!authenticated) return { path: '/login', query: { redirect: to.fullPath } }
+  return true
+})
+
+export default router

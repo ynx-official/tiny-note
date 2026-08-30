@@ -1,5 +1,5 @@
 import { defineStore } from 'pinia'
-import { Channel } from '@tauri-apps/api/core'
+import { EventChannel } from '../services/eventChannel'
 import { marked } from 'marked'
 import { invoke } from '../services/tauri'
 import { useNotesStore } from './notes'
@@ -104,9 +104,12 @@ export const useTasksStore = defineStore('tasks', {
     },
     async execute(task: BackgroundTask) {
       try {
-        task = await this.transition(task, 'running')
+        // The remote worker owns durable state transitions and leases. Mark the
+        // local projection busy immediately, then let the run endpoint perform
+        // the authoritative queued -> running transition.
+        task = this.upsert({ ...task, status: 'running' })
         if (!window.__TAURI_INTERNALS__) return this.executePreview(task)
-        const channel = new Channel()
+        const channel = new EventChannel<TaskStreamEvent>()
         channel.onmessage = event => {
           const streamEvent = event as TaskStreamEvent
           const next = (eventChains.get(task.id) || Promise.resolve()).then(() => this.handleEvent(task.id, streamEvent))
@@ -143,7 +146,10 @@ export const useTasksStore = defineStore('tasks', {
       if (!task || TERMINAL.has(task.status)) return
       try {
         if (event.type === 'delta' || event.type === 'textDelta') {
-          task = await this.transition(task, 'running', { outputDelta: event.text || '' })
+          // The remote worker has already persisted this delta before emitting
+          // the SSE event. Keep the local projection responsive without writing
+          // the same bytes back to the task a second time.
+          task = this.upsert({ ...task, status: 'running', output: `${task.output || ''}${event.text || ''}` })
         } else if (event.type === 'sources') {
           task.payload.sources = event.sources || []
         } else if (event.type === 'editProposal') {

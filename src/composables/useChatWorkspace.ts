@@ -1,7 +1,7 @@
 import { computed, nextTick, onMounted, onUnmounted, ref, watch } from 'vue'
 import { storeToRefs } from 'pinia'
 import { useRoute, useRouter } from 'vue-router'
-import { Channel } from '@tauri-apps/api/core'
+import { EventChannel } from '../services/eventChannel'
 import { marked } from 'marked'
 import DOMPurify from 'dompurify'
 import { invoke } from '../services/tauri'
@@ -252,7 +252,7 @@ export function useChatWorkspace() {
   }
   
   async function refreshDataAfterAgent() {
-    // Agent tools write through Rust directly, so the Pinia lists need an
+    // Agent tools write through the remote service, so the Pinia lists need an
     // explicit reload before the user navigates back to Notes or Library.
     const activeBaseId = library.activeId
     const activePath = library.path
@@ -310,7 +310,7 @@ export function useChatWorkspace() {
   }
   
   function createResponseChannel() {
-    const channel = new Channel<AgentEvent>()
+    const channel = new EventChannel<AgentEvent>()
     channel.onmessage = async event => {
       if (event.type === 'delta' || event.type === 'textDelta') {
         if (streamingText.value === '正在思考…') streamingText.value = ''
@@ -372,8 +372,7 @@ export function useChatWorkspace() {
     error.value = ''
     approvalError.value = ''
     approvalBusy.value = true
-    // A Tauri Channel is closed when the worker that emitted ApprovalRequired
-    // returns. Every resume starts a new worker and therefore needs a new channel.
+    // 审批后的续跑使用新的 SSE 连接，并从服务端持久化事件序列恢复。
     const channel = createResponseChannel()
     const segment = agentSegments.value.find(item => item.id === approval.toolCallId)
     if (segment) segment.status = decision === 'approve' ? 'running' : 'rejected'

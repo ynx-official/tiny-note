@@ -168,7 +168,7 @@ const runtimeLabel = computed(() => typeof window !== 'undefined' && window.__TA
             <div class="settings-section-kicker">{{ t('about') }}</div>
             <div class="settings-version-card">
               <div class="settings-version-mark" aria-hidden="true">TN</div>
-              <div class="settings-version-copy"><strong>{{ t('appName') }}</strong><span>{{ locale === 'zh-CN' ? '专注于笔记与知识整理的本地优先工作区' : 'A local-first workspace for notes and knowledge' }}</span></div>
+              <div class="settings-version-copy"><strong>{{ t('appName') }}</strong><span>{{ locale === 'zh-CN' ? '专注于笔记与知识整理的在线工作区' : 'A connected workspace for notes and knowledge' }}</span></div>
               <span class="settings-version-number">v{{ appVersion }}</span>
             </div>
             <div class="settings-version-grid">

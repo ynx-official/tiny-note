@@ -43,6 +43,16 @@ describe('background task store', () => {
     await vi.waitFor(() => expect(invoke.mock.calls.filter(([command]) => command === 'note_ai_stream')).toHaveLength(1))
   })
 
+  it('does not persist a server-owned stream delta twice', async () => {
+    const store = useTasksStore()
+    store.tasks = [{ id: 'task-stream', kind: 'note_ai', status: 'running', payload: {}, output: 'A' }]
+
+    await store.handleEvent('task-stream', { type: 'delta', text: 'B' })
+
+    expect(store.tasks[0].output).toBe('AB')
+    expect(invoke.mock.calls.filter(([command]) => command === 'background_task_transition')).toHaveLength(0)
+  })
+
   it('does not expose legacy Agent runs in the task center', async () => {
     invoke.mockImplementation(async command => {
       if (command === 'background_task_list') return [

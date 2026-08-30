@@ -117,6 +117,6 @@ onMounted(loadTools)
         </div>
       </section>
     </div>
-    <p class="agent-tools-footnote">系统提供默认审批值；你在这里设置的单个或批量策略会由 Rust 执行层强制应用。当前有 {{ customizedCount }} 项不同于系统默认。</p>
+    <p class="agent-tools-footnote">系统提供默认审批值；你在这里设置的单个或批量策略会由服务端 Agent 执行层强制应用。当前有 {{ customizedCount }} 项不同于系统默认。</p>
   </div>
 </template>
