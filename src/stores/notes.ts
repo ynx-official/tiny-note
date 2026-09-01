@@ -8,6 +8,40 @@ import { errorMessage, type ExternalMarkdownSource, type JsonValue, type Note, t
 interface CreateNoteContent { title?: string; contentHtml?: string; contentText?: string; contentMarkdown?: string; notebookId?: string | null; knowledgeBaseId?: string | null; pinned?: boolean }
 interface ExternalMarkdownInput { path: string; title: string; contentHtml: string; contentText: string; contentMarkdown: string }
 
+interface NoteSaveContent {
+  title: string
+  notebookId: string | null
+  knowledgeBaseId: string | null
+  contentHtml: string
+  contentText: string
+  contentMarkdown: string
+  pinned: boolean
+}
+
+const noteSaveQueues = new WeakMap<Note, Promise<Note>>()
+
+function noteSaveContent(note: Note): NoteSaveContent {
+  return {
+    title: note.title,
+    notebookId: note.notebookId,
+    knowledgeBaseId: note.knowledgeBaseId || null,
+    contentHtml: note.contentHtml,
+    contentText: note.contentText,
+    contentMarkdown: note.contentMarkdown || '',
+    pinned: Boolean(note.pinned)
+  }
+}
+
+function sameNoteSaveContent(left: NoteSaveContent, right: NoteSaveContent) {
+  return JSON.stringify(left) === JSON.stringify(right)
+}
+
+function mergeSavedNote(note: Note, updated: Note, sentContent: NoteSaveContent) {
+  const latestContent = noteSaveContent(note)
+  Object.assign(note, updated)
+  if (!sameNoteSaveContent(latestContent, sentContent)) Object.assign(note, latestContent)
+}
+
 export const useNotesStore = defineStore('notes', {
   state: () => ({
     notes: [] as Note[],
@@ -22,7 +56,8 @@ export const useNotesStore = defineStore('notes', {
     selectedTreeNode: { type: 'all', id: 'all' },
     loading: false,
     saveTimer: null as ReturnType<typeof setTimeout> | null,
-    saving: false
+    saving: false,
+    pendingSaveCount: 0
   }),
   getters: {
     active: state => state.notes.find(note => note.id === state.activeId) || null,
@@ -148,17 +183,29 @@ export const useNotesStore = defineStore('notes', {
       return imported
     },
     async save(note: Note) {
+      const previous = noteSaveQueues.get(note) || Promise.resolve(note)
+      const queued = previous.catch(() => note).then(async () => {
+        const content = noteSaveContent(note)
+        const updated = await invoke('note_update', { id: note.id, input: { ...content, version: requireResourceVersion(note, '笔记') } })
+        if (updated) mergeSavedNote(note, updated, content)
+        return note
+      })
+
+      noteSaveQueues.set(note, queued)
+      this.pendingSaveCount += 1
       this.saving = true
       try {
-        const updated = await invoke('note_update', { id: note.id, input: { title: note.title, notebookId: note.notebookId, knowledgeBaseId: note.knowledgeBaseId || null, contentHtml: note.contentHtml, contentText: note.contentText, contentMarkdown: note.contentMarkdown || '', pinned: Boolean(note.pinned), version: requireResourceVersion(note, '笔记') } })
-        if (updated) Object.assign(note, updated)
+        return await queued
       } finally {
-        this.saving = false
+        if (noteSaveQueues.get(note) === queued) noteSaveQueues.delete(note)
+        this.pendingSaveCount = Math.max(0, this.pendingSaveCount - 1)
+        this.saving = this.pendingSaveCount > 0
       }
     },
     scheduleSave(note: Note, onSaved?: () => void) {
       if (this.saveTimer) clearTimeout(this.saveTimer)
       this.saveTimer = setTimeout(async () => {
+        this.saveTimer = null
         try {
           await this.save(note)
           onSaved?.()
