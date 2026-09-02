@@ -136,6 +136,7 @@
 .account-login-body,.account-profile-body { display:flex; flex-direction:column; align-items:center; }
 .account-login-intro { width:min(360px,100%); display:flex; align-items:center; gap:13px; margin:22px 0 24px; }
 .account-dog-avatar { width:48px; height:48px; display:grid; place-items:center; flex:0 0 48px; border:1px solid var(--line); border-radius:12px; background:var(--surface-2); font-size:27px; }
+.account-avatar-image { width:48px; height:48px; flex:0 0 48px; border:1px solid var(--line); border-radius:12px; object-fit:cover; background:var(--surface-2); }
 .account-login-intro > div,.account-profile-card > div { min-width:0; display:grid; gap:4px; }
 .account-login-intro strong,.account-profile-card strong { color:var(--text-primary); font-size:15px; font-weight:600; }
 .account-login-intro p { margin:0; color:var(--text-secondary); font-size:11px; line-height:1.55; }

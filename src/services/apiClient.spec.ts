@@ -68,6 +68,36 @@ describe('remote API authentication', () => {
     expect(api.getAuthSnapshot().authenticated).toBe(true)
   })
 
+  it('verifies a remembered token can be read back before reporting persistence success', async () => {
+    Object.defineProperty(window, '__TAURI_INTERNALS__', { configurable: true, value: {} })
+    let storedToken = ''
+    tauriInvoke.mockImplementation((command: string, args?: Record<string, unknown>) => {
+      if (command === 'credential_set') { storedToken = String(args?.secret || ''); return null }
+      if (command === 'credential_get') return storedToken
+      return null
+    })
+    vi.stubGlobal('fetch', vi.fn()
+      .mockResolvedValueOnce(envelope(loginToken('persisted-access')))
+      .mockResolvedValueOnce(envelope(null))
+      .mockResolvedValueOnce(envelope(authInfo)))
+    const api = await import('./apiClient')
+
+    await expect(api.login('tiny', 'secret', true)).resolves.toEqual({ remembered: true })
+    expect(tauriInvoke.mock.calls.map(call => call[0])).toEqual(['credential_set', 'credential_get'])
+  })
+
+  it('reports persistence failure when the secure store does not return the written token', async () => {
+    Object.defineProperty(window, '__TAURI_INTERNALS__', { configurable: true, value: {} })
+    tauriInvoke.mockImplementation((command: string) => command === 'credential_get' ? 'different-token' : null)
+    vi.stubGlobal('fetch', vi.fn()
+      .mockResolvedValueOnce(envelope(loginToken('expected-token')))
+      .mockResolvedValueOnce(envelope(null))
+      .mockResolvedValueOnce(envelope(authInfo)))
+    const api = await import('./apiClient')
+
+    await expect(api.login('tiny', 'secret', true)).resolves.toEqual({ remembered: false })
+  })
+
   it('maps HTTP 409 envelopes to the shared conflict error shape', async () => {
     vi.stubGlobal('fetch', vi.fn().mockResolvedValue(envelope({ expectedVersion: 3 }, 409, 'edit_conflict', '笔记已在其他设备更新')))
     const { apiRequest } = await import('./apiClient')

@@ -8,6 +8,7 @@ import { useTasksStore } from '../stores/tasks'
 import { useAuthStore } from '../stores/auth'
 import { getActivePinia } from 'pinia'
 import { resetWorkspaceSession } from '../services/workspaceSession'
+import { resolveAvatarSource } from '../utils/avatar'
 const AvatarDrawer = defineAsyncComponent(() => import('./AvatarDrawer.vue'))
 const ChatHistoryDrawer = defineAsyncComponent(() => import('./ChatHistoryDrawer.vue'))
 
@@ -28,6 +29,7 @@ let appWindow: ReturnType<typeof getCurrentWindow> | null = null
 let stopResizeListener: (() => void) | null = null
 let taskArrivalTimer: number | null = null
 const calendarLabel = computed(() => te('calendar') ? t('calendar') : '日历')
+const avatarSource = computed(() => resolveAvatarSource(auth.user))
 const todosLabel = computed(() => te('todos') ? t('todos') : '待办')
 const nav = computed(() => [{ key: 'notes', label: t('notes'), icon: FileText, path: '/notes' }, { key: 'library', label: t('library'), icon: BookOpen, path: '/library' }, { key: 'tags', label: t('tags'), icon: Tags, path: '/tags' }, { key: 'calendar', label: calendarLabel.value, icon: CalendarDays, path: '/calendar' }, { key: 'todos', label: todosLabel.value, icon: ClipboardList, path: '/todos' }, { key: 'images', label: '生图', icon: ImagePlus, path: '/images' }, { key: 'tasks', label: '任务中心', icon: ListTodo, path: '/tasks' }, { key: 'settings', label: t('settings'), icon: Settings, path: '/settings' }])
 function navigate(path: string) { router.push(path) }
@@ -129,7 +131,7 @@ watch(() => auth.authenticated, (authenticated, previouslyAuthenticated) => {
     </header>
     <div class="app-body main-body">
       <aside class="rail sidebar" :class="{ 'is-collapsed': railCollapsed }">
-        <button class="rail-avatar" :aria-label="auth.authenticated ? '打开账号与助手中心' : '登录 Tiny Note'" :title="auth.authenticated ? auth.user?.nickname || auth.user?.username || '账号' : '登录 Tiny Note'" @click="openAvatar"><span>🐶</span><i class="avatar-status" :class="{ 'is-offline': !auth.authenticated }"></i></button>
+        <button class="rail-avatar" :aria-label="auth.authenticated ? '打开账号与助手中心' : '登录 Tiny Note'" :title="auth.authenticated ? auth.user?.nickname || auth.user?.username || '账号' : '登录 Tiny Note'" @click="openAvatar"><img v-if="avatarSource" class="rail-avatar-image" :src="avatarSource" alt="" /><span v-else>🐶</span><i class="avatar-status" :class="{ 'is-offline': !auth.authenticated }"></i></button>
         <nav><button v-for="item in nav.filter(item => !['settings', 'tasks'].includes(item.key))" :key="item.key" :class="['rail-item', { active: props.active === item.key }]" :title="item.label" :aria-label="item.label" @click="navigate(item.path)"><component :is="item.icon" :size="19" /><span>{{ item.label }}</span></button></nav>
         <div class="rail-spacer"></div>
         <button data-task-center-target class="rail-item rail-tasks" :class="{ active: props.active === 'tasks', 'has-running-task': tasksStore.runningCount, 'task-center-arrival': taskArrival, 'has-failed-task': tasksStore.failedCount }" title="任务中心" aria-label="任务中心" @click="openTaskCenter"><AlertCircle v-if="tasksStore.failedCount" class="rail-task-state is-failed" :size="20" /><LoaderCircle v-else-if="tasksStore.runningCount" class="rail-task-state is-running" :size="20" /><CheckCircle2 v-else-if="tasksStore.unreadSucceededCount && !tasksStore.waitingCount" class="rail-task-state is-succeeded" :size="20" /><ListTodo v-else :size="19" /><span>任务中心</span><b v-if="tasksStore.failedCount || tasksStore.waitingCount" class="rail-task-badge" :class="{ 'is-failed': tasksStore.failedCount }">{{ Math.min(tasksStore.failedCount || tasksStore.waitingCount, 99) }}</b></button>

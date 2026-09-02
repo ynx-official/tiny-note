@@ -9,6 +9,7 @@ vi.mock('@tauri-apps/api/window', () => ({ getCurrentWindow: () => null }))
 
 import AppShell from './AppShell.vue'
 import { useTasksStore } from '../stores/tasks'
+import { useAuthStore } from '../stores/auth'
 
 describe('AppShell task status', () => {
   beforeEach(() => {
@@ -71,5 +72,21 @@ describe('AppShell task status', () => {
     await flushPromises()
 
     expect(wrapper.find('avatar-drawer-stub').exists()).toBe(true)
+  })
+
+  it('shows the signed-in user avatar in the top-left rail when available', () => {
+    const pinia = createPinia()
+    setActivePinia(pinia)
+    const auth = useAuthStore()
+    auth.authenticated = true
+    auth.user = { userId: 1, username: 'tiny', nickname: 'Tiny', avatar: '42', avatarUrl: 'https://cdn.example/avatar.png', email: '', phone: '', status: 'normal' }
+    const wrapper = mount(AppShell, {
+      global: {
+        plugins: [pinia, createI18n({ legacy: false, locale: 'zh-CN', messages: { 'zh-CN': { notes: '笔记', library: '知识库', tags: '标签', settings: '设置', appName: 'Tiny Note', newNote: '新建笔记' } } })],
+        stubs: { AvatarDrawer: true, ChatHistoryDrawer: true }
+      }
+    })
+
+    expect(wrapper.get('.rail-avatar-image').attributes('src')).toBe('https://cdn.example/avatar.png')
   })
 })

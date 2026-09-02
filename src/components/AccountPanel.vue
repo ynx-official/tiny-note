@@ -3,6 +3,7 @@ import { computed, ref } from 'vue'
 import { LogIn, LogOut, ShieldCheck, X } from 'lucide-vue-next'
 import { useAuthStore } from '../stores/auth'
 import { useAppStore } from '../stores/app'
+import { resolveAvatarSource } from '../utils/avatar'
 
 const emit = defineEmits(['close', 'signed-in', 'signed-out'])
 const auth = useAuthStore()
@@ -12,6 +13,7 @@ const password = ref('')
 const remember = ref(true)
 const canSubmit = computed(() => username.value.trim().length > 0 && password.value.length > 0 && !auth.busy)
 const displayName = computed(() => auth.user?.nickname || auth.user?.username || 'Tiny Note 用户')
+const avatarSource = computed(() => resolveAvatarSource(auth.user))
 
 async function submit() {
   if (!canSubmit.value) return
@@ -37,7 +39,8 @@ async function signOut() {
 
     <div v-if="auth.authenticated" class="assistant-panel-body account-profile-body">
       <div class="account-profile-card">
-        <span class="account-dog-avatar" aria-hidden="true">🐶</span>
+        <img v-if="avatarSource" class="account-avatar-image" :src="avatarSource" :alt="displayName + ' 的头像'" />
+        <span v-else class="account-dog-avatar" aria-hidden="true">🐶</span>
         <div><strong>{{ displayName }}</strong><small>@{{ auth.user?.username }}</small></div>
         <span class="account-online"><i></i>已登录</span>
       </div>

@@ -85,6 +85,7 @@ body, button, input, select, textarea { font-family: -apple-system, BlinkMacSyst
 .rail-avatar:active::before { opacity:.7; }
 .rail-avatar .avatar-status { position:absolute; right:1px; bottom:1px; width:8px; height:8px; border-radius:50%; border:2px solid var(--bg-sidebar); background:#10b981; z-index:3; box-shadow:0 0 0 0 rgba(16,185,129,.6); animation:rail-avatar-status-pulse 2.4s ease-in-out infinite; }
 .window-shell .rail-avatar .avatar-status.is-offline { background:#a8a29e; box-shadow:none; animation:none; }
+.rail-avatar-image { position:relative; z-index:2; display:block; width:30px; height:30px; border-radius:50%; object-fit:cover; }
 @keyframes rail-avatar-breathe {
   0%,100% { opacity:0; transform:scale(.84); }
   50% { opacity:.35; transform:scale(1); }

@@ -8,6 +8,7 @@ import { requestPrompt } from '../services/promptDialog'
 import { requestConfirmation, showToast } from '../services/appFeedback'
 import { useWorkspaceSidebar } from '../utils/workspaceSidebar'
 import { errorMessage, type ExternalMarkdownSource, type Note, type Notebook, type Tag } from '../types/domain'
+import { compareNotebooks } from '../utils/notebooks'
 
 export function useNotesWorkspace() {
   interface NotebookTreeNode extends Notebook { children: NotebookTreeNode[]; notes: Note[]; totalNoteCount: number }
@@ -98,7 +99,7 @@ export function useNotesWorkspace() {
       if (!notebookByParent.has(parentId)) notebookByParent.set(parentId, [])
       notebookByParent.get(parentId)!.push(notebook)
     }
-    for (const books of notebookByParent.values()) books.sort((a, b) => a.name.localeCompare(b.name, undefined, { numeric: true, sensitivity: 'base' }))
+    for (const books of notebookByParent.values()) books.sort(compareNotebooks)
     const queryText = query.value.trim().toLocaleLowerCase()
     const noteMatches = (note: Note) => (!store.pinnedOnly || note.pinned) && (!queryText || `${note.title} ${note.contentText}`.toLocaleLowerCase().includes(queryText))
     const build = (notebook: Notebook, ancestors = new Set<string>()): NotebookTreeNode | null => {

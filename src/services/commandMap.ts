@@ -158,7 +158,7 @@ export interface CommandMap {
   agent_skill_delete: Command<{ name: string }>
   memory_list: NoArgs<MemoryFile[]>
   memory_update: Command<{ fileName: string; content: string }, MemoryFile>
-  usage_get_stats: Command<{ range: string }, UsageStats>
+  usage_get_stats: Command<{ range: string; timezoneOffsetMinutes?: number }, UsageStats>
   usage_clear: NoArgs
 
   note_ai_stream: Command<{ request: AiRequest; onEvent: CommandChannel }, string>

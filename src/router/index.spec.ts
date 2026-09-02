@@ -1,9 +1,10 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
-const auth = vi.hoisted(() => ({ authenticated: true, listener: null as (() => void) | null }))
+const auth = vi.hoisted(() => ({ authenticated: true, listener: null as (() => void) | null, restore: vi.fn() }))
 
 vi.mock('../services/apiClient', () => ({
   getAuthSnapshot: () => ({ authenticated: auth.authenticated }),
+  restoreAuthSession: auth.restore,
   subscribeAuth: (listener: () => void) => { auth.listener = listener; return () => { auth.listener = null } }
 }))
 
@@ -11,6 +12,8 @@ describe('router authentication invalidation', () => {
   beforeEach(() => {
     auth.authenticated = true
     auth.listener = null
+    auth.restore.mockReset()
+    auth.restore.mockResolvedValue(true)
   })
 
   it('keeps the workspace shell and opens account login when a protected session expires', async () => {
@@ -29,6 +32,7 @@ describe('router authentication invalidation', () => {
 
   it('lets a signed-out user enter home but gates cloud routes through the account drawer', async () => {
     auth.authenticated = false
+    auth.restore.mockResolvedValue(false)
     vi.resetModules()
     const router = (await import('./index')).default
 
@@ -40,6 +44,19 @@ describe('router authentication invalidation', () => {
     await router.push('/notes')
     expect(router.currentRoute.value.path).toBe('/home')
     expect(router.currentRoute.value.query).toMatchObject({ login: '1', redirect: '/notes' })
+  })
+
+  it('restores a persisted session before rejecting the initial protected route', async () => {
+    auth.authenticated = false
+    auth.restore.mockImplementation(async () => { auth.authenticated = true; return true })
+    vi.resetModules()
+    const router = (await import('./index')).default
+
+    await router.push('/notes')
+    await router.isReady()
+
+    expect(auth.restore).toHaveBeenCalledTimes(1)
+    expect(router.currentRoute.value.path).toBe('/notes')
   })
 
   it('keeps the legacy login URL as an account-drawer entry point', async () => {

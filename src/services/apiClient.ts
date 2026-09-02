@@ -12,7 +12,7 @@ export interface LoginToken {
   tokenType: string
   expiresIn: number
 }
-export interface AuthUser { userId: number; username: string; nickname: string; avatar: string; email: string; phone: string; status: string }
+export interface AuthUser { userId: number; username: string; nickname: string; avatar: string; avatarUrl?: string; email: string; phone: string; status: string }
 export interface AuthInfo { user: AuthUser; roles: string[]; perms: string[] }
 
 export class ApiError extends Error {
@@ -24,6 +24,8 @@ export class ApiError extends Error {
 
 let accessToken = ''
 let authInfo: AuthInfo | null = null
+let authRestoreAttempted = false
+let authRestoration: Promise<boolean> | null = null
 const authListeners = new Set<() => void>()
 
 function notifyAuth() { for (const listener of authListeners) listener() }
@@ -36,7 +38,12 @@ async function readStoredAccessToken(): Promise<string> {
 }
 async function persistAccessToken(value: string): Promise<boolean> {
   if (!window.__TAURI_INTERNALS__) return false
-  try { await tauriInvoke('credential_set', { account: ACCESS_TOKEN_ACCOUNT, secret: value }); return true } catch { return false }
+  try {
+    await tauriInvoke('credential_set', { account: ACCESS_TOKEN_ACCOUNT, secret: value })
+    if (await readStoredAccessToken() === value) return true
+    await deleteStoredAccessToken()
+    return false
+  } catch { return false }
 }
 async function deleteStoredAccessToken(): Promise<void> {
   if (!window.__TAURI_INTERNALS__) return
@@ -46,6 +53,7 @@ async function deleteStoredAccessToken(): Promise<void> {
 async function clearSession(): Promise<void> {
   accessToken = ''
   authInfo = null
+  authRestoreAttempted = true
   await deleteStoredAccessToken()
   notifyAuth()
 }
@@ -97,17 +105,26 @@ export async function apiRequest<T>(path: string, options: { method?: string; bo
 }
 
 export async function restoreAuthSession(): Promise<boolean> {
-  const stored = await readStoredAccessToken()
-  if (!stored) return false
-  accessToken = stored
-  try {
-    authInfo = await rawRequest<AuthInfo>('/auth/info')
-    try { await reportCurrentDevice() } catch { /* device telemetry must not invalidate an otherwise usable session */ }
-    if (!accessToken || !authInfo) return false
-    notifyAuth()
-    return true
-  }
-  catch { await clearSession(); return false }
+  if (accessToken && authInfo) return true
+  if (authRestoration) return authRestoration
+  if (authRestoreAttempted) return false
+  authRestoreAttempted = true
+  authRestoration = (async () => {
+    const stored = await readStoredAccessToken()
+    if (!stored) return false
+    accessToken = stored
+    try {
+      authInfo = await rawRequest<AuthInfo>('/auth/info')
+      try { await reportCurrentDevice() } catch { /* device telemetry must not invalidate an otherwise usable session */ }
+      if (!accessToken || !authInfo) return false
+      notifyAuth()
+      return true
+    } catch {
+      await clearSession()
+      return false
+    }
+  })()
+  try { return await authRestoration } finally { authRestoration = null }
 }
 
 export async function login(username: string, password: string, remember: boolean): Promise<{ remembered: boolean }> {
@@ -116,6 +133,7 @@ export async function login(username: string, password: string, remember: boolea
     body: JSON.stringify({ username, password })
   }, false)
   accessToken = token.accessToken || token.token
+  authRestoreAttempted = true
   const remembered = remember ? await persistAccessToken(accessToken) : false
   if (!remember) await deleteStoredAccessToken()
   try { await reportCurrentDevice() } catch { /* login succeeds even if optional device reporting is unavailable */ }

@@ -182,7 +182,7 @@ export async function remoteInvoke<K extends CommandName>(command: K, args: Comm
     case 'agent_skill_delete': result = await apiRequest(`/skills/${encodeURIComponent(input.name)}`, { method: 'DELETE' }); break
     case 'memory_list': result = await apiRequest('/memory'); break
     case 'memory_update': result = await apiRequest(`/memory/${encodeURIComponent(input.fileName)}`, { method: 'PUT', body: { content: input.content } }); break
-    case 'usage_get_stats': result = await apiRequest(`/usage${query({ range: input.range })}`); break
+    case 'usage_get_stats': result = await apiRequest(`/usage${query({ range: input.range, timezoneOffsetMinutes: input.timezoneOffsetMinutes })}`); break
     case 'usage_clear': result = await apiRequest('/usage', { method: 'DELETE' }); break
     case 'note_ai_stream': result = await runAI(input.request, input.onEvent, 'note_ai'); break
     case 'note_fim_stream': result = await runAI(input.request, input.onEvent, 'fim'); break

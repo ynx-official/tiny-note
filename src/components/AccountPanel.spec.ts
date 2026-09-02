@@ -4,7 +4,7 @@ import { reactive } from 'vue'
 
 const auth = reactive({
   authenticated: false,
-  user: null as null | { username: string; nickname: string },
+  user: null as null | { username: string; nickname: string; avatar?: string; avatarUrl?: string },
   busy: false,
   error: '',
   secureStorageAvailable: true,
@@ -43,5 +43,15 @@ describe('AccountPanel', () => {
     expect(auth.signIn).toHaveBeenCalledWith('tiny', 'secret', true)
     expect(initialize).toHaveBeenCalledWith({ force: true })
     expect(wrapper.emitted('signed-in')).toHaveLength(1)
+  })
+
+  it('prefers the resolved account avatar over the fallback mascot', () => {
+    auth.authenticated = true
+    auth.user = { username: 'tiny', nickname: 'Tiny', avatar: '42', avatarUrl: 'https://cdn.example/avatar.png' }
+
+    const wrapper = mount(AccountPanel)
+
+    expect(wrapper.get('.account-avatar-image').attributes('src')).toBe('https://cdn.example/avatar.png')
+    expect(wrapper.find('.account-dog-avatar').exists()).toBe(false)
   })
 })
