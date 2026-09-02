@@ -32,6 +32,7 @@ import { confirmAppDialog, feedbackState } from '../services/appFeedback'
 describe('SettingsView model services', () => {
   beforeEach(() => {
     localStorage.clear()
+    feedbackState.toasts.splice(0)
     setActivePinia(createPinia())
     mocks.invoke.mockReset()
     dialogMocks.open.mockReset()
@@ -197,6 +198,31 @@ describe('SettingsView model services', () => {
     await wrapper.get('.settings-fetch-button').trigger('click')
     await vi.waitFor(() => expect(wrapper.get('.settings-model-picker-header').text()).toContain('已选 1 个'))
     expect(wrapper.get('.settings-model-save-button').attributes('disabled')).toBeUndefined()
+  })
+
+  it('keeps the model editor open and shows the server error when saving fails', async () => {
+    mocks.invoke.mockImplementation(async (command, args) => {
+      if (command === 'settings_get') return { theme: 'light', language: 'zh-CN', fimEnabled: false }
+      if (command === 'model_list') return [model]
+      if (command === 'model_upsert') throw new Error('保存模型配置失败')
+      return args
+    })
+    const wrapper = mount(SettingsView, {
+      global: {
+        plugins: [createPinia(), createI18n({ legacy: false, locale: 'zh-CN', messages })],
+        stubs: { AgentToolsCatalog: true }
+      }
+    })
+    await vi.waitFor(() => expect(wrapper.text()).toContain('模型服务'))
+    await wrapper.findAll('.settings-nav-item').find(button => button.text().includes('模型服务')).trigger('click')
+    await vi.waitFor(() => expect(wrapper.text()).toContain('公司模型'))
+    await wrapper.get('.model-edit-btn').trigger('click')
+
+    await wrapper.get('.settings-model-save-button').trigger('click')
+
+    await vi.waitFor(() => expect(wrapper.get('.settings-model-error').text()).toContain('保存模型配置失败'))
+    expect(wrapper.find('.settings-model-modal').exists()).toBe(true)
+    expect(feedbackState.toasts.at(-1)).toMatchObject({ message: '保存模型配置失败', tone: 'error' })
   })
 
   it('does not close the model editor when the backdrop is clicked', async () => {

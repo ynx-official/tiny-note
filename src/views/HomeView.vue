@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, nextTick, onMounted, ref, type Component } from 'vue'
+import { computed, nextTick, onMounted, ref, watch, type Component } from 'vue'
 import { storeToRefs } from 'pinia'
 import { useRouter } from 'vue-router'
 import { useI18n } from 'vue-i18n'
@@ -7,6 +7,7 @@ import { BookOpen, ChevronDown, ChevronLeft, ChevronRight, File, FileSearch2, Fi
 import { useNotesStore } from '../stores/notes'
 import { useLibraryStore } from '../stores/library'
 import { useAppStore } from '../stores/app'
+import { useAuthStore } from '../stores/auth'
 import doubaoIcon from '../assets/providers/doubao.png'
 import qwenIcon from '../assets/providers/qwen.png'
 import zhipuIcon from '../assets/providers/zhipu.png'
@@ -25,7 +26,9 @@ const { locale, t } = useI18n()
 const notes = useNotesStore()
 const library = useLibraryStore()
 const appStore = useAppStore()
+const auth = useAuthStore()
 const { initialized, models } = storeToRefs(appStore)
+const workspaceReady = computed(() => auth.initialized && (!auth.authenticated || initialized.value))
 const draft = ref('')
 const referenceMenuOpen = ref(false)
 const referencePicker = ref<'note' | 'file' | null>(null)
@@ -167,14 +170,17 @@ function restoreAssistantDraft() {
 }
 onMounted(async () => {
   restoreAssistantDraft()
-  await appStore.initialize()
+  if (auth.authenticated) await appStore.initialize()
   selectedModelId.value = models.value.find(model => model.isDefault)?.id || models.value[0]?.id || ''
+})
+watch(models, value => {
+  if (!selectedModelId.value) selectedModelId.value = value.find(model => model.isDefault)?.id || value[0]?.id || ''
 })
 </script>
 
 <template>
   <div class="home-page" @click="closeMenus">
-    <div v-if="!initialized" class="home-loader" role="status" aria-live="polite">
+    <div v-if="!workspaceReady" class="home-loader" role="status" aria-live="polite">
       <div class="home-loader-grid" aria-hidden="true">
         <span></span>
         <span></span>
@@ -192,6 +198,7 @@ onMounted(async () => {
           <h1 id="home-title">Tiny Note</h1>
         </div>
         <p class="home-subtitle">{{ copy.subtitle }}</p>
+        <p v-if="!auth.authenticated" class="home-guest-hint">当前未登录 · 点击左上角狗狗头像登录</p>
       </section>
 
       <section class="home-composer" aria-label="快速开始">
@@ -278,7 +285,7 @@ onMounted(async () => {
         </button>
       </section>
 
-      <p class="home-disclaimer"><Sparkles :size="13" /> Tiny Note 以本地笔记和知识库为中心，内容保存在你的设备上</p>
+      <p class="home-disclaimer"><Sparkles :size="13" /> {{ auth.authenticated ? '工作区内容已连接到你的云端账户' : '无需登录即可了解 Tiny Note，使用工作区功能时再登录' }}</p>
     </div>
   </div>
 </template>

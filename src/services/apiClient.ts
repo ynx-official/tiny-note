@@ -1,4 +1,5 @@
 import { invoke as tauriInvoke } from '@tauri-apps/api/core'
+import { collectDeviceReport } from './deviceInfo'
 
 const configuredBaseUrl = String(import.meta.env.VITE_API_BASE_URL || '').trim()
 export const API_BASE_URL = (configuredBaseUrl || 'http://127.0.0.1:8080').replace(/\/$/, '')
@@ -49,6 +50,11 @@ async function clearSession(): Promise<void> {
   notifyAuth()
 }
 
+async function reportCurrentDevice(): Promise<void> {
+  const device = await collectDeviceReport()
+  await rawRequest('/auth/device', { method: 'POST', body: JSON.stringify(device) })
+}
+
 async function decodeEnvelope<T>(response: Response): Promise<T> {
   let body: ApiEnvelope<T> | null = null
   try { body = await response.json() as ApiEnvelope<T> } catch { /* handled below */ }
@@ -94,7 +100,13 @@ export async function restoreAuthSession(): Promise<boolean> {
   const stored = await readStoredAccessToken()
   if (!stored) return false
   accessToken = stored
-  try { authInfo = await rawRequest<AuthInfo>('/auth/info'); notifyAuth(); return true }
+  try {
+    authInfo = await rawRequest<AuthInfo>('/auth/info')
+    try { await reportCurrentDevice() } catch { /* device telemetry must not invalidate an otherwise usable session */ }
+    if (!accessToken || !authInfo) return false
+    notifyAuth()
+    return true
+  }
   catch { await clearSession(); return false }
 }
 
@@ -106,6 +118,7 @@ export async function login(username: string, password: string, remember: boolea
   accessToken = token.accessToken || token.token
   const remembered = remember ? await persistAccessToken(accessToken) : false
   if (!remember) await deleteStoredAccessToken()
+  try { await reportCurrentDevice() } catch { /* login succeeds even if optional device reporting is unavailable */ }
   authInfo = await rawRequest<AuthInfo>('/auth/info')
   notifyAuth()
   return { remembered }

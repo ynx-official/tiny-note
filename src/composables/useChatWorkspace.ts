@@ -99,7 +99,6 @@ export function useChatWorkspace() {
   
   const approvalError = ref('')
   
-  const titlesGenerating = new Set<string>()
   
   let responseFinalizing = false
   
@@ -141,23 +140,23 @@ export function useChatWorkspace() {
     const saved = await invoke('chat_add_message', { conversationId: id, role, content, references: messageReferences, sources, proposalId, agentRunId })
     conversationVersion.value += 1
     window.dispatchEvent(new CustomEvent('tiny-note-chat-updated'))
+    if (saved.titleTaskId) watchTitleTask(id, saved.titleTaskId)
     return saved
   }
-  
-  async function generateTitle() {
-    const id = conversationId.value
-    if (!id || conversationTitle.value !== '新对话' || titlesGenerating.has(id)) return
-    titlesGenerating.add(id)
-    try {
-      const title = await invoke('chat_generate_title', { conversationId: id, modelProfileId: selectedModel.value?.id || null })
-      if (conversationId.value === id) {
-        conversationTitle.value = title
-        conversationVersion.value += 1
-      }
-      window.dispatchEvent(new CustomEvent('tiny-note-chat-updated'))
-    } catch (cause) {
-      console.warn('Conversation title generation failed', cause)
-    } finally { titlesGenerating.delete(id) }
+
+  function watchTitleTask(id: string, taskId: string) {
+    const channel = new EventChannel<{ type?: string }>()
+    channel.onmessage = event => {
+      if (!['completed', 'error', 'cancelled'].includes(event.type || '')) return
+      void invoke('chat_get', { id }).then(thread => {
+        if (conversationId.value === id) {
+          conversationTitle.value = thread.conversation.title
+          conversationVersion.value = thread.conversation.version || conversationVersion.value
+        }
+        window.dispatchEvent(new CustomEvent('tiny-note-chat-updated'))
+      })
+    }
+    void channel.connect(taskId).catch(() => undefined)
   }
   
   async function pushResponse(content: string) {
@@ -176,7 +175,6 @@ export function useChatWorkspace() {
     try {
       await pushResponse(content)
       if (pendingSummary.value && content.trim()) await createNoteFromText(content, `${conversationTitle.value === '新对话' ? '对话总结' : conversationTitle.value} · 总结`)
-      if (messages.value.filter(message => message.role === 'assistant').length === 1) generateTitle()
     } catch (cause) { error.value = errorMessage(cause, '回复保存失败') } finally { busy.value = false; responseSources.value = []; responseProposal.value = null; pendingSummary.value = false; agentSegments.value = []; currentAgentRunId.value = ''; pendingApproval.value = null; pendingInput.value = null; approvalBusy.value = false; approvalError.value = ''; responseFinalizing = false }
   }
   
@@ -454,19 +452,8 @@ export function useChatWorkspace() {
   
   async function summarizeConversation(event: MouseEvent) {
     if (isBusy.value || messages.value.length < 2 || tasksStore.activeSummaryForConversation(conversationId.value)) return
-    const snapshot = messages.value.map(item => `${item.role === 'user' ? '用户' : '助手'}：${item.content}`).join('\n\n')
     try {
-      await tasksStore.enqueue({
-        kind: 'conversation_summary',
-        title: `${conversationTitle.value === '新对话' ? '对话' : conversationTitle.value} · 总结为笔记`,
-        conversationId: conversationId.value,
-        modelProfileId: selectedModel.value?.id || null,
-        payload: {
-          fallbackTitle: `${conversationTitle.value === '新对话' ? '对话总结' : conversationTitle.value} · 总结`,
-          snapshot,
-          request: { action: 'custom', mode: 'chat', text: snapshot, instruction: '请把以下对话整理为一篇结构清晰的 Markdown 笔记：提炼主题、关键结论、重要细节和待办事项；不要添加对话中没有的信息。', references: [], modelProfileId: selectedModel.value?.id || null, thinkingMode: thinkingMode.value, source: 'conversation_summary', conversationId: conversationId.value }
-        }
-      }, { sourceElement: event.currentTarget instanceof Element ? event.currentTarget : null })
+      await tasksStore.createConversationSummary({ conversationId: conversationId.value, requestKey: crypto.randomUUID(), modelProfileId: selectedModel.value?.id || null, thinkingMode: thinkingMode.value }, { sourceElement: event.currentTarget instanceof Element ? event.currentTarget : null })
     } catch (cause) { error.value = errorMessage(cause, '总结任务创建失败') }
   }
   
@@ -613,7 +600,6 @@ export function useChatWorkspace() {
       references.value = (storedReferences as JsonValue[]).filter((item: JsonValue): item is ChatReference & JsonValue => Boolean(item && typeof item === 'object' && !Array.isArray(item) && typeof item.key === 'string' && (item.type === 'note' || item.type === 'file') && typeof item.name === 'string'))
       draft.value = ''
       error.value = ''
-      if (conversationTitle.value === '新对话' && messages.value.some(message => message.role === 'user') && messages.value.some(message => message.role === 'assistant')) generateTitle()
     } catch (cause) {
       error.value = errorMessage(cause, '历史对话读取失败')
       conversationId.value = ''
@@ -715,8 +701,8 @@ export function useChatWorkspace() {
     draft, references, selectedModelId, thinkingMode, busy, streamingText, error, requestId,
     messagesRef, conversationId, conversationTitle, referenceMenuOpen, responseSources, responseProposal, pendingSummary, savedNote,
     currentMode, modeSaving, agentSegments, currentAgentRunId, pendingApproval, pendingInput, agentTools, approvalBusy,
-    approvalError, titlesGenerating, responseFinalizing, agentTextSequence, fromHome, selectedModel, agentApprovalCount, isBusy,
-    scrollToBottom, assistantContext, ensureConversation, saveMessage, generateTitle, pushResponse, completeResponse, mapAgentStep,
+    approvalError, responseFinalizing, agentTextSequence, fromHome, selectedModel, agentApprovalCount, isBusy,
+    scrollToBottom, assistantContext, ensureConversation, saveMessage, pushResponse, completeResponse, mapAgentStep,
     appendAgentText, finishStreamingAgentText, hasAgentText, agentMessageTail, markActiveAgentSteps, retainInterruptedAgentRun, parseInputResponse, ensureContextConsent,
     noteHtml, noteTitle, createNoteFromText, refreshDataAfterAgent, saveAssistantAsNote, openSavedNote, addAssistantNotice, performNoteCommand,
     createResponseChannel, decideApproval, sendMessage, submit, summarizeConversation, stop, respondInput, goBack,

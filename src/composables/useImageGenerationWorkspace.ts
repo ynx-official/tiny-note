@@ -106,7 +106,7 @@ export function useImageGenerationWorkspace() {
     return notes.notes.filter(note => !note.deletedAt && (!query || `${note.title} ${note.contentText || ''}`.toLowerCase().includes(query))).slice(0, 80)
   })
   
-  const activeTasks = computed(() => tasks.tasks.filter(task => task.kind === 'image_generation' && ['queued', 'running'].includes(task.status)))
+  const activeTasks = computed(() => tasks.tasks.filter(task => task.kind === 'image_generation' && ['queued', 'running', 'finalizing', 'cancelling'].includes(task.status)))
   
   const selectedModel = computed(() => models.value.find(model => model.id === selectedModelId.value) || defaultModel.value)
   

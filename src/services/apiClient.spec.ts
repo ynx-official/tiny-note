@@ -1,8 +1,14 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 const tauriInvoke = vi.hoisted(() => vi.fn())
+const deviceReport = vi.hoisted(() => ({
+  installationId: 'install-1', deviceName: 'Windows desktop', deviceType: 'desktop',
+  osName: 'windows', osVersion: '', architecture: 'x86_64', appVersion: '0.1.12',
+  locale: 'zh-CN', timezone: 'Asia/Shanghai'
+}))
 
 vi.mock('@tauri-apps/api/core', () => ({ invoke: tauriInvoke }))
+vi.mock('./deviceInfo', () => ({ collectDeviceReport: vi.fn().mockResolvedValue(deviceReport) }))
 
 function envelope(data: unknown, status = 200, code: number | string = 0, msg = 'ok') {
   return new Response(JSON.stringify({ code, msg, data }), { status, headers: { 'Content-Type': 'application/json' } })
@@ -29,6 +35,7 @@ describe('remote API authentication', () => {
   it('keeps the access token in memory and invalidates the session on 401 without refreshing', async () => {
     const fetchMock = vi.fn()
       .mockResolvedValueOnce(envelope(loginToken('access-old')))
+      .mockResolvedValueOnce(envelope(null))
       .mockResolvedValueOnce(envelope(authInfo))
       .mockResolvedValueOnce(envelope(null, 401, 401, 'expired'))
     vi.stubGlobal('fetch', fetchMock)
@@ -37,8 +44,12 @@ describe('remote API authentication', () => {
     await api.login('tiny', 'secret', false)
     await expect(api.apiRequest('/notes/note-1')).rejects.toMatchObject({ status: 401 })
 
-    expect(new Headers(fetchMock.mock.calls[2]?.[1]?.headers).get('Authorization')).toBe('Bearer access-old')
-    expect(fetchMock).toHaveBeenCalledTimes(3)
+    expect(JSON.parse(String(fetchMock.mock.calls[0]?.[1]?.body))).toEqual({ username: 'tiny', password: 'secret' })
+    expect(fetchMock.mock.calls[1]?.[0]).toMatch(/\/auth\/device$/)
+    expect(JSON.parse(String(fetchMock.mock.calls[1]?.[1]?.body))).toEqual(deviceReport)
+    expect(new Headers(fetchMock.mock.calls[1]?.[1]?.headers).get('Authorization')).toBe('Bearer access-old')
+    expect(new Headers(fetchMock.mock.calls[3]?.[1]?.headers).get('Authorization')).toBe('Bearer access-old')
+    expect(fetchMock).toHaveBeenCalledTimes(4)
     expect(api.getAuthSnapshot().authenticated).toBe(false)
     expect(JSON.stringify(localStorage)).not.toContain('access-old')
   })
@@ -46,11 +57,14 @@ describe('remote API authentication', () => {
   it('restores a remembered access token from the OS credential store', async () => {
     Object.defineProperty(window, '__TAURI_INTERNALS__', { configurable: true, value: {} })
     tauriInvoke.mockImplementation((command: string) => command === 'credential_get' ? 'remembered-token' : null)
-    const fetchMock = vi.fn().mockResolvedValue(envelope(authInfo))
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(envelope(authInfo))
+      .mockResolvedValueOnce(envelope(null))
     vi.stubGlobal('fetch', fetchMock)
     const api = await import('./apiClient')
     await expect(api.restoreAuthSession()).resolves.toBe(true)
     expect(new Headers(fetchMock.mock.calls[0]?.[1]?.headers).get('Authorization')).toBe('Bearer remembered-token')
+    expect(fetchMock.mock.calls[1]?.[0]).toMatch(/\/auth\/device$/)
     expect(api.getAuthSnapshot().authenticated).toBe(true)
   })
 
@@ -65,6 +79,7 @@ describe('remote API authentication', () => {
   it('does not persist access credentials when the OS secure store is unavailable', async () => {
     vi.stubGlobal('fetch', vi.fn()
       .mockResolvedValueOnce(envelope(loginToken('access')))
+      .mockResolvedValueOnce(envelope(null))
       .mockResolvedValueOnce(envelope(authInfo)))
     const api = await import('./apiClient')
     await expect(api.login('tiny', 'secret', true)).resolves.toEqual({ remembered: false })

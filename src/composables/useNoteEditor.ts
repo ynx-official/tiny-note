@@ -678,7 +678,7 @@ export function useNoteEditor(props: Readonly<NoteEditorProps>, emit: NoteEditor
   async function handleBackgroundNoteTask(event: Event) {
     const task = (event as CustomEvent<BackgroundTask>).detail
     if (!task || ![aiRequestId.value, assistantRequestId.value].includes(task.id)) return
-    const active = ['queued', 'running', 'awaiting_approval', 'awaiting_input'].includes(task.status)
+    const active = ['queued', 'running', 'finalizing', 'cancelling', 'awaiting_approval', 'awaiting_input'].includes(task.status)
     if (task.id === aiRequestId.value) {
       aiBusy.value = active
       if (task.output) aiText.value = task.output
@@ -823,9 +823,13 @@ export function useNoteEditor(props: Readonly<NoteEditorProps>, emit: NoteEditor
     }
     const selection = savedSelection ? { ...savedSelection, text: editor.value?.state.doc.textBetween(savedSelection.from, savedSelection.to, '\n') || requestText } : null
     try {
-      const task = await tasksStore.enqueue({ kind: 'note_ai', title: `${props.note.title || '未命名笔记'} · ${actionLabel}`, targetNoteId: props.note.id, payload: { previewOutput: `(${action})\n${instruction ? `${instruction}\n` : ''}${requestText.slice(0, 140)}`, request: { action, mode: action === 'interpret' ? 'chat' : 'edit', text: requestText, instruction, targetNoteId: props.note.id, selection, modelProfileId: null, thinkingMode: 'disabled', source: 'note_ai' } } }, { preparedFlight: taskFlight })
+      const task = await tasksStore.createNoteAI({ noteId: props.note.id, requestKey: aiRequestId.value, action, mode: action === 'interpret' ? 'chat' : 'edit', instruction, selection, modelProfileId: null, thinkingMode: 'disabled', baseVersion: props.note.version || 1 }, { preparedFlight: taskFlight })
       aiRequestId.value = task.id
-    } catch { aiText.value = 'AI 请求失败，请检查模型设置。'; aiBusy.value = false }
+    } catch (cause) {
+      const event: AiEvent = typeof cause === 'object' && cause !== null ? cause as AiEvent : { message: String(cause || '') }
+      aiText.value = `${actionLabel}失败：${aiEventErrorMessage(event)}`
+      aiBusy.value = false
+    }
   }
   function captureAssistantSelection() {
     const instance = editor.value
@@ -851,12 +855,6 @@ export function useNoteEditor(props: Readonly<NoteEditorProps>, emit: NoteEditor
   function toggleAssistant() {
     if (assistantOpen.value) closeAssistant()
     else openAssistant()
-  }
-  function assistantContext() {
-    const titleText = props.note?.title || '未命名笔记'
-    const noteText = props.note?.contentText || editor.value?.getText() || ''
-    const selected = assistantSelection.value?.text || '（本次没有单独选中文字）'
-    return `当前文章：${titleText}\n\n文章全文：\n${noteText}\n\n选中的文字：\n${selected}`
   }
   function assistantReferences() {
     const references: Array<{ key: string; type: string; label: string; preview?: string }> = [{ key: `note:${props.note?.id}`, type: 'note', label: `当前文章 · ${props.note?.title || '未命名笔记'}` }]
@@ -886,9 +884,8 @@ export function useNoteEditor(props: Readonly<NoteEditorProps>, emit: NoteEditor
     assistantRequestId.value = crypto.randomUUID()
     assistantResponseSources.value = []
     assistantResponseProposal.value = null
-    const context = assistantContext()
     try {
-      const task = await tasksStore.enqueue({ kind: 'note_ai', title: `${props.note.title || '未命名笔记'} · 助手`, targetNoteId: props.note.id, payload: { previewOutput: `我已参考当前文章${assistantSelection.value?.text ? '和你选中的文字' : ''}。\n\n你的问题：${message}`, request: { action: 'custom', mode: assistantEditIntent(message) ? 'edit' : 'chat', text: context, instruction: message, targetNoteId: props.note.id, selection: assistantSelection.value, modelProfileId: null, source: 'note_ai' } } }, { preparedFlight: taskFlight })
+      const task = await tasksStore.createNoteAI({ noteId: props.note.id, requestKey: assistantRequestId.value, action: 'custom', mode: assistantEditIntent(message) ? 'edit' : 'chat', instruction: message, selection: assistantSelection.value, modelProfileId: null, baseVersion: props.note.version || 1 }, { preparedFlight: taskFlight })
       assistantRequestId.value = task.id
     } catch {
       pushAssistantResponse('AI 请求失败，请检查模型设置。')
@@ -1421,7 +1418,7 @@ export function useNoteEditor(props: Readonly<NoteEditorProps>, emit: NoteEditor
     setupSplitObserver, stopSplitResize, resizeSplitPane, startSplitResize, synchronizeSplitScroll, handlePreviewScroll, toggleMarkdownPreview, viewPastedMarkdown,
     resetTransientEditorState, handleBackgroundNoteTask, setEditorEditable, loadExternalProposal, toggle, applyMarkdownFormat, setMarkdownHeading, setMarkdownSmallBody,
     hasNoteContextConsent, cancelAiConsent, confirmAiConsent, runAi, captureAssistantSelection, openAssistant, closeAssistant, toggleAssistant,
-    assistantContext, assistantReferences, pushAssistantResponse, assistantEditIntent, sendAssistantMessage, stopAssistant, copyAssistantMessage, stopAi,
+    assistantReferences, pushAssistantResponse, assistantEditIntent, sendAssistantMessage, stopAssistant, copyAssistantMessage, stopAi,
     exportBodyHtml, prepareExportSnapshot, runArticleExport, exportMarkdown, exportHtml, exportPdf, printNote, restoreSavedSelection,
     clearAiResultState, syncNoteFromEditor, selectedContentMarks, insertPendingAiContent, stagePendingAiChange, restoreAiChange, persistAiChange, confirmPendingAiChange,
     applyAiResult, insertAi, replaceWithAi, copyAi, toggleAiFeedback, dismissAiResult, closeAiResult, stopAiDrag,

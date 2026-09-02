@@ -7,7 +7,7 @@ Tiny Note 是一个必须登录联网的 Tauri 2 + Vue 3 桌面笔记客户端�
 - 前端：TypeScript、Vue 3、Vite、Vue Router、Pinia、Vue I18n。
 - 桌面薄壳：Tauri 2/Rust，负责窗口、托盘、更新、通知、文件对话框、本机 Markdown 授权和 OS 安全凭据库。
 - 业务后端：GoFrame + MySQL 8 + Redis + S3 兼容对象存储。
-- 传输兼容：前端保留 127 个 `CommandMap` 命令，业务命令路由到 REST/SSE，平台命令路由到 Tauri invoke。
+- 传输契约：前端保留 128 个 `CommandMap` 命令，业务命令路由到 REST/SSE，平台命令路由到 Tauri invoke。
 
 不读取、迁移或删除旧 SQLite 数据目录。新版登录后使用当前账户的服务端空间。
 

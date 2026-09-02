@@ -5,6 +5,7 @@ import ChatView from './ChatView.vue'
 
 const testState = vi.hoisted(() => ({ invoke: vi.fn(), route: { query: {} }, router: { push: vi.fn(), replace: vi.fn() }, tasks: [] }))
 vi.mock('@tauri-apps/api/core', () => ({ Channel: class { onmessage = () => {} } }))
+vi.mock('../services/eventChannel', () => ({ EventChannel: class { onmessage = () => {}; connect = vi.fn(() => new Promise(() => {})); close = vi.fn() } }))
 vi.mock('../services/tauri', () => ({ invoke: testState.invoke }))
 vi.mock('vue-router', () => ({ useRoute: () => testState.route, useRouter: () => testState.router }))
 
@@ -25,6 +26,10 @@ describe('ChatView background tasks', () => {
       if (command === 'note_list' || command === 'notebook_list' || command === 'knowledge_base_list') return []
       if (command === 'agent_list_tools') return [{ name: 'search_notes', requireApproval: false }, { name: 'create_note', requireApproval: true }]
       if (command === 'background_task_list') return testState.tasks
+      if (command === 'conversation_summary_task_create') {
+        const task = { id: `task-${testState.tasks.length + 1}`, kind: 'conversation_summary', title: '总结为笔记', status: 'queued', payload: {}, output: '', result: null, conversationId: args.conversationId, resourceKey: `conversation:${args.conversationId}`, createdAt: new Date().toISOString() }
+        testState.tasks.unshift(task); return task
+      }
       if (command === 'background_task_enqueue') {
         const input = args.input; const id = `task-${testState.tasks.length + 1}`
         const task = { ...input, id, status: 'queued', output: '', result: null, resourceKey: input.conversationId ? `conversation:${input.conversationId}` : `note:${input.targetNoteId}`, createdAt: new Date().toISOString() }
@@ -80,8 +85,9 @@ describe('ChatView background tasks', () => {
     const wrapper = mountView(); await flushPromises()
     const before = testState.invoke.mock.calls.filter(([command]) => command === 'chat_add_message').length
     await wrapper.get('.chat-page-summary').trigger('click'); await flushPromises()
-    const enqueue = testState.invoke.mock.calls.find(([command, args]) => command === 'background_task_enqueue' && args.input.kind === 'conversation_summary')
-    expect(enqueue[1].input.payload.snapshot).toContain('用户：目标是什么？')
+    const enqueue = testState.invoke.mock.calls.find(([command]) => command === 'conversation_summary_task_create')
+    expect(enqueue?.[1]).toEqual(expect.objectContaining({ conversationId: 'conversation-1', requestKey: expect.any(String) }))
+    expect(enqueue?.[1]).not.toHaveProperty('snapshot')
     expect(testState.invoke.mock.calls.filter(([command]) => command === 'chat_add_message')).toHaveLength(before)
     wrapper.unmount()
   })

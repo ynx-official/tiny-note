@@ -12,17 +12,18 @@ function bumpVersion(value: BrowserItem): void {
 export function handleActivityCommand(command: string, args: BrowserArgs, state: BrowserState, now: string): BrowserHandlerResult | null {
   if (command === 'background_task_list') return { result: state.backgroundTasks.slice().sort((a, b) => b.createdAt.localeCompare(a.createdAt)) }
   if (command === 'background_task_get') return { result: state.backgroundTasks.find(task => task.id === args.id) || null }
-  if (command === 'background_task_enqueue') {
-    const input = args.input
-    if (!['conversation_summary', 'note_ai', 'image_generation'].includes(input.kind)) throw new Error('无效的后台任务类型')
+  if (['conversation_summary_task_create', 'note_ai_task_create', 'image_generation_task_create'].includes(command)) {
     const id = crypto.randomUUID()
-    const resourceKey = input.conversationId ? `conversation:${input.conversationId}` : input.targetNoteId ? `note:${input.targetNoteId}` : `task:${id}`
-    if (input.kind === 'conversation_summary' && state.backgroundTasks.some(task => task.kind === input.kind && task.conversationId === input.conversationId && ['queued', 'running', 'awaiting_approval', 'awaiting_input'].includes(task.status))) throw new Error('当前对话已有正在处理的总结任务')
-    const task = item({ id, kind: input.kind, title: input.title, status: 'queued', payload: input.payload || {}, output: '', result: null, errorCode: null, errorMessage: null, conversationId: input.conversationId || null, targetNoteId: input.targetNoteId || null, resourceKey, modelProfileId: input.modelProfileId || null, agentRunId: null, retryOf: null, createdAt: now, startedAt: null, completedAt: null, updatedAt: now })
+    const kind = command === 'conversation_summary_task_create' ? 'conversation_summary' : command === 'note_ai_task_create' ? 'note_ai' : 'image_generation'
+    const conversationId = kind === 'conversation_summary' ? args.conversationId : null
+    const targetNoteId = kind === 'note_ai' ? args.noteId : null
+    const resourceKey = conversationId ? `conversation:${conversationId}` : targetNoteId ? `note:${targetNoteId}` : `task:${args.requestKey || id}`
+    if (kind === 'conversation_summary' && state.backgroundTasks.some(task => task.kind === kind && task.conversationId === conversationId && ['queued', 'running', 'finalizing', 'cancelling'].includes(task.status))) throw new Error('当前对话已有正在处理的总结任务')
+    const title = kind === 'conversation_summary' ? '总结为笔记' : kind === 'note_ai' ? 'AI 写作' : '图片生成'
+    const task = item({ id, kind, title, status: 'queued', visibility: 'user', handlerVersion: 1, payload: {}, publicMeta: { title }, output: '', result: null, errorCode: null, errorMessage: null, conversationId, targetNoteId, resourceKey, modelProfileId: args.modelProfileId || args.imageModelProfileId || null, agentRunId: null, retryOf: null, createdAt: now, startedAt: null, completedAt: null, updatedAt: now })
     state.backgroundTasks.unshift(task)
     return { result: task }
   }
-  if (command === 'background_task_transition') { const input = args.input; const task = state.backgroundTasks.find(value => value.id === input.id); if (!task) throw new Error('后台任务不存在'); Object.assign(task, { status: input.status, output: task.output + (input.outputDelta || ''), result: input.result ?? task.result, errorCode: input.errorCode || null, errorMessage: input.errorMessage || null, agentRunId: input.agentRunId || task.agentRunId, startedAt: task.startedAt || (input.status === 'running' ? now : null), completedAt: ['succeeded', 'failed', 'cancelled'].includes(input.status) ? now : task.completedAt, updatedAt: now }); return { result: { ...task } } }
   if (command === 'background_task_cancel') { const task = state.backgroundTasks.find(value => value.id === args.id); if (!task) throw new Error('后台任务不存在'); Object.assign(task, { status: 'cancelled', completedAt: now, updatedAt: now }); return { result: { ...task } } }
   if (command === 'background_task_retry') { const original = state.backgroundTasks.find(value => value.id === args.id); if (!original) throw new Error('后台任务不存在'); const task = item({ ...original, id: crypto.randomUUID(), status: 'queued', output: '', result: null, errorCode: null, errorMessage: null, agentRunId: null, retryOf: original.id, createdAt: now, startedAt: null, completedAt: null, updatedAt: now }); state.backgroundTasks.unshift(task); return { result: task } }
   if (command === 'background_task_clear_finished') { const before = state.backgroundTasks.length; state.backgroundTasks = state.backgroundTasks.filter(task => !['succeeded', 'failed', 'cancelled', 'interrupted'].includes(task.status)); return { result: before - state.backgroundTasks.length } }

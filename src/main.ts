@@ -44,10 +44,7 @@ async function bootstrapMainWindow() {
     hydrate: async () => {
       const authenticated = await authStore.initialize()
       if (authenticated) {
-        if (router.currentRoute.value.path === '/login') await router.replace('/home')
         await appStore.initialize()
-      } else if (router.currentRoute.value.path !== '/login') {
-        await router.replace({ path: '/login', query: { redirect: router.currentRoute.value.fullPath } })
       }
       i18n.global.locale.value = appStore.settings.language === 'en' ? 'en' : 'zh-CN'
       localStorage.setItem('tiny-note-language', appStore.settings.language)

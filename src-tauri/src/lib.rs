@@ -750,6 +750,26 @@ fn startup_probe(state: String, browser_timestamp: f64) {
     );
 }
 
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct DeviceSnapshot {
+    os_name: String,
+    os_version: String,
+    architecture: String,
+    app_version: String,
+}
+
+#[tauri::command]
+fn device_snapshot(app: AppHandle) -> DeviceSnapshot {
+    DeviceSnapshot {
+        os_name: std::env::consts::OS.to_owned(),
+        // Rust's standard library intentionally does not expose a stable OS-version API.
+        os_version: String::new(),
+        architecture: std::env::consts::ARCH.to_owned(),
+        app_version: app.package_info().version.to_string(),
+    }
+}
+
 pub fn run() {
     let app = tauri::Builder::default()
         .plugin(tauri_plugin_single_instance::init(|app, args, cwd| {
@@ -805,6 +825,7 @@ pub fn run() {
             export_reveal_file,
             tray_open_main,
             startup_probe,
+            device_snapshot,
             credential_get,
             credential_set,
             credential_delete,

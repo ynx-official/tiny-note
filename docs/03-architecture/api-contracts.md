@@ -1,6 +1,6 @@
 # 命令契约（Draft）
 
-最后更新：2026-08-26
+最后更新：2026-09-02
 
 所有 DTO 使用 camelCase。成功返回结构化 JSON，失败返回 `{ code, message }`；`message` 不包含系统路径、密钥或原始网络响应。
 
@@ -8,7 +8,7 @@
 
 模型命令：`model_list/upsert/delete/fetch_models/test/query_balance`。`model_upsert` 接收共享的 `providerId`、`connectionName`、厂商连接字段和单个模型字段；多个模型使用同一 `providerId` 时只维护一份 Base URL、API Key 与端点协议。`endpointType` 必须是 `openaiChat`、`openaiResponses` 或 `anthropicMessages`；列表返回展开后的连接字段供既有模型调用，同时返回 `providerId` 与 `connectionName` 供设置页分组。编辑表单不接收明文旧 Key：`model_fetch_models` 可接收任一子模型的 `profileId`，当 `apiKey` 为空时由 Rust 从关联连接读取已保存 Key；`model_upsert` 同样在空 Key 时保留连接原值，只有非空新值才替换。`model_test` 只接收模型配置 ID，由 Rust 使用连接的已保存 Key 按端点协议发起带 30 秒超时的低输出连接测试，前端不会取得明文凭据。Rust 分别使用 `/chat/completions` + Bearer、`/responses` + Bearer、`/messages` + `x-api-key`/`anthropic-version`，并按协议转换普通文本、流式内容、用量及 Agent 工具调用。未携带 `providerId` 的旧客户端请求会自动创建独立连接，未携带端点类型时按 `openaiChat` 处理。
 
-后台任务命令：`background_task_enqueue/list/get/transition/cancel/retry/clear_finished`。`enqueue` 的 `kind` 仅为 `conversation_summary` 或 `note_ai`；普通对话继续使用页面内 `note_ai_stream`，Tiny Agent 使用页面内 `agent_invoke`，两者都不创建任务中心记录。任务输入只引用模型配置 ID，不接受名称包含 api-key、token、password 或 secret 的字段。`transition` 校验状态机并追加流式输出；`retry` 只接受失败、取消或中断任务并创建带 `retryOf` 的新尝试；启动时自动清理超过 30 天的终态记录，`clear_finished` 立即清理全部终态记录。
+后台任务的创建必须使用服务端类型化入口：`conversation_summary_task_create`（`POST /chats/{conversationId}/summary-tasks`）、`note_ai_task_create`（`POST /notes/{noteId}/ai-tasks`）和 `image_generation_task_create`（`POST /images/generation-tasks`）。客户端只提交请求键、动作和资源引用，不提交对话/笔记正文快照，也不执行模型调用、状态迁移或结果落库。`background_task_list/get/cancel/retry/clear_finished` 仅负责查询和控制；不存在通用任务创建或客户端状态迁移接口。普通对话和 Tiny Agent 仍在原对话内展示，不进入任务中心；首条助手消息由服务端自动创建不可见的 `chat_title` 任务。任务输入只引用模型配置 ID，不接受名称包含 api-key、token、password 或 secret 的字段；终态任务可重试为带 `retryOf` 的新尝试，超过 30 天自动清理，清理任务记录不删除已生成业务结果。
 
 Agent 命令：`agent_invoke`、`agent_resume`、`agent_respond_input`、`agent_cancel`、`agent_get_run`、`agent_get_pending_run`、`agent_list_tools`、`agent_tool_policy_update`。`request_user_input` 接受标题、问题、2–4 个带稳定语义 ID 的互斥选项、至多一个推荐项和 `allowOther`；它不进入危险操作审批，而是把运行置为 `awaiting_input` 并发出 `inputRequired`。`agent_respond_input` 使用 `runId`、`toolCallId` 与内容哈希绑定当前请求，接受 `answered`、`skipped` 或 `cancelled`，防止旧卡片重复或错位提交。工具调用预算以 12 个模型回合为一批；一批耗尽后运行进入可恢复的 `awaiting_input`，展示“继续执行”和“终止任务”。继续会保留上下文并追加 12 个工具回合，终止、跳过或取消选择会结束当前运行；该选择与普通输入请求一样持久化，应用重启后仍可回答。`agent_list_tools` 是设置页“工具与权限”和对话页能力摘要的权威来源，返回技术名称、说明、`defaultRequireApproval` 和当前生效的 `requireApproval`。`agent_tool_policy_update` 接受 `toolNames` 与 `requireApproval`：布尔值用于单个或按业务分类批量覆盖，`null` 删除覆盖并恢复系统默认；未知工具会使整批请求失败。
 

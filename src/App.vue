@@ -12,7 +12,8 @@ const AppExportSuccessDialog = defineAsyncComponent(() => import('./components/A
 
 const route = useRoute(); const router = useRouter(); const { locale } = useI18n()
 const active = computed(() => route.path === '/' || route.path.startsWith('/home') || route.path.startsWith('/chat') ? 'home' : route.path.startsWith('/library') ? 'library' : route.path.startsWith('/tags') ? 'tags' : route.path.startsWith('/calendar') ? 'calendar' : route.path.startsWith('/todos') ? 'todos' : route.path.startsWith('/images') ? 'images' : route.path.startsWith('/tasks') ? 'tasks' : route.path.startsWith('/settings') ? 'settings' : 'notes')
-const publicPage = computed(() => route.meta.public === true)
+const loginRequested = computed(() => route.query.login === '1')
+const loginRedirect = computed(() => typeof route.query.redirect === 'string' && route.query.redirect.startsWith('/') ? route.query.redirect : '')
 const deferredHostsReady = ref(false)
 let unlistenNavigate: (() => void) | undefined
 onMounted(async () => {
@@ -29,11 +30,8 @@ onBeforeUnmount(() => unlistenNavigate?.())
 watch(locale, value => localStorage.setItem('tiny-note-language', value))
 </script>
 <template>
-  <router-view v-if="publicPage" />
-  <template v-else>
-    <AppShell :active="active"><router-view /></AppShell>
-    <AppPromptDialog />
-    <AppFeedbackHost />
-    <template v-if="deferredHostsReady"><AppUpdateDialog /><AppExportLocationDialog /><AppExportSuccessDialog /></template>
-  </template>
+  <AppShell :active="active" :login-requested="loginRequested" :login-redirect="loginRedirect"><router-view /></AppShell>
+  <AppPromptDialog />
+  <AppFeedbackHost />
+  <template v-if="deferredHostsReady"><AppUpdateDialog /><AppExportLocationDialog /><AppExportSuccessDialog /></template>
 </template>

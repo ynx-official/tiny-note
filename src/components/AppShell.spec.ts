@@ -1,10 +1,10 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
-import { mount } from '@vue/test-utils'
+import { flushPromises, mount } from '@vue/test-utils'
 import { createPinia, setActivePinia } from 'pinia'
 import { createI18n } from 'vue-i18n'
 
-const mocks = vi.hoisted(() => ({ push: vi.fn() }))
-vi.mock('vue-router', () => ({ useRouter: () => ({ push: mocks.push }) }))
+const mocks = vi.hoisted(() => ({ push: vi.fn(), replace: vi.fn() }))
+vi.mock('vue-router', () => ({ useRouter: () => ({ push: mocks.push, replace: mocks.replace }) }))
 vi.mock('@tauri-apps/api/window', () => ({ getCurrentWindow: () => null }))
 
 import AppShell from './AppShell.vue'
@@ -15,6 +15,7 @@ describe('AppShell task status', () => {
     setActivePinia(createPinia())
     localStorage.clear()
     mocks.push.mockReset()
+    mocks.replace.mockReset()
   })
 
   it('returns a completed task icon to the rail tone after task center is opened', async () => {
@@ -55,5 +56,20 @@ describe('AppShell task status', () => {
 
     await wrapper.get('.rail-clock').trigger('click')
     expect(wrapper.find('chat-history-drawer-stub').exists()).toBe(true)
+  })
+
+  it('opens the account drawer when a protected route requests login', async () => {
+    const pinia = createPinia()
+    const wrapper = mount(AppShell, {
+      props: { loginRequested: true, loginRedirect: '/notes' },
+      global: {
+        plugins: [pinia, createI18n({ legacy: false, locale: 'zh-CN', messages: { 'zh-CN': { notes: '笔记', library: '知识库', tags: '标签', settings: '设置', appName: 'Tiny Note', newNote: '新建笔记' } } })],
+        stubs: { AvatarDrawer: true, ChatHistoryDrawer: true }
+      }
+    })
+
+    await flushPromises()
+
+    expect(wrapper.find('avatar-drawer-stub').exists()).toBe(true)
   })
 })

@@ -1,17 +1,22 @@
 <script setup lang="ts">
-import { computed, defineAsyncComponent, onMounted, onUnmounted, ref } from 'vue'
+import { computed, defineAsyncComponent, onMounted, onUnmounted, ref, watch } from 'vue'
 import { useRouter } from 'vue-router'
 import { useI18n } from 'vue-i18n'
 import { getCurrentWindow } from '@tauri-apps/api/window'
 import { AlertCircle, BookOpen, CalendarDays, CheckCircle2, ClipboardList, FileText, ImagePlus, ListTodo, LoaderCircle, Settings, Plus, Minus, Square, Copy, X, PanelLeftClose, PanelLeftOpen, Home, Tags, Clock } from 'lucide-vue-next'
 import { useTasksStore } from '../stores/tasks'
+import { useAuthStore } from '../stores/auth'
+import { getActivePinia } from 'pinia'
+import { resetWorkspaceSession } from '../services/workspaceSession'
 const AvatarDrawer = defineAsyncComponent(() => import('./AvatarDrawer.vue'))
 const ChatHistoryDrawer = defineAsyncComponent(() => import('./ChatHistoryDrawer.vue'))
 
-const props = defineProps<{ active?: string }>()
+const props = withDefaults(defineProps<{ active?: string; loginRequested?: boolean; loginRedirect?: string }>(), { loginRequested: false, loginRedirect: '' })
 const router = useRouter()
 const { t, te } = useI18n()
 const tasksStore = useTasksStore()
+const auth = useAuthStore()
+const pinia = getActivePinia()
 const railCollapsed = ref(false)
 const isMaximized = ref(false)
 const avatarOpen = ref(false)
@@ -29,6 +34,19 @@ function navigate(path: string) { router.push(path) }
 function openAvatar() {
   avatarHostReady.value = true
   avatarOpen.value = true
+}
+function setAvatarOpen(value: boolean) {
+  avatarOpen.value = value
+  if (!value && props.loginRequested && !auth.authenticated) void router.replace('/home')
+}
+async function handleSignedIn() {
+  avatarOpen.value = false
+  if (props.loginRedirect.startsWith('/')) await router.replace(props.loginRedirect)
+  else if (props.loginRequested) await router.replace('/home')
+}
+async function handleSignedOut() {
+  avatarOpen.value = true
+  await router.replace('/home')
 }
 function toggleHistory() {
   historyHostReady.value = true
@@ -93,6 +111,14 @@ onMounted(async () => {
   try { stopResizeListener = await current.onResized(syncMaximized) } catch { /* keep controls usable if event permission is unavailable */ }
 })
 onUnmounted(() => { if (stopResizeListener) stopResizeListener(); if (taskArrivalTimer !== null) window.clearTimeout(taskArrivalTimer); window.removeEventListener('tiny-note-task-flight-arrival', handleTaskArrival); document.removeEventListener('pointerdown', closeHistoryOnOutsideClick) })
+watch(() => props.loginRequested, requested => {
+  if (!requested) return
+  avatarHostReady.value = true
+  avatarOpen.value = true
+}, { immediate: true })
+watch(() => auth.authenticated, (authenticated, previouslyAuthenticated) => {
+  if (!authenticated && previouslyAuthenticated && pinia) void resetWorkspaceSession(pinia)
+})
 </script>
 <template>
   <div class="window-shell app-container">
@@ -103,7 +129,7 @@ onUnmounted(() => { if (stopResizeListener) stopResizeListener(); if (taskArriva
     </header>
     <div class="app-body main-body">
       <aside class="rail sidebar" :class="{ 'is-collapsed': railCollapsed }">
-        <button class="rail-avatar" aria-label="Tiny Note" @click="openAvatar"><span>🐶</span><i class="avatar-status"></i></button>
+        <button class="rail-avatar" :aria-label="auth.authenticated ? '打开账号与助手中心' : '登录 Tiny Note'" :title="auth.authenticated ? auth.user?.nickname || auth.user?.username || '账号' : '登录 Tiny Note'" @click="openAvatar"><span>🐶</span><i class="avatar-status" :class="{ 'is-offline': !auth.authenticated }"></i></button>
         <nav><button v-for="item in nav.filter(item => !['settings', 'tasks'].includes(item.key))" :key="item.key" :class="['rail-item', { active: props.active === item.key }]" :title="item.label" :aria-label="item.label" @click="navigate(item.path)"><component :is="item.icon" :size="19" /><span>{{ item.label }}</span></button></nav>
         <div class="rail-spacer"></div>
         <button data-task-center-target class="rail-item rail-tasks" :class="{ active: props.active === 'tasks', 'has-running-task': tasksStore.runningCount, 'task-center-arrival': taskArrival, 'has-failed-task': tasksStore.failedCount }" title="任务中心" aria-label="任务中心" @click="openTaskCenter"><AlertCircle v-if="tasksStore.failedCount" class="rail-task-state is-failed" :size="20" /><LoaderCircle v-else-if="tasksStore.runningCount" class="rail-task-state is-running" :size="20" /><CheckCircle2 v-else-if="tasksStore.unreadSucceededCount && !tasksStore.waitingCount" class="rail-task-state is-succeeded" :size="20" /><ListTodo v-else :size="19" /><span>任务中心</span><b v-if="tasksStore.failedCount || tasksStore.waitingCount" class="rail-task-badge" :class="{ 'is-failed': tasksStore.failedCount }">{{ Math.min(tasksStore.failedCount || tasksStore.waitingCount, 99) }}</b></button>
@@ -112,7 +138,7 @@ onUnmounted(() => { if (stopResizeListener) stopResizeListener(); if (taskArriva
       </aside>
       <main class="content-wrap main-content"><div class="content-card content-wrapper"><slot /></div></main>
     </div>
-    <AvatarDrawer v-if="avatarHostReady" v-model="avatarOpen" />
+    <AvatarDrawer v-if="avatarHostReady" :model-value="avatarOpen" @update:model-value="setAvatarOpen" @signed-in="handleSignedIn" @signed-out="handleSignedOut" />
     <ChatHistoryDrawer v-if="historyHostReady" v-model="historyOpen" @open="openConversation" />
   </div>
 </template>

@@ -13,6 +13,23 @@ vi.mock('vue-router', () => ({ useRouter: () => ({ push: mocks.push }) }))
 
 import HomeView from './HomeView.vue'
 import { messages } from '../i18n'
+import { useAuthStore } from '../stores/auth'
+
+function authenticatedPinia() {
+  const pinia = createPinia()
+  const auth = useAuthStore(pinia)
+  auth.initialized = true
+  auth.authenticated = true
+  return pinia
+}
+
+function guestPinia() {
+  const pinia = createPinia()
+  const auth = useAuthStore(pinia)
+  auth.initialized = true
+  auth.authenticated = false
+  return pinia
+}
 
 describe('HomeView startup data', () => {
   beforeEach(() => {
@@ -40,7 +57,7 @@ describe('HomeView startup data', () => {
 
     const wrapper = mount(HomeView, {
       global: {
-        plugins: [createPinia(), createI18n({ legacy: false, locale: 'zh-CN', fallbackLocale: 'en', messages })]
+        plugins: [authenticatedPinia(), createI18n({ legacy: false, locale: 'zh-CN', fallbackLocale: 'en', messages })]
       }
     })
     await flushPromises()
@@ -60,7 +77,7 @@ describe('HomeView startup data', () => {
   it('keeps notes and library data off the startup path until a reference picker is opened', async () => {
     const wrapper = mount(HomeView, {
       global: {
-        plugins: [createPinia(), createI18n({ legacy: false, locale: 'zh-CN', fallbackLocale: 'en', messages })]
+        plugins: [authenticatedPinia(), createI18n({ legacy: false, locale: 'zh-CN', fallbackLocale: 'en', messages })]
       }
     })
     await flushPromises()
@@ -80,5 +97,18 @@ describe('HomeView startup data', () => {
     await flushPromises()
     expect(invokedCommands()).toContain('note_purge_expired')
     expect(invokedCommands()).not.toContain('knowledge_base_list')
+  })
+
+  it('shows the shell immediately without loading cloud data for a guest', async () => {
+    const wrapper = mount(HomeView, {
+      global: {
+        plugins: [guestPinia(), createI18n({ legacy: false, locale: 'zh-CN', fallbackLocale: 'en', messages })]
+      }
+    })
+    await flushPromises()
+
+    expect(wrapper.find('.home-loader').exists()).toBe(false)
+    expect(wrapper.get('.home-guest-hint').text()).toContain('狗狗头像登录')
+    expect(mocks.invoke).not.toHaveBeenCalled()
   })
 })

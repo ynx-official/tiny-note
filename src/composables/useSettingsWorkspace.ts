@@ -472,6 +472,7 @@ export function useSettingsWorkspace() {
       return
     }
     modelSaving.value = true
+    modelFetchError.value = ''
     try {
       const options = selected
       const existingByModel = new Map<string, ModelProfile>((currentDraft.connectionModels || []).map((model: ModelProfile) => [model.model, model]))
@@ -503,6 +504,10 @@ export function useSettingsWorkspace() {
       }
       await appStore.refreshModels()
       cancelModel()
+    } catch (error) {
+      const message = errorMessage(error, '保存模型配置失败，请重试。')
+      modelFetchError.value = message
+      showToast(message, { tone: 'error' })
     } finally {
       modelSaving.value = false
     }

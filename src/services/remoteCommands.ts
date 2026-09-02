@@ -164,15 +164,12 @@ export async function remoteInvoke<K extends CommandName>(command: K, args: Comm
     case 'chat_generate_title': result = await apiRequest(`/chats/${encodeURIComponent(input.conversationId)}/title`, { method: 'POST' }); break
     case 'background_task_list': result = await apiRequest(`/tasks${query({ statuses: input.filter?.statuses?.join(','), kinds: input.filter?.kinds?.join(',') })}`); break
     case 'background_task_get': result = await apiRequest(`/tasks/${encodeURIComponent(String(input.id))}`); break
-    case 'background_task_enqueue': result = await apiRequest('/tasks', { method: 'POST', body: input.input }); break
-    case 'background_task_transition': {
-      const transition = input.input || {}
-      result = await apiRequest(`/tasks/${encodeURIComponent(String(transition.id))}/transition`, { method: 'POST', body: transition })
-      break
-    }
     case 'background_task_retry': result = await apiRequest(`/tasks/${encodeURIComponent(String(input.id))}/retry`, { method: 'POST' }); break
     case 'background_task_cancel': result = await apiRequest(`/tasks/${encodeURIComponent(String(input.id))}/cancel`, { method: 'POST' }); break
     case 'background_task_clear_finished': result = await apiRequest('/tasks/finished', { method: 'DELETE' }); break
+    case 'conversation_summary_task_create': result = await apiRequest(`/chats/${encodeURIComponent(input.conversationId)}/summary-tasks`, { method: 'POST', body: input }); break
+    case 'note_ai_task_create': result = await apiRequest(`/notes/${encodeURIComponent(input.noteId)}/ai-tasks`, { method: 'POST', body: input }); break
+    case 'image_generation_task_create': result = await apiRequest('/images/generation-tasks', { method: 'POST', body: input }); break
     case 'agent_list_tools': result = await apiRequest('/agent/tools'); break
     case 'agent_tool_policy_update': result = await apiRequest('/agent/tool-policies', { method: 'PUT', body: input.request }); break
     case 'agent_mcp_list': result = await apiRequest('/mcp-servers'); break

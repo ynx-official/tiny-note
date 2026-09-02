@@ -21,9 +21,11 @@ type CommandChannel = EventChannel<never>
 export interface ModelFetchRequest { provider: string; profileId: string | null; baseUrl: string; apiKey: string | null; endpointType: string }
 export interface BalanceData { supported: boolean; available: boolean | null; currency: string | null; totalBalance: number; grantedBalance: number; toppedUpBalance: number; voucherBalance: number; cashBalance: number; updatedAt: string }
 export interface BackgroundTaskFilter { statuses: string[]; kinds: string[] }
-export interface BackgroundTaskTransition { id: string; status: string; outputDelta?: string | null; result?: JsonValue | null; errorCode?: string | null; errorMessage?: string | null; agentRunId?: string | null }
 export interface ImageInput { name: string; mimeType: string; dataUrl: string }
 export interface ImageGenerateRequest { requestId: string; imageModelProfileId: string; prompt: string; size: string; count: number; mode?: string; inputImages?: ImageInput[]; maskImage?: ImageInput | null }
+export interface ImageGenerationTaskRequest { requestKey: string; imageModelProfileId: string; prompt: string; size: string; count: number; mode?: string; inputImages?: ImageInput[]; maskImage?: ImageInput | null }
+export interface ConversationSummaryTaskRequest { conversationId: string; requestKey: string; modelProfileId?: string | null; thinkingMode?: string | null }
+export interface NoteAITaskRequest { noteId: string; requestKey: string; action: string; instruction?: string | null; targetLanguage?: string | null; modelProfileId?: string | null; thinkingMode?: string | null; mode?: string; baseVersion: number; selection?: JsonObject | null; references?: JsonValue[] }
 export interface ImageGenerateResult { generationId: string; assets: ImageAsset[]; usage: JsonValue | null }
 export interface ChatReferenceInput { key: string; type: string; name: string; noteId?: string; knowledgeBaseId?: string | null; baseId?: string | null; baseName?: string; relativePath?: string }
 export interface ChatAddMessage { conversationId: string; role: string; content: string; references?: ChatReferenceInput[]; sources?: JsonValue[]; proposalId?: string | null; agentRunId?: string | null }
@@ -118,11 +120,12 @@ export interface CommandMap {
 
   background_task_list: Command<{ filter?: BackgroundTaskFilter | null }, BackgroundTask[]>
   background_task_get: Command<IdArgs, BackgroundTask | null>
-  background_task_enqueue: Command<{ input: Partial<BackgroundTask> }, BackgroundTask>
-  background_task_transition: Command<{ input: BackgroundTaskTransition }, BackgroundTask>
   background_task_retry: Command<IdArgs, BackgroundTask>
   background_task_cancel: Command<IdArgs, BackgroundTask>
   background_task_clear_finished: NoArgs<number>
+  conversation_summary_task_create: Command<ConversationSummaryTaskRequest, BackgroundTask>
+  note_ai_task_create: Command<NoteAITaskRequest, BackgroundTask>
+  image_generation_task_create: Command<ImageGenerationTaskRequest, BackgroundTask>
   image_model_list: NoArgs<ModelProfile[]>
   image_generation_list: Command<{ limit?: number }, ImageGeneration[]>
   image_generation_delete: Command<{ generationId: string }>

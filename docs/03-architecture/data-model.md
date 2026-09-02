@@ -1,6 +1,6 @@
 # 数据模型（Approved）
 
-最后更新：2026-08-26
+最后更新：2026-09-02
 
 SQLite 核心表：`notebooks`、`notes`、`tags`、`note_tags`、`knowledge_bases`、`model_providers`、`model_profiles`、`settings`、`chat_conversations`、`chat_messages`。`notebooks.parent_id` 是可空自关联，构成多级笔记本树；Rust 写入前拒绝自身或后代作为父级。每篇笔记必须直属一个笔记本，历史空归属和未指定归属统一迁移到根级系统笔记本“未分类”。`notes.title` 是由正文首个非空内容行派生、最多 50 个字符的列表、搜索和文件名元数据，并随正文原子保存，不再由独立标题输入框维护。即时编辑的首块以 Friday 同构的 TipTap `noteTitle` 节点和 `data-note-title` 属性持久化；正文原子保存三种表示：`content_markdown` 是 Markdown 模式中的用户源码（即时编辑产生正文变更后可规范化为语义等价写法），`content_html` 是经过白名单清洗的 TipTap 渲染内容，`content_text` 是搜索与 AI 使用的纯文本。`notes.is_pinned` 保存置顶状态。标签由大小写不敏感唯一的 `tags` 保存，`note_tags(note_id, tag_id)` 保存多对多关系并在任一端删除时级联清理；旧库的 `notes.tags_json` 在校验迁移成功后删除，避免双重数据源。
 
@@ -16,7 +16,7 @@ AI 编辑只保留 `ai_edit_proposals` 与 `note_revisions`。升级时删除遗
 
 Agent 使用 `agent_runs` 保存每轮请求、模型、状态、循环次数、可恢复 continuation 和错误，运行状态包含与危险操作审批分离的 `awaiting_input`。`agent_steps` 按顺序保存文本、工具调用或结构化输入请求的参数、结果、内容哈希和状态，因此应用重启后仍可恢复待回答卡片，回答后则作为只读摘要保留。`agent_tool_policies` 只保存用户明确覆盖的工具审批值；缺少记录时使用 Rust 注册表中的系统默认值，恢复默认即删除覆盖记录。`chat_messages.agent_run_id` 将可见助手消息关联到审计时间线；`chat_conversations.mode` 持久化会话模式。
 
-`background_tasks` 只保存对话总结和笔记 AI 的类型、状态、经校验的输入快照、增量输出、结构化结果、资源键、关联对象、重试来源和时间戳；普通对话与 Tiny Agent 均不写入该表。状态为 `queued/running/awaiting_approval/awaiting_input/succeeded/failed/cancelled/interrupted`。`started_at` 与 `completed_at` 分别记录每次尝试的实际开始和结束时间，执行耗时由两者计算；运行中的任务以当前时间动态计算，重试任务独立计时。模型凭据只通过 `model_profile_id` 间接引用，禁止写入任务 JSON；删除任务记录不级联删除业务结果。
+MySQL `tn_background_tasks` 是后台任务状态的唯一事实源，保存类型、可见性、处理器版本、请求键、服务端私有输入、可公开元数据、增量输出、结构化结果、资源键、活动去重键、调度时间、尝试上限和重试来源。状态为 `queued/running/finalizing/cancelling/succeeded/failed/cancelled`；类型化任务由服务端恢复执行，客户端退出不改变状态。`tn_task_locks` 提供每用户两个并行槽位及同一对话/笔记的资源互斥，租约过期可恢复。模型凭据只通过 `model_profile_id` 间接引用，禁止写入任务 JSON；`tn_notes.source_task_id` 与任务结果文档的 `source_task_id` 保证总结、编辑提案和图片结果幂等，删除任务记录不级联删除业务结果。任务中心展示 `conversation_summary`、`note_ai`、`image_generation`；内部 `chat_title` 不展示，普通对话与 Tiny Agent 不写入任务中心。
 
 Skills 不写入 SQLite，保存在应用数据目录的 `agent/SKILL/<skill-name>/SKILL.md`。启动时仅补齐缺失的内置技能，不覆盖用户已编辑内容。
 
