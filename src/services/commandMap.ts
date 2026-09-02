@@ -29,11 +29,11 @@ export interface NoteAITaskRequest { noteId: string; requestKey: string; action:
 export interface ImageGenerateResult { generationId: string; assets: ImageAsset[]; usage: JsonValue | null }
 export interface ChatReferenceInput { key: string; type: string; name: string; noteId?: string; knowledgeBaseId?: string | null; baseId?: string | null; baseName?: string; relativePath?: string }
 export interface ChatAddMessage { conversationId: string; role: string; content: string; references?: ChatReferenceInput[]; sources?: JsonValue[]; proposalId?: string | null; agentRunId?: string | null }
-export interface AgentInvokeRequest { requestId: string; conversationId: string; message: string; modelProfileId: string | null; thinkingMode: string | null; references: JsonValue[] }
+export interface AgentInvokeRequest { requestId: string; conversationId: string; messageId: string; message: string; modelProfileId: string | null; thinkingMode: string | null; references: JsonValue[] }
 export interface AgentResumeRequest { runId: string; toolCallId: string; approvalHash: string; decision: string; reason: string | null }
 export interface AgentInputResponseRequest { runId: string; toolCallId: string; inputHash: string; outcome: string; selectedOptionId?: string | null; otherText?: string | null }
 export interface McpServerRequest { id: string; name: string; command: string; args: string[]; enabled: boolean }
-export interface AiRequest { requestId: string; action: string; text: string; instruction: string | null; modelProfileId: string | null; thinkingMode?: string | null; source?: string | null; conversationId?: string | null; mode?: string | null; references?: JsonValue[]; targetNoteId?: string | null; selection?: JsonObject | null; targetLanguage?: string | null }
+export interface AiRequest { requestId: string; action: string; text: string; instruction: string | null; modelProfileId: string | null; thinkingMode?: string | null; source?: string | null; conversationId?: string | null; messageId?: string | null; mode?: string | null; references?: JsonValue[]; targetNoteId?: string | null; selection?: JsonObject | null; targetLanguage?: string | null }
 export interface ExportWriteRequest { directory: string; fileName: string; contentBase64: string }
 
 export interface CommandMap {

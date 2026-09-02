@@ -120,12 +120,6 @@ export function useChatWorkspace() {
     })
   }
   
-  function assistantContext() {
-    const referenceText = references.value.map(item => `${item.type === 'note' ? '笔记' : '文件'}：${item.name}`).join('\n')
-    const history = messages.value.slice(-8).map(item => `${item.role === 'user' ? '用户' : '助手'}：${item.content}`).join('\n')
-    return [referenceText ? `用户选择的引用：\n${referenceText}` : '', history ? `此前对话：\n${history}` : ''].filter(Boolean).join('\n\n') || '无额外上下文'
-  }
-  
   async function ensureConversation() {
     if (conversationId.value) return conversationId.value
     const conversation = await invoke('chat_create', { modelProfileId: selectedModel.value?.id || null, mode: currentMode.value })
@@ -248,6 +242,39 @@ export function useChatWorkspace() {
     streamingText.value = message
     await completeResponse()
     return true
+  }
+
+  async function settleFailedResponse(message: string) {
+    const detail = String(message || '模型请求失败').trim().slice(0, 1000)
+    const notice = currentMode.value === 'agent' ? `Tiny Agent 执行失败：${detail}` : `模型请求失败：${detail}`
+    finishStreamingAgentText()
+    if (currentMode.value === 'agent') markActiveAgentSteps('error')
+    const persistedSegments = agentSegments.value.map(segment => ({ ...segment }))
+    try {
+      const thread = conversationId.value ? await invoke('chat_get', { id: conversationId.value }) : null
+      const persisted = [...(thread?.messages || [])].reverse().find(item => item.role === 'assistant' && item.content === notice) as ViewMessage | undefined
+      if (persisted && !messages.value.some(item => item.id === persisted.id)) {
+        if (persistedSegments.length) persisted.agentSegments = persistedSegments
+        messages.value.push(persisted)
+      } else if (!persisted) {
+        const saved = await saveMessage('assistant', notice)
+        if (persistedSegments.length) saved.agentSegments = persistedSegments
+        messages.value.push(saved)
+      }
+    } catch {
+      // The visible error remains available even if the fallback write fails.
+    }
+    streamingText.value = ''
+    busy.value = false
+    pendingSummary.value = false
+    pendingApproval.value = null
+    pendingInput.value = null
+    approvalBusy.value = false
+    approvalError.value = ''
+    responseSources.value = []
+    responseProposal.value = null
+    agentSegments.value = []
+    currentAgentRunId.value = ''
   }
   
   function parseInputResponse(output: JsonValue | string | null | undefined): JsonValue | null {
@@ -387,7 +414,7 @@ export function useChatWorkspace() {
       if (event.type === 'error') {
         const message = event.message || '模型请求失败'
         error.value = message
-        if (!await retainInterruptedAgentRun('error', `Tiny Agent 执行失败：${message}`)) { streamingText.value = ''; busy.value = false; pendingApproval.value = null; pendingInput.value = null }
+        await settleFailedResponse(message)
       }
       if (event.type === 'cancelled') {
         if (!await retainInterruptedAgentRun('cancelled', '已停止 Tiny Agent 执行。')) { streamingText.value = ''; busy.value = false; pendingApproval.value = null; pendingInput.value = null }
@@ -463,7 +490,7 @@ export function useChatWorkspace() {
           return
         }
         const channel = createResponseChannel()
-        await invoke('agent_invoke', { request: { requestId: requestId.value, conversationId: conversationId.value, message, references: contextAllowed ? messageReferenceCopies : [], modelProfileId: selectedModel.value?.id || null, thinkingMode: thinkingMode.value }, onEvent: channel })
+        await invoke('agent_invoke', { request: { requestId: requestId.value, conversationId: conversationId.value, messageId: savedUserMessage.id, message, references: contextAllowed ? messageReferenceCopies : [], modelProfileId: selectedModel.value?.id || null, thinkingMode: thinkingMode.value }, onEvent: channel })
       } else {
         const targetNotes = messageReferenceCopies.filter(item => item.type === 'note')
         const editMode = targetNotes.length === 1 && isNoteEditIntent(message)
@@ -472,12 +499,12 @@ export function useChatWorkspace() {
           return
         }
         const channel = createResponseChannel()
-        await invoke('note_ai_stream', { request: { requestId: requestId.value, action: 'custom', mode: editMode ? 'edit' : 'chat', text: assistantContext(), instruction: message, references: contextAllowed ? messageReferenceCopies : [], targetNoteId: targetNotes.length === 1 ? targetNotes[0].noteId : null, modelProfileId: selectedModel.value?.id || null, thinkingMode: thinkingMode.value, source: 'chat', conversationId: conversationId.value }, onEvent: channel })
+        await invoke('note_ai_stream', { request: { requestId: requestId.value, action: 'custom', mode: editMode ? 'edit' : 'chat', text: message, instruction: message, references: contextAllowed ? messageReferenceCopies : [], targetNoteId: targetNotes.length === 1 ? targetNotes[0].noteId : null, modelProfileId: selectedModel.value?.id || null, thinkingMode: thinkingMode.value, source: 'chat', conversationId: conversationId.value, messageId: savedUserMessage.id }, onEvent: channel })
       }
     } catch (cause) {
       const message = errorMessage(cause, '模型请求失败')
       error.value = message
-      if (!await retainInterruptedAgentRun('error', `Tiny Agent 执行失败：${message}`)) { streamingText.value = ''; busy.value = false }
+      await settleFailedResponse(message)
     }
   }
   
@@ -744,7 +771,7 @@ export function useChatWorkspace() {
     messagesRef, conversationId, conversationTitle, referenceMenuOpen, responseSources, responseProposal, pendingSummary, savedNote,
     currentMode, modeSaving, agentSegments, currentAgentRunId, pendingApproval, pendingInput, agentTools, approvalBusy,
     approvalError, responseFinalizing, agentTextSequence, fromHome, selectedModel, agentApprovalCount, isBusy,
-    scrollToBottom, assistantContext, ensureConversation, saveMessage, pushResponse, completeResponse, mapAgentStep,
+    scrollToBottom, ensureConversation, saveMessage, pushResponse, completeResponse, mapAgentStep,
     appendAgentText, finishStreamingAgentText, hasAgentText, agentMessageTail, markActiveAgentSteps, retainInterruptedAgentRun, parseInputResponse, ensureContextConsent,
     noteHtml, noteTitle, createNoteFromText, refreshDataAfterAgent, saveAssistantAsNote, openSavedNote, addAssistantNotice, performNoteCommand,
     createResponseChannel, decideApproval, sendMessage, submit, summarizeConversation, stop, respondInput, goBack,

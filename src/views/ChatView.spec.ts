@@ -40,7 +40,7 @@ describe('ChatView background tasks', () => {
         const task = testState.tasks.find(item => item.id === args.input.id); Object.assign(task, { status: args.input.status, output: task.output + (args.input.outputDelta || '') }); return { ...task }
       }
       if (command === 'chat_create') return { id: 'conversation-1', title: '新对话', mode: args.mode }
-      if (command === 'chat_add_message') return { id: crypto.randomUUID(), role: args.role, content: args.content, references: args.references || [] }
+      if (command === 'chat_add_message') return { id: args.role === 'user' ? 'message-user-1' : crypto.randomUUID(), role: args.role, content: args.content, references: args.references || [] }
       if (command === 'agent_invoke' || command === 'note_ai_stream') return null
       if (command === 'chat_generate_title') return '测试对话'
       return null
@@ -64,7 +64,7 @@ describe('ChatView background tasks', () => {
     await wrapper.findAll('.chat-mode-switch button')[1].trigger('click')
     await wrapper.get('textarea').setValue('创建一篇笔记')
     await wrapper.find('form').trigger('submit'); await flushPromises()
-    expect(testState.invoke).toHaveBeenCalledWith('agent_invoke', expect.objectContaining({ request: expect.objectContaining({ conversationId: 'conversation-1', message: '创建一篇笔记' }), onEvent: expect.anything() }))
+    expect(testState.invoke).toHaveBeenCalledWith('agent_invoke', expect.objectContaining({ request: expect.objectContaining({ conversationId: 'conversation-1', messageId: 'message-user-1', message: '创建一篇笔记' }), onEvent: expect.anything() }))
     expect(testState.invoke.mock.calls.some(([command]) => command === 'background_task_enqueue')).toBe(false)
     wrapper.unmount(); await flushPromises()
     expect(testState.invoke.mock.calls.some(([command]) => command === 'agent_cancel')).toBe(false)
@@ -90,6 +90,34 @@ describe('ChatView background tasks', () => {
     await channel.onmessage({ type: 'approvalRequired', runId: 'run-1', toolCallId: 'tool-2', toolName: 'delete_note', arguments: { id: 'note-2' }, approvalHash: 'hash-2' })
     await flushPromises()
     expect((window.document.querySelector('.agent-approval-actions .is-approve') as HTMLButtonElement).disabled).toBe(false)
+    wrapper.unmount()
+  })
+
+  it('reuses the server-persisted Agent failure without saving a duplicate', async () => {
+    const base = testState.invoke.getMockImplementation()
+    testState.invoke.mockImplementation(async (command, args = {}) => {
+      if (command === 'chat_get') return {
+        conversation: { id: 'conversation-1', title: '失败会话', mode: 'agent', modelProfileId: 'model-1' },
+        messages: [
+          { id: 'message-user-1', conversationId: 'conversation-1', role: 'user', content: '继续之前的任务', references: [], sources: [] },
+          { id: 'message-failure-1', conversationId: 'conversation-1', role: 'assistant', content: 'Tiny Agent 执行失败：系统提示失败', references: [], sources: [{ type: 'run_failure', runId: 'run-failed' }], agentRunId: 'run-failed' }
+        ]
+      }
+      return base(command, args)
+    })
+    const wrapper = mountView(); await flushPromises()
+    await wrapper.findAll('.chat-mode-switch button')[1].trigger('click')
+    await wrapper.get('textarea').setValue('继续之前的任务')
+    await wrapper.find('form').trigger('submit'); await flushPromises()
+    const channel = testState.channels.at(-1)
+
+    await channel.onmessage({ type: 'started', runId: 'run-failed' })
+    await channel.onmessage({ type: 'error', runId: 'run-failed', message: '系统提示失败' })
+    await flushPromises()
+
+    const assistantWrites = testState.invoke.mock.calls.filter(([command, args]) => command === 'chat_add_message' && args.role === 'assistant')
+    expect(assistantWrites).toHaveLength(0)
+    expect(wrapper.findAll('markdown-message-stub').at(-1)?.attributes('content')).toBe('Tiny Agent 执行失败：系统提示失败')
     wrapper.unmount()
   })
 
@@ -125,7 +153,7 @@ describe('ChatView background tasks', () => {
     const wrapper = mountView(); await flushPromises()
     await wrapper.get('textarea').setValue('解释一下这段内容')
     await wrapper.find('form').trigger('submit'); await flushPromises()
-    expect(testState.invoke).toHaveBeenCalledWith('note_ai_stream', expect.objectContaining({ onEvent: expect.anything() }))
+    expect(testState.invoke).toHaveBeenCalledWith('note_ai_stream', expect.objectContaining({ request: expect.objectContaining({ conversationId: 'conversation-1', messageId: 'message-user-1' }), onEvent: expect.anything() }))
     expect(testState.invoke.mock.calls.some(([command]) => command === 'background_task_enqueue')).toBe(false)
     wrapper.unmount()
   })
