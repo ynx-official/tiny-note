@@ -32,6 +32,16 @@ async function runAgent(request: Record<string, unknown>, channel: EventChannel<
   return completed
 }
 
+function reconnectAgentStream(channel: EventChannel<unknown>, runId: string): void {
+  void channel.connect(runId).catch(cause => {
+    channel.emit({
+      type: 'error',
+      runId,
+      message: cause instanceof Error ? cause.message : 'Agent 事件流连接失败'
+    })
+  })
+}
+
 async function readRemoteImageAsset(assetId: string): Promise<ImageAsset> {
   const asset = await apiRequest<ImageAsset & { downloadUrl: string }>(`/image-assets/${encodeURIComponent(assetId)}`)
   const response = await fetch(asset.downloadUrl)
@@ -193,12 +203,12 @@ export async function remoteInvoke<K extends CommandName>(command: K, args: Comm
     case 'agent_cancel': result = await apiRequest(`/agent/runs/${encodeURIComponent(input.id || input.requestId)}/cancel`, { method: 'POST' }); break
     case 'agent_resume': {
       result = await apiRequest(`/agent/runs/${encodeURIComponent(input.request.runId)}/resume`, { method: 'POST', body: input.request })
-      await input.onEvent.connect(input.request.runId)
+      reconnectAgentStream(input.onEvent, input.request.runId)
       break
     }
     case 'agent_respond_input': {
       result = await apiRequest(`/agent/runs/${encodeURIComponent(input.request.runId)}/input`, { method: 'POST', body: input.request })
-      await input.onEvent.connect(input.request.runId)
+      reconnectAgentStream(input.onEvent, input.request.runId)
       break
     }
     case 'image_generation_list': result = await apiRequest(`/images${query({ limit: input.limit })}`); break

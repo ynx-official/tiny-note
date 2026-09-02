@@ -103,6 +103,8 @@ export function useChatWorkspace() {
   let responseFinalizing = false
   
   let agentTextSequence = 0
+
+  let activeResponseChannel: EventChannel<AgentEvent> | null = null
   
   const fromHome = computed(() => route.query.from === 'home')
   
@@ -183,6 +185,28 @@ export function useChatWorkspace() {
     if (step.kind === 'input') return { id: step.toolCallId || step.id, type: 'input', toolName: step.toolName, arguments: step.arguments || {}, response: parseInputResponse(step.output), status: step.status }
     if (step.kind !== 'tool') return null
     return { id: step.toolCallId || step.id, type: 'tool', toolName: step.toolName, arguments: step.arguments || {}, output: step.output || '', status: step.status }
+  }
+
+  function isProcessedApprovalError(cause: unknown) {
+    const message = errorMessage(cause, '')
+    return message.includes('待处理 Agent 步骤不存在') || message.includes('Agent 步骤已处理')
+  }
+
+  async function reconcileProcessedApproval(approval: PendingApproval) {
+    try {
+      const run = await invoke('agent_get_run', { runId: approval.runId })
+      const step = run.steps.find(item => item.toolCallId === approval.toolCallId)
+      if (!step || step.status === 'awaiting_approval' || (step.approvalHash && step.approvalHash !== approval.approvalHash)) return false
+      const segment = mapAgentStep(step)
+      const index = agentSegments.value.findIndex(item => item.id === approval.toolCallId)
+      if (segment && index >= 0) agentSegments.value[index] = segment
+      pendingApproval.value = null
+      approvalError.value = ''
+      error.value = ''
+      return true
+    } catch {
+      return false
+    }
   }
   
   function appendAgentText(text: string) {
@@ -315,6 +339,7 @@ export function useChatWorkspace() {
   }
   
   function createResponseChannel() {
+    activeResponseChannel?.close()
     const channel = new EventChannel<AgentEvent>()
     channel.onmessage = async event => {
       if (event.type === 'delta' || event.type === 'textDelta') {
@@ -350,6 +375,12 @@ export function useChatWorkspace() {
       if (event.type === 'toolResult') {
         const segment = agentSegments.value.find(item => item.id === event.toolCallId)
         if (segment) Object.assign(segment, { status: event.status || 'completed', output: event.output || '', response: segment.type === 'input' ? parseInputResponse(event.output) : segment.response })
+        if (pendingApproval.value?.toolCallId === event.toolCallId) {
+          pendingApproval.value = null
+          approvalBusy.value = false
+          approvalError.value = ''
+        }
+        if (pendingInput.value?.toolCallId === event.toolCallId) pendingInput.value = null
       }
       if (event.type === 'sources') responseSources.value = event.sources || []
       if (event.type === 'editProposal') responseProposal.value = event.proposal || null
@@ -368,6 +399,7 @@ export function useChatWorkspace() {
         await completeResponse()
       }
     }
+    activeResponseChannel = channel
     return channel
   }
   
@@ -377,14 +409,15 @@ export function useChatWorkspace() {
     error.value = ''
     approvalError.value = ''
     approvalBusy.value = true
-    // 审批后的续跑使用新的 SSE 连接，并从服务端持久化事件序列恢复。
-    const channel = createResponseChannel()
+    // 续跑复用当前运行的事件通道，重连时从持久化事件游标继续，避免重复消费。
+    const channel = activeResponseChannel || createResponseChannel()
     const segment = agentSegments.value.find(item => item.id === approval.toolCallId)
     if (segment) segment.status = decision === 'approve' ? 'running' : 'rejected'
     try {
       await invoke('agent_resume', { request: { runId: approval.runId, toolCallId: approval.toolCallId, approvalHash: approval.approvalHash, decision, reason: decision === 'reject' ? '用户拒绝执行此操作' : null }, onEvent: channel })
       if (pendingApproval.value?.toolCallId === approval.toolCallId) pendingApproval.value = null
     } catch (cause) {
+      if (isProcessedApprovalError(cause) && await reconcileProcessedApproval(approval)) return
       approvalError.value = errorMessage(cause, '审批回传失败')
       error.value = approvalError.value
       pendingApproval.value = approval
@@ -474,7 +507,7 @@ export function useChatWorkspace() {
     input.busy = true
     const segment = agentSegments.value.find(item => item.id === input.toolCallId)
     if (segment) segment.status = 'submitting'
-    const channel = createResponseChannel()
+    const channel = activeResponseChannel || createResponseChannel()
     try {
       await invoke('agent_respond_input', {
         request: {
@@ -500,6 +533,8 @@ export function useChatWorkspace() {
   
   function newChat() {
     if (isBusy.value) return
+    activeResponseChannel?.close()
+    activeResponseChannel = null
     messages.value = []
     references.value = []
     draft.value = ''
@@ -564,6 +599,8 @@ export function useChatWorkspace() {
   
   async function loadConversation(id: string, force = false) {
     if (!id || (!force && id === conversationId.value)) return
+    activeResponseChannel?.close()
+    activeResponseChannel = null
     busy.value = false
     streamingText.value = ''
     try {
@@ -640,7 +677,11 @@ export function useChatWorkspace() {
     if (pending?.message) await sendMessage(pending.message, references.value)
   })
   
-  onUnmounted(() => { window.removeEventListener('tiny-note-chat-deleted', handleDeleted) })
+  onUnmounted(() => {
+    activeResponseChannel?.close()
+    activeResponseChannel = null
+    window.removeEventListener('tiny-note-chat-deleted', handleDeleted)
+  })
   
   async function selectMode(mode: string) {
     if (isBusy.value || modeSaving.value || mode === currentMode.value) return
@@ -661,9 +702,10 @@ export function useChatWorkspace() {
     }
   }
   
-  const toolLabels: Record<string, string> = { create_knowledge_base: '创建知识库', list_knowledge_bases: '读取知识库目录', update_knowledge_base: '更新知识库', delete_knowledge_base: '删除知识库', list_notes: '列出笔记', search_notes: '搜索笔记', get_note: '读取笔记', list_notebooks: '列出笔记本', create_notebook: '创建笔记本', update_notebook: '更新笔记本', move_notebook: '移动笔记本', delete_notebook: '删除笔记本', get_current_time: '获取当前时间', create_note: '创建笔记', update_note: '生成修改提案', delete_note: '删除笔记', update_memory: '更新记忆', list_agent_files: '浏览工作区', read_agent_file: '读取工作区文件', write_agent_file: '写入工作区文件', read_skill: '读取技能', write_skill: '更新技能', list_mcp_tools: '查找 MCP 工具', call_mcp_tool: '调用 MCP 工具', delegate_task: '委派子 Agent', run_sandbox_script: '运行隔离脚本' }
+  const toolLabels: Record<string, string> = { create_knowledge_base: '创建知识库', list_knowledge_bases: '读取知识库目录', update_knowledge_base: '更新知识库', delete_knowledge_base: '删除知识库', list_notes: '列出笔记', search_notes: '搜索笔记', get_note: '读取笔记', list_notebooks: '列出笔记本', create_notebook: '创建笔记本', update_notebook: '更新笔记本', move_notebook: '移动笔记本', delete_notebook: '删除笔记本', get_current_time: '获取当前时间', request_user_input: '请求用户输入', create_note: '创建笔记', create_note_in_knowledge_base: '在知识库中新建笔记', move_note_to_knowledge_base: '移动笔记到知识库', update_note: '生成修改提案', delete_note: '删除笔记', update_memory: '更新记忆', list_agent_files: '浏览工作区', read_agent_file: '读取工作区文件', write_agent_file: '写入工作区文件', read_skill: '读取技能', write_skill: '更新技能', list_mcp_tools: '查找 MCP 工具', call_mcp_tool: '调用 MCP 工具', delegate_task: '委派子 Agent', run_sandbox_script: '运行隔离脚本', create_todo: '创建待办', create_calendar_event: '创建日历事件' }
   
   function toolLabel(name: string | null | undefined) {
+    if (name?.startsWith('mcp_')) return agentTools.value.find(tool => tool.name === name)?.description || `调用 MCP 工具 · ${name}`
     return (name ? toolLabels[name] : '') || name || '调用工具'
   }
   

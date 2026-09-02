@@ -24,4 +24,26 @@ describe('remote command optimistic versions', () => {
       method: 'PUT', body: { title: 'stale editor content', version: 3 }
     })
   })
+
+  it('acknowledges an Agent approval without waiting for the resumed event stream to finish', async () => {
+    const run = { id: 'run-1', status: 'running' }
+    apiRequest.mockResolvedValue(run)
+    const connect = vi.fn(() => new Promise(() => {}))
+    const channel = { connect, emit: vi.fn() }
+    const { remoteInvoke } = await import('./remoteCommands')
+    let settled = false
+
+    const request = remoteInvoke('agent_resume', {
+      request: { runId: 'run-1', toolCallId: 'tool-1', approvalHash: 'hash-1', decision: 'approve', reason: null },
+      onEvent: channel as never
+    }).then(value => { settled = true; return value })
+    await vi.waitFor(() => expect(settled).toBe(true))
+
+    await expect(request).resolves.toEqual(run)
+    expect(apiRequest).toHaveBeenCalledWith('/agent/runs/run-1/resume', {
+      method: 'POST',
+      body: { runId: 'run-1', toolCallId: 'tool-1', approvalHash: 'hash-1', decision: 'approve', reason: null }
+    })
+    expect(connect).toHaveBeenCalledWith('run-1')
+  })
 })

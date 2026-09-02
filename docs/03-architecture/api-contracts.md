@@ -10,7 +10,7 @@
 
 后台任务的创建必须使用服务端类型化入口：`conversation_summary_task_create`（`POST /chats/{conversationId}/summary-tasks`）、`note_ai_task_create`（`POST /notes/{noteId}/ai-tasks`）和 `image_generation_task_create`（`POST /images/generation-tasks`）。客户端只提交请求键、动作和资源引用，不提交对话/笔记正文快照，也不执行模型调用、状态迁移或结果落库。`background_task_list/get/cancel/retry/clear_finished` 仅负责查询和控制；不存在通用任务创建或客户端状态迁移接口。普通对话和 Tiny Agent 仍在原对话内展示，不进入任务中心；首条助手消息由服务端自动创建不可见的 `chat_title` 任务。任务输入只引用模型配置 ID，不接受名称包含 api-key、token、password 或 secret 的字段；终态任务可重试为带 `retryOf` 的新尝试，超过 30 天自动清理，清理任务记录不删除已生成业务结果。
 
-Agent 命令：`agent_invoke`、`agent_resume`、`agent_respond_input`、`agent_cancel`、`agent_get_run`、`agent_get_pending_run`、`agent_list_tools`、`agent_tool_policy_update`。`request_user_input` 接受标题、问题、2–4 个带稳定语义 ID 的互斥选项、至多一个推荐项和 `allowOther`；它不进入危险操作审批，而是把运行置为 `awaiting_input` 并发出 `inputRequired`。`agent_respond_input` 使用 `runId`、`toolCallId` 与内容哈希绑定当前请求，接受 `answered`、`skipped` 或 `cancelled`，防止旧卡片重复或错位提交。工具调用预算以 12 个模型回合为一批；一批耗尽后运行进入可恢复的 `awaiting_input`，展示“继续执行”和“终止任务”。继续会保留上下文并追加 12 个工具回合，终止、跳过或取消选择会结束当前运行；该选择与普通输入请求一样持久化，应用重启后仍可回答。`agent_list_tools` 是设置页“工具与权限”和对话页能力摘要的权威来源，返回技术名称、说明、`defaultRequireApproval` 和当前生效的 `requireApproval`。`agent_tool_policy_update` 接受 `toolNames` 与 `requireApproval`：布尔值用于单个或按业务分类批量覆盖，`null` 删除覆盖并恢复系统默认；未知工具会使整批请求失败。
+Agent 命令：`agent_invoke`、`agent_resume`、`agent_respond_input`、`agent_cancel`、`agent_get_run`、`agent_get_pending_run`、`agent_list_tools`、`agent_tool_policy_update`。服务端注册表固定提供 31 个内置工具：重构前的 29 个时间、输入、MCP、委派、沙箱、Skill、Agent 工作区、笔记、笔记本、知识库和 Memory 工具，以及 `create_todo`、`create_calendar_event`；已启用 MCP 服务发现的工具再以稳定的 `mcp_*` 别名动态追加。`request_user_input` 接受标题、问题、2–4 个带稳定语义 ID 的互斥选项、至多一个推荐项和 `allowOther`；它不进入危险操作审批，而是把运行置为 `awaiting_input` 并发出 `inputRequired`。`agent_respond_input` 使用 `runId`、`toolCallId` 与内容哈希绑定当前请求，接受 `answered`、`skipped` 或 `cancelled`，并校验选择属于原始选项、其他答案确实获准，防止旧卡片、错位或伪造选项提交。工具调用预算以 12 个模型回合为一批；一批耗尽后运行进入可恢复的 `awaiting_input`，展示“继续执行”和“终止任务”。继续会保留全部工具记录并追加 12 个工具回合，终止、跳过或取消选择会结束当前运行；工具执行错误作为 `error` 工具结果交回模型以便修正或降级，不直接终止整次运行。`agent_list_tools` 是设置页“工具与权限”和对话页能力摘要的权威来源，返回内置及动态 MCP 工具的技术名称、说明、`defaultRequireApproval` 和当前生效的 `requireApproval`。`agent_tool_policy_update` 接受 `toolNames` 与 `requireApproval`：布尔值用于单个或按业务分类批量覆盖，`null` 删除覆盖并恢复系统默认；未知工具会使整批请求失败。
 
 笔记工具覆盖 `list_notes`、`search_notes`、`get_note`、`create_note`、`create_note_in_knowledge_base`、`move_note_to_knowledge_base`、`update_note` 和 `delete_note`。`list_notes(notebookId?,limit?,offset?)` 返回总数、分页状态、ID、标题、笔记本元数据、更新时间和摘要；`search_notes(query?,notebookId?,limit?)` 的空查询或集合泛词回退列表，其他查询先完整匹配、再按规范化中英文和数字关键词宽松匹配，标题优先于正文。两者都排除外部来源与最近删除。`get_note` 返回完整 `contentMarkdown`、纯文本、标题和笔记本元数据。`create_note` 标题最多 50 个字符，未指定笔记本时归入“未分类”；更新只生成待审阅提案，删除只移入最近删除。三个读取工具默认无需审批，写操作默认逐次审批。
 
@@ -18,9 +18,9 @@ Agent 命令：`agent_invoke`、`agent_resume`、`agent_respond_input`、`agent_
 
 Skills 命令：`agent_skill_list`、`agent_skill_read`、`agent_skill_upsert`、`agent_skill_delete`。列表只返回名称、描述、文件名、内置标记和更新时间；完整 `SKILL.md` 通过读取命令按需加载。内置 `knowledge-research`、`note-organizer` 与 `notebook-manager` 分别管理知识库元数据、普通笔记和笔记本；版本升级只替换内容完全等于历史模板的文件，不覆盖用户编辑。
 
-MCP 命令：`agent_mcp_list`、`agent_mcp_upsert`、`agent_mcp_delete`、`agent_mcp_refresh`。`refresh` 通过 stdio 完成 initialize 与 tools/list，并缓存工具清单；Agent 通过 `list_mcp_tools` 和 `call_mcp_tool` 两个网关工具访问，实际调用遵循当前 `call_mcp_tool` 审批策略。
+MCP 命令：`agent_mcp_list`、`agent_mcp_upsert`、`agent_mcp_delete`、`agent_mcp_refresh`。`refresh` 完成 initialize 与 tools/list 并缓存工具清单；Agent 既可通过 `list_mcp_tools`、`call_mcp_tool` 网关访问，也可直接调用注册表动态生成的 `mcp_*` 别名。动态别名默认逐次审批，可在“工具与权限”中单独覆盖；禁用或删除服务后不会再进入模型工具清单。
 
-高级 Agent 工具：`delegate_task` 使用当前模型执行无工具权限的隔离子任务；`run_sandbox_script` 在资源受限的 Rhai 引擎中执行纯计算。两者默认进入持久化审批，也允许用户通过正式权限入口覆盖。
+高级 Agent 工具：`delegate_task` 使用当前模型执行无工具权限的隔离子任务；`run_sandbox_script` 在无文件、网络和进程能力且限制执行步数的 Starlark 环境中执行纯计算。两者默认进入持久化审批，也允许用户通过正式权限入口覆盖。
 
 AI 上下文：请求可携带 `mode`、结构化 `references`、`targetNoteId` 和 `selection`，不再接受 `scope` 或 `autoRetrieve`。只有本轮明确选择的 `references` 被直接读取并标记为不可信参考，不能扩展检索其他笔记或文件；无引用时不读取本地内容。来源仍通过 `sources` 事件返回。`context_search`、`search_index_status/rebuild/retry_failed` 已移除。
 

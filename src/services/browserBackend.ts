@@ -77,17 +77,17 @@ const browserLegacySkillContent = {
   ]
 }
 const browserAgentToolDefaults: Array<readonly [string, string, boolean]> = [
-  ['list_knowledge_bases', '列出现有知识库元数据', false], ['get_current_time', '获取本机当前时间', false],
+  ['get_current_time', '获取本机当前时间', false], ['request_user_input', '暂停运行并向用户请求结构化输入', false],
   ['list_mcp_tools', '列出已发现的 MCP 工具', false], ['call_mcp_tool', '调用外部 MCP 工具', true],
   ['delegate_task', '委派独立子任务', true], ['run_sandbox_script', '执行隔离计算脚本', true],
-  ['list_notes', '列出未删除的普通笔记', false], ['search_notes', '搜索未删除的普通笔记', false], ['get_note', '读取指定笔记的完整 Markdown', false],
-  ['list_notebooks', '列出笔记本及直属统计', false], ['list_agent_files', '浏览 Agent 工作区', false],
-  ['read_agent_file', '读取 Agent 工作区文本文件', false], ['write_agent_file', '写入 Agent 工作区文本文件', true],
   ['read_skill', '读取 Agent 技能', false], ['write_skill', '创建或更新 Agent 技能', true],
+  ['list_agent_files', '浏览 Agent 工作区', false], ['read_agent_file', '读取 Agent 工作区文本文件', false], ['write_agent_file', '写入 Agent 工作区文本文件', true],
   ['create_note', '创建笔记', true], ['create_note_in_knowledge_base', '在知识库中新建笔记', true], ['move_note_to_knowledge_base', '移动笔记到其他知识库', true], ['update_note', '生成笔记修改提案', true], ['delete_note', '将笔记移入最近删除', true],
+  ['update_memory', '更新 Agent 记忆', true],
   ['create_notebook', '创建笔记本', true], ['update_notebook', '更新笔记本信息', true], ['move_notebook', '移动笔记本层级', true], ['delete_notebook', '删除笔记本并安全归位内容', true],
   ['create_knowledge_base', '创建知识库', true], ['update_knowledge_base', '更新知识库信息', true], ['delete_knowledge_base', '删除知识库并移入回收站', true],
-  ['update_memory', '更新 Agent 记忆', true]
+  ['list_knowledge_bases', '列出现有知识库元数据', false], ['list_notes', '列出未删除的普通笔记', false], ['search_notes', '搜索未删除的普通笔记', false], ['get_note', '读取指定笔记的完整 Markdown', false], ['list_notebooks', '列出笔记本及直属统计', false],
+  ['create_todo', '创建待办', true], ['create_calendar_event', '创建日历事件', true]
 ]
 export async function browserInvoke<K extends CommandName>(command: K, commandArgs: CommandArgs<K>): Promise<CommandResult<K>> {
   const args = commandArgs as unknown as BrowserArgs

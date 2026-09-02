@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, onMounted, ref } from 'vue'
-import { Brain, Cable, CheckCircle2, FolderTree, LibraryBig, LoaderCircle, NotebookPen, RefreshCw, ShieldCheck, Sparkles, TerminalSquare, UsersRound, Wrench } from 'lucide-vue-next'
+import { Brain, Cable, CalendarCheck2, CheckCircle2, FolderTree, LibraryBig, LoaderCircle, NotebookPen, RefreshCw, ShieldCheck, Sparkles, TerminalSquare, UsersRound, Wrench } from 'lucide-vue-next'
 import { invoke } from '../services/tauri'
 import { errorMessage, type AgentTool } from '../types/domain'
 
@@ -11,6 +11,7 @@ const error = ref('')
 
 const toolMeta: Record<string, { label: string; group: string; permission: string }> = {
   get_current_time: { label: '获取当前时间', group: 'system', permission: '只读' },
+  request_user_input: { label: '请求用户输入', group: 'agent-collaboration', permission: '交互' },
   run_sandbox_script: { label: '运行隔离计算脚本', group: 'system', permission: '计算' },
   list_notes: { label: '列出笔记', group: 'notes', permission: '只读' },
   search_notes: { label: '搜索笔记', group: 'notes', permission: '只读' },
@@ -37,11 +38,14 @@ const toolMeta: Record<string, { label: string; group: string; permission: strin
   write_agent_file: { label: '写入 Agent 工作区文件', group: 'agent-workspace', permission: '写入' },
   list_mcp_tools: { label: '查找 MCP 工具', group: 'mcp', permission: '外部' },
   call_mcp_tool: { label: '调用 MCP 工具', group: 'mcp', permission: '外部' },
-  delegate_task: { label: '委派子 Agent', group: 'agent-collaboration', permission: '外部' }
+  delegate_task: { label: '委派子 Agent', group: 'agent-collaboration', permission: '外部' },
+  create_todo: { label: '创建待办', group: 'productivity', permission: '写入' },
+  create_calendar_event: { label: '创建日历事件', group: 'productivity', permission: '写入' }
 }
 
 const groupDefinitions = [
   { id: 'system', label: '系统', description: '时间、隔离计算等系统基础能力', icon: Wrench },
+  { id: 'productivity', label: '日程与待办', description: '创建待办事项与日历事件', icon: CalendarCheck2 },
   { id: 'notes', label: '笔记', description: '创建、搜索、读取、修改或删除笔记', icon: NotebookPen },
   { id: 'notebooks', label: '笔记本', description: '管理笔记本信息与层级，不递归删除内容', icon: FolderTree },
   { id: 'knowledge', label: '知识库', description: '管理知识库元数据与笔记引用', icon: LibraryBig },
@@ -55,11 +59,16 @@ const groupDefinitions = [
 
 const approvalCount = computed(() => tools.value.filter(tool => tool.requireApproval).length)
 const customizedCount = computed(() => tools.value.filter(tool => tool.requireApproval !== tool.defaultRequireApproval).length)
+function metadataFor(tool: AgentTool) {
+  if (toolMeta[tool.name]) return toolMeta[tool.name]
+  if (tool.name.startsWith('mcp_')) return { label: tool.description || tool.name, group: 'mcp', permission: '外部' }
+  return { label: tool.name, group: 'other', permission: '其他' }
+}
 const groups = computed(() => groupDefinitions.map(group => ({
   ...group,
   tools: tools.value
-    .filter(tool => (toolMeta[tool.name]?.group || 'other') === group.id)
-    .map(tool => ({ ...tool, label: toolMeta[tool.name]?.label || tool.name, permission: toolMeta[tool.name]?.permission || '其他' }))
+    .filter(tool => metadataFor(tool).group === group.id)
+    .map(tool => ({ ...tool, ...metadataFor(tool) }))
 })).filter(group => group.tools.length))
 
 async function loadTools() {

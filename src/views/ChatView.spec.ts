@@ -3,9 +3,9 @@ import { createPinia } from 'pinia'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import ChatView from './ChatView.vue'
 
-const testState = vi.hoisted(() => ({ invoke: vi.fn(), route: { query: {} }, router: { push: vi.fn(), replace: vi.fn() }, tasks: [] }))
+const testState = vi.hoisted(() => ({ invoke: vi.fn(), route: { query: {} }, router: { push: vi.fn(), replace: vi.fn() }, tasks: [], channels: [] }))
 vi.mock('@tauri-apps/api/core', () => ({ Channel: class { onmessage = () => {} } }))
-vi.mock('../services/eventChannel', () => ({ EventChannel: class { onmessage = () => {}; connect = vi.fn(() => new Promise(() => {})); close = vi.fn() } }))
+vi.mock('../services/eventChannel', () => ({ EventChannel: class { onmessage = () => {}; connect = vi.fn(() => new Promise(() => {})); close = vi.fn(); constructor() { testState.channels.push(this) } } }))
 vi.mock('../services/tauri', () => ({ invoke: testState.invoke }))
 vi.mock('vue-router', () => ({ useRoute: () => testState.route, useRouter: () => testState.router }))
 
@@ -16,6 +16,7 @@ function mountView() {
 describe('ChatView background tasks', () => {
   beforeEach(() => {
     testState.tasks = []
+    testState.channels = []
     testState.route.query = {}
     testState.invoke.mockReset()
     localStorage.clear(); window.sessionStorage.clear(); window.__TAURI_INTERNALS__ = {}
@@ -67,6 +68,57 @@ describe('ChatView background tasks', () => {
     expect(testState.invoke.mock.calls.some(([command]) => command === 'background_task_enqueue')).toBe(false)
     wrapper.unmount(); await flushPromises()
     expect(testState.invoke.mock.calls.some(([command]) => command === 'agent_cancel')).toBe(false)
+  })
+
+  it('reuses the active Agent event stream across consecutive approvals', async () => {
+    const wrapper = mountView(); await flushPromises()
+    await wrapper.findAll('.chat-mode-switch button')[1].trigger('click')
+    await wrapper.get('textarea').setValue('连续执行两个操作')
+    await wrapper.find('form').trigger('submit'); await flushPromises()
+    const channel = testState.channels.at(-1)
+
+    await channel.onmessage({ type: 'toolCall', runId: 'run-1', toolCallId: 'tool-1', toolName: 'create_note', arguments: { title: '第一篇' } })
+    await channel.onmessage({ type: 'approvalRequired', runId: 'run-1', toolCallId: 'tool-1', toolName: 'create_note', arguments: { title: '第一篇' }, approvalHash: 'hash-1' })
+    await flushPromises()
+    expect(window.document.querySelector('.agent-approval-dialog')?.textContent).toContain('第一篇')
+
+    ;(window.document.querySelector('.agent-approval-actions .is-approve') as HTMLButtonElement).click(); await flushPromises()
+    expect(window.document.querySelector('.agent-approval-dialog')).toBeNull()
+    expect(testState.invoke).toHaveBeenCalledWith('agent_resume', expect.objectContaining({ onEvent: channel }))
+
+    await channel.onmessage({ type: 'toolCall', runId: 'run-1', toolCallId: 'tool-2', toolName: 'delete_note', arguments: { id: 'note-2' } })
+    await channel.onmessage({ type: 'approvalRequired', runId: 'run-1', toolCallId: 'tool-2', toolName: 'delete_note', arguments: { id: 'note-2' }, approvalHash: 'hash-2' })
+    await flushPromises()
+    expect((window.document.querySelector('.agent-approval-actions .is-approve') as HTMLButtonElement).disabled).toBe(false)
+    wrapper.unmount()
+  })
+
+  it('dismisses an approval that the server reports was already processed', async () => {
+    const base = testState.invoke.getMockImplementation()
+    testState.invoke.mockImplementation(async (command, args = {}) => {
+      if (command === 'agent_resume') throw new Error('待处理 Agent 步骤不存在')
+      if (command === 'agent_get_run') return {
+        id: 'run-1', status: 'running', steps: [
+          { id: 'step-1', kind: 'tool', toolCallId: 'tool-1', toolName: 'delete_note', arguments: { id: 'note-1' }, output: '已移入最近删除', status: 'completed', approvalHash: 'hash-1' }
+        ]
+      }
+      return base(command, args)
+    })
+    const wrapper = mountView(); await flushPromises()
+    await wrapper.findAll('.chat-mode-switch button')[1].trigger('click')
+    await wrapper.get('textarea').setValue('删除笔记')
+    await wrapper.find('form').trigger('submit'); await flushPromises()
+    const channel = testState.channels.at(-1)
+    await channel.onmessage({ type: 'toolCall', runId: 'run-1', toolCallId: 'tool-1', toolName: 'delete_note', arguments: { id: 'note-1' } })
+    await channel.onmessage({ type: 'approvalRequired', runId: 'run-1', toolCallId: 'tool-1', toolName: 'delete_note', arguments: { id: 'note-1' }, approvalHash: 'hash-1' })
+    await flushPromises()
+
+    ;(window.document.querySelector('.agent-approval-actions .is-approve') as HTMLButtonElement).click(); await flushPromises()
+
+    expect(window.document.querySelector('.agent-approval-dialog')).toBeNull()
+    expect(wrapper.find('.chat-page-error').exists()).toBe(false)
+    expect(wrapper.get('[data-agent-event="tool"]').classes()).toContain('status-completed')
+    wrapper.unmount()
   })
 
   it('keeps ordinary chat in the foreground instead of creating a task', async () => {
