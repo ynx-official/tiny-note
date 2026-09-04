@@ -2,6 +2,15 @@
 
 本文件记录 Tiny Note 各版本面向用户的主要变化，版本号遵循 Semantic Versioning。完整的升级说明统一维护在 [`docs/upgrade/`](docs/upgrade/README.md)，Release Notes 从对应版本详情自动生成。
 
+## [0.1.14] - 2026-09-04
+
+### 修复
+
+- 发布流程只收集 DMG、NSIS、AppImage 和 DEB 安装包，避免上传 macOS 打包辅助文件时因重名而中断。
+- 恢复 Windows、Linux、Intel Mac 和 Apple Silicon Mac 的完整发布产物及在线更新清单。
+
+[0.1.14]: docs/upgrade/tiny-note-v0.1.14/README.md
+
 ## [0.1.13] - 2026-09-04
 
 ### 新增与改进

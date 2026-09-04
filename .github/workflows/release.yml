@@ -108,7 +108,14 @@ jobs:
               --verify-tag
           fi
 
-          mapfile -d '' ASSETS < <(find release-assets -type f -print0)
+          # Bundle directories also contain helper scripts such as bundle_dmg.sh.
+          # Different macOS architectures produce those scripts with the same
+          # basename, so only publish the actual installer artifacts.
+          mapfile -d '' ASSETS < <(
+            find release-assets -type f \
+              \( -iname '*.dmg' -o -iname '*.exe' -o -iname '*.appimage' -o -iname '*.deb' \) \
+              -print0
+          )
           if (( ${#ASSETS[@]} == 0 )); then
             echo "No release assets found"
             exit 1
