@@ -16,7 +16,7 @@
 | `note_`, `notebook_`, `tag_` | `/notes`, `/notebooks`, `/tags` | 更新携带 `version`，冲突返回 HTTP 409 |
 | `knowledge_base_`, `library_` | `/knowledge-bases` 及 `/library` | 文件位于用户私有对象存储前缀 |
 | `calendar_`, `todo_`, `reminder_` | `/calendar-events`, `/todos`, `/todo-lists`, `/reminders` | 资源和提醒按用户隔离 |
-| `chat_` | `/chats` | 会话和消息归属在写入前验证；交互式 AI/Agent 请求携带当前用户消息 `messageId`，服务端据此装配最近 20 个用户回合及其间的回复、工具结果和失败记录 |
+| `chat_` | `/chats` | 会话和消息归属在写入前验证；Agent 请求必须携带已持久化用户消息的 `messageId`，服务端使用数据库原始时间边界避免时区偏移、对短暂读后写不可见进行有限重试，并据此装配最近 20 个用户回合及其间的回复、工具结果和失败记录 |
 | `conversation_summary_task_`, `note_ai_task_`, `image_generation_task_` | `/chats/{id}/summary-tasks`, `/notes/{id}/ai-tasks`, `/images/generation-tasks` | 类型化创建；正文快照、资源键和状态由服务端生成 |
 | `background_task_` | `/tasks` | 客户端只查询、订阅、取消、重试和清理；MySQL 是权威状态 |
 | `note_ai_`, `note_fim_` | `/ai/runs`, `/streams/{runId}` | SSE 可用 `Last-Event-ID` 续传 |
