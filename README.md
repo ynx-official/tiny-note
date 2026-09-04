@@ -13,17 +13,21 @@ Tiny Note 是一个必须登录联网的 Tauri 2 + Vue 3 桌面笔记客户端�
 
 ## 开发
 
-先启动 `tiny-blog-go`，再启动客户端：
+使用本机 `localhost:8081` 后端启动桌面客户端：
 
 ```bash
-VITE_API_BASE_URL=http://127.0.0.1:8080 npm run tauri:dev
+make dev
 ```
 
-仅预览前端：
+使用生产接口启动桌面客户端：
 
 ```bash
-VITE_API_BASE_URL=http://127.0.0.1:8080 npm run dev
+make prod
 ```
+
+`make dev` 使用 `http://localhost:8081`，`make prod` 使用 `https://go.mrsunshine.cn/prod-api`。执行 `make build`、`npm run build` 或 `npm run tauri:build` 时默认使用生产接口。
+
+仅预览前端时，`npm run dev` 默认使用本机接口；如需连接生产接口，运行 `npm run dev -- --mode production`。
 
 浏览器模式也调用远程后端；`browserBackend` 只在单元测试模式作为可注入的内存适配器。
 

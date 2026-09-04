@@ -89,4 +89,16 @@ describe('AppShell task status', () => {
 
     expect(wrapper.get('.rail-avatar-image').attributes('src')).toBe('https://cdn.example/avatar.png')
   })
+
+  it('does not show a create button after the top tabs', () => {
+    const pinia = createPinia()
+    const wrapper = mount(AppShell, {
+      global: {
+        plugins: [pinia, createI18n({ legacy: false, locale: 'zh-CN', messages: { 'zh-CN': { notes: '笔记', library: '知识库', tags: '标签', settings: '设置', appName: 'Tiny Note', newNote: '新建笔记' } } })],
+        stubs: { AvatarDrawer: true, ChatHistoryDrawer: true }
+      }
+    })
+
+    expect(wrapper.find('.tab-plus').exists()).toBe(false)
+  })
 })

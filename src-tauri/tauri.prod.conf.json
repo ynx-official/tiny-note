@@ -1,0 +1,10 @@
+{
+  "build": {
+    "beforeDevCommand": "npm run dev -- --mode production"
+  },
+  "app": {
+    "security": {
+      "csp": "default-src 'self'; connect-src 'self' ipc: http://ipc.localhost https://go.mrsunshine.cn; img-src 'self' data: https:; style-src 'self' 'unsafe-inline'; script-src 'self' 'sha256-XCQVNWpNtQyXkkP9MzOZKY1NF7aypWcGx9Q0VA18958='"
+    }
+  }
+}

@@ -4,7 +4,7 @@
   "version": "0.1.12",
   "identifier": "com.tinynote.desktop",
   "build": {
-    "beforeDevCommand": "npm run dev",
+    "beforeDevCommand": "npm run dev -- --mode production",
     "devUrl": "http://127.0.0.1:1420",
     "beforeBuildCommand": "npm run build",
     "frontendDist": "../dist"
@@ -13,6 +13,7 @@
     "windows": [
       {
         "title": "Tiny Note",
+        "center": true,
         "width": 1280,
         "height": 800,
         "minWidth": 1024,
@@ -24,7 +25,7 @@
       }
     ],
     "security": {
-      "csp": "default-src 'self'; connect-src 'self' ipc: http://ipc.localhost http://127.0.0.1:8080; img-src 'self' data: https:; style-src 'self' 'unsafe-inline'; script-src 'self' 'sha256-XCQVNWpNtQyXkkP9MzOZKY1NF7aypWcGx9Q0VA18958='"
+      "csp": "default-src 'self'; connect-src 'self' ipc: http://ipc.localhost https://go.mrsunshine.cn; img-src 'self' data: https:; style-src 'self' 'unsafe-inline'; script-src 'self' 'sha256-XCQVNWpNtQyXkkP9MzOZKY1NF7aypWcGx9Q0VA18958='"
     }
   },
   "bundle": {

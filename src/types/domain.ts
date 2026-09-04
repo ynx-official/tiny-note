@@ -34,7 +34,7 @@ export interface ExportWriteResult { path: string; fileName: string }
 export interface UpdateInfo { available: boolean; version?: string; notes?: string; body?: string; date?: string; assetName?: string }
 export interface MemoryFile { fileName: string; nameKey: string; description: string; content: string; size: number; updatedAt: string | null }
 export interface McpServer { id: string; name: string; command: string; args: string[]; enabled: boolean; tools?: JsonValue[]; cachedTools?: Array<{ name?: string; description?: string }>; status?: string; error?: string; lastError?: string }
-export interface AgentSkill { id?: string; name: string; fileName?: string; description?: string; content?: string; enabled?: boolean; builtin?: boolean; updatedAt?: string }
+export interface AgentSkill { id?: string; name: string; fileName?: string; description?: string; content?: string; enabled?: boolean; builtin?: boolean; scope?: 'system' | 'user'; updatedAt?: string }
 export interface UsageAggregate { key: string; label: string; provider: string; modelName: string; source: string; promptTokens: number; completionTokens: number; totalTokens: number; reasoningTokens: number; requests: number }
 export interface UsageDay { date: string; promptTokens: number; completionTokens: number; totalTokens: number; requests: number }
 export interface UsageStats { range: string; summary: Record<string, number>; byModel: UsageAggregate[]; byDay: UsageDay[]; bySource: UsageAggregate[] }

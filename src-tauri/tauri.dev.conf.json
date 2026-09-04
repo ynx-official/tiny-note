@@ -1,0 +1,10 @@
+{
+  "build": {
+    "beforeDevCommand": "npm run dev -- --mode development"
+  },
+  "app": {
+    "security": {
+      "csp": "default-src 'self'; connect-src 'self' ipc: http://ipc.localhost http://localhost:8081; img-src 'self' data: https:; style-src 'self' 'unsafe-inline'; script-src 'self' 'sha256-XCQVNWpNtQyXkkP9MzOZKY1NF7aypWcGx9Q0VA18958='"
+    }
+  }
+}

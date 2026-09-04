@@ -2,7 +2,7 @@ import { invoke as tauriInvoke } from '@tauri-apps/api/core'
 import { collectDeviceReport } from './deviceInfo'
 
 const configuredBaseUrl = String(import.meta.env.VITE_API_BASE_URL || '').trim()
-export const API_BASE_URL = (configuredBaseUrl || 'http://127.0.0.1:8080').replace(/\/$/, '')
+export const API_BASE_URL = (configuredBaseUrl || 'https://go.mrsunshine.cn/prod-api').replace(/\/$/, '')
 const ACCESS_TOKEN_ACCOUNT = 'access-token'
 
 interface ApiEnvelope<T> { code: number | string; msg: string; data?: T }

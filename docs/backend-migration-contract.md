@@ -20,7 +20,7 @@
 | `conversation_summary_task_`, `note_ai_task_`, `image_generation_task_` | `/chats/{id}/summary-tasks`, `/notes/{id}/ai-tasks`, `/images/generation-tasks` | 类型化创建；正文快照、资源键和状态由服务端生成 |
 | `background_task_` | `/tasks` | 客户端只查询、订阅、取消、重试和清理；MySQL 是权威状态 |
 | `note_ai_`, `note_fim_` | `/ai/runs`, `/streams/{runId}` | SSE 可用 `Last-Event-ID` 续传 |
-| `agent_` | `/agent`, `/mcp-servers`, `/skills`, `/memory` | 写工具审批，输入令牌一次性恢复 |
+| `agent_` | `/agent`, `/mcp-servers`, `/skills`, `/memory` | 系统技能由云端共享且只读；写工具审批，输入令牌一次性恢复 |
 | `image_` | `/images`, `/image-assets` | 资产只通过短期预签名 URL 读取 |
 | `workspace_` | `/workspace` | 导入导出不包含模型密钥 |
 | `external_markdown_`, `export_`, `app_`, `tray_` | Tauri invoke | 只保留本机文件授权和桌面能力 |
