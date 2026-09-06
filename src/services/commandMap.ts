@@ -4,7 +4,7 @@ import type {
   ExternalMarkdownFile, ExternalMarkdownSource, ImageAsset, ImageGeneration,
   JsonValue, KnowledgeBase, LibraryEntry, LibraryPreview, McpServer, MemoryFile,
   ModelOption, ModelProfile, ModelTestResult, Note, Notebook, NoteLink,
-  NoteTemplate, Reminder, Tag, Todo, TodoList, UpdateInfo, UsageStats
+  NoteTemplate, NotePage, NotePageFilter, Reminder, Tag, Todo, TodoList, UpdateInfo, UsageStats
 } from '../types/domain'
 import type { EventChannel } from './eventChannel'
 
@@ -47,6 +47,7 @@ export interface CommandMap {
   model_query_balance: Command<{ modelId: string }, BalanceData>
 
   note_list: Command<{ search?: string | null; deleted?: boolean; pinned?: boolean | null; knowledgeBaseId?: string | null }, Note[]>
+  note_page: Command<NotePageFilter, NotePage>
   note_get: Command<IdArgs, Note | null>
   note_create: Command<{ input: Partial<Note> }, Note>
   note_update: Command<IdArgs & { input: Versioned<Partial<Note>> }, Note>

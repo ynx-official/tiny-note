@@ -41,6 +41,7 @@ describe('HomeView startup data', () => {
       if (command === 'settings_get') return Promise.resolve({ theme: 'system', language: 'zh-CN', fimEnabled: false, exportDirectory: '' })
       if (command === 'model_list') return Promise.resolve([])
       if (command === 'knowledge_base_list') return Promise.resolve([])
+      if (command === 'note_page') return Promise.resolve({ items: [], total: 0, hasMore: false, nextCursor: '' })
       if (command === 'note_list' || command === 'notebook_list' || command === 'external_markdown_list') return Promise.resolve([])
       return Promise.resolve(null)
     })
@@ -95,7 +96,8 @@ describe('HomeView startup data', () => {
 
     await wrapper.findAll('.home-reference-option')[0].trigger('click')
     await flushPromises()
-    expect(invokedCommands()).toContain('note_purge_expired')
+    expect(invokedCommands()).toContain('note_page')
+    expect(invokedCommands()).not.toContain('note_list')
     expect(invokedCommands()).not.toContain('knowledge_base_list')
   })
 

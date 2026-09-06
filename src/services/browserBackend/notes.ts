@@ -1,5 +1,6 @@
 import type { BrowserArgs, BrowserItem, BrowserState } from './types'
 import type { BrowserHandlerResult } from './planner'
+import { browserNotePage } from './notePage'
 
 function item(value: Record<string, unknown>): BrowserItem { return value as BrowserItem }
 function bumpVersion(value: BrowserItem) { value.version = Number(value.version || 1) + 1 }
@@ -66,6 +67,7 @@ export function migrateLegacyNoteTags(state: BrowserState, now: string, uncatego
 }
 
 export function handleNotesCommand(command: string, args: BrowserArgs, state: BrowserState, now: string, uncategorized: BrowserItem): BrowserHandlerResult | null {
+  if (command === 'note_page') return { result: browserNotePage(state, args) }
   if (command === 'external_markdown_list') return { result: state.notes.filter(note => note.externalPath).map(note => ({ id: note.id, title: note.title, path: note.externalPath, fileName: String(note.externalPath).split(/[\\/]/).pop() || 'Markdown 文件', updatedAt: note.updatedAt, available: true })).sort((a, b) => b.updatedAt.localeCompare(a.updatedAt)) }
   if (command === 'external_markdown_read') { const note = state.notes.find(value => value.id === args.id && value.externalPath); if (!note) throw new Error('外部来源记录不存在'); return { result: { path: note.externalPath, fileName: String(note.externalPath).split(/[\\/]/).pop() || 'Markdown 文件', content: null, error: null, changed: false } } }
   if (command === 'external_markdown_clear') { const ids = new Set(state.notes.filter(note => note.externalPath).map(note => note.id)); state.notes = state.notes.filter(note => !ids.has(note.id)); state.noteTags = state.noteTags.filter(link => !ids.has(link.noteId)); rebuildNoteLinks(state); return { result: ids.size } }

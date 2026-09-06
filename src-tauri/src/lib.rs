@@ -113,10 +113,15 @@ pub struct ExternalMarkdownMappings {
 impl ExternalMarkdownMappings {
     fn load(data_dir: &Path) -> Self {
         let file_path = data_dir.join("external-markdown-mappings.json");
-        let records = fs::read(&file_path)
+        let mut records: Vec<ExternalMarkdownRecord> = fs::read(&file_path)
             .ok()
             .and_then(|content| serde_json::from_slice(&content).ok())
             .unwrap_or_default();
+        for record in &mut records {
+            if !record.id.starts_with("external:") {
+                record.id = format!("external:{}", record.id);
+            }
+        }
         Self {
             file_path,
             records: Mutex::new(records),
@@ -143,7 +148,6 @@ pub struct DesktopState {
 
 const MAX_EXTERNAL_MARKDOWN_BYTES: u64 = 10 * 1024 * 1024;
 const MAX_EXPORT_FILE_BYTES: usize = 64 * 1024 * 1024;
-const CREDENTIAL_SERVICE: &str = "com.tinynote.desktop";
 const TRAY_PANEL_LABEL: &str = "tray-panel";
 
 fn now() -> String {
@@ -270,65 +274,198 @@ fn app_take_pending_markdown_files(
     Ok(files)
 }
 
-#[tauri::command]
-fn external_markdown_validate(
-    pending: State<'_, PendingMarkdownFiles>,
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ExternalMarkdownBinding {
+    id: String,
+    fingerprint: String,
+    updated_at: String,
+}
+
+fn bind_external_markdown(
+    mappings: &ExternalMarkdownMappings,
+    pending: &PendingMarkdownFiles,
     input: OpenExternalMarkdown,
-) -> Result<String, AppError> {
+    id: String,
+    title: String,
+) -> Result<ExternalMarkdownBinding, AppError> {
+    if !id.starts_with("external:") || id.len() > 128 {
+        return Err(AppError::invalid(
+            "external_mapping_invalid",
+            "外部文档标识无效",
+        ));
+    }
     let (path, content) = read_external_markdown(Path::new(&input.path))?;
-    let authorized = pending
-        .0
-        .lock()
-        .map_err(|_| AppError::Operation {
-            code: "pending_file_lock_failed".into(),
-            message: "无法验证系统打开文件".into(),
-        })?
-        .authorized
-        .remove(&path);
-    if !authorized {
+    let mut authorization = pending.0.lock().map_err(AppError::fs)?;
+    if !authorization.authorized.contains(&path) {
         return Err(AppError::invalid(
             "external_file_not_authorized",
             "该文件不是本次系统打开请求",
         ));
     }
     if content != input.content_markdown {
-        return Err(AppError::Operation {
-            code: "external_file_changed".into(),
-            message: "Markdown 源文件在打开期间发生变化，请重新打开".into(),
-        });
+        return Err(AppError::invalid(
+            "external_file_changed",
+            "Markdown 源文件在打开期间发生变化，请重新打开",
+        ));
     }
-    Ok(format!("{:x}", md5::compute(content.as_bytes())))
+    let fingerprint = format!("{:x}", md5::compute(content.as_bytes()));
+    let mut records = mappings.records.lock().map_err(AppError::fs)?;
+    let display_path = path.to_string_lossy().into_owned();
+    let id = records
+        .iter()
+        .find(|record| record.path == display_path)
+        .map(|record| record.id.clone())
+        .unwrap_or(id);
+    if records
+        .iter()
+        .any(|record| record.id == id && record.path != display_path)
+    {
+        return Err(AppError::invalid(
+            "external_mapping_invalid",
+            "外部文档标识已被使用",
+        ));
+    }
+    let updated_at = now();
+    let mut next = records.clone();
+    next.retain(|record| record.path != display_path);
+    next.push(ExternalMarkdownRecord {
+        id: id.clone(),
+        title,
+        path: display_path,
+        fingerprint: fingerprint.clone(),
+        updated_at: updated_at.clone(),
+    });
+    mappings.save(&next)?;
+    *records = next;
+    authorization.authorized.remove(&path);
+    Ok(ExternalMarkdownBinding {
+        id,
+        fingerprint,
+        updated_at,
+    })
 }
 
 #[tauri::command]
 fn external_markdown_bind(
     mappings: State<'_, ExternalMarkdownMappings>,
+    pending: State<'_, PendingMarkdownFiles>,
+    input: OpenExternalMarkdown,
     id: String,
-    path: String,
     title: String,
-    fingerprint: String,
-) -> Result<(), AppError> {
-    let canonical = fs::canonicalize(&path).map_err(AppError::fs)?;
-    if id.trim().is_empty() || !is_markdown_path(&canonical) || fingerprint.len() != 32 {
+) -> Result<ExternalMarkdownBinding, AppError> {
+    bind_external_markdown(&mappings, &pending, input, id, title)
+}
+
+fn write_external_markdown(
+    mappings: &ExternalMarkdownMappings,
+    id: &str,
+    content: &str,
+    expected_fingerprint: &str,
+) -> Result<ExternalMarkdownBinding, AppError> {
+    if content.len() as u64 > MAX_EXTERNAL_MARKDOWN_BYTES {
         return Err(AppError::invalid(
-            "external_mapping_invalid",
-            "外部 Markdown 映射无效",
+            "external_file_too_large",
+            "Markdown 源文件超过 10 MB 限制",
         ));
     }
-    let path = canonical.to_string_lossy().into_owned();
-    let mut records = mappings.records.lock().map_err(|_| AppError::Operation {
-        code: "external_mapping_lock_failed".into(),
-        message: "无法保存外部 Markdown 映射".into(),
-    })?;
-    records.retain(|item| item.id != id && item.path != path);
-    records.push(ExternalMarkdownRecord {
-        id,
-        title,
-        path,
+    let mut records = mappings.records.lock().map_err(AppError::fs)?;
+    let record = records
+        .iter()
+        .find(|record| record.id == id)
+        .ok_or_else(|| AppError::not_found("external_source_not_found", "外部来源记录不存在"))?;
+    let source = Path::new(&record.path);
+    let (canonical, current) = read_external_markdown(source)?;
+    // CodeMirror normalizes its document to LF. Keep the source file's first
+    // established line ending when persisting editor content and fingerprints.
+    let normalized = content.replace("\r\n", "\n");
+    let content = if current
+        .split_once('\n')
+        .is_some_and(|(line, _)| line.ends_with('\r'))
+    {
+        normalized.replace('\n', "\r\n")
+    } else {
+        normalized
+    };
+    if content.len() as u64 > MAX_EXTERNAL_MARKDOWN_BYTES {
+        return Err(AppError::invalid(
+            "external_file_too_large",
+            "Markdown 源文件超过 10 MB 限制",
+        ));
+    }
+    if canonical != source {
+        return Err(AppError::invalid(
+            "external_file_changed",
+            "Markdown 源路径已发生变化，请重新打开",
+        ));
+    }
+    let current_fingerprint = format!("{:x}", md5::compute(current.as_bytes()));
+    if current_fingerprint != expected_fingerprint && current != content {
+        return Err(AppError::invalid(
+            "external_file_changed",
+            "源文件已被其他程序修改，请重新打开确认",
+        ));
+    }
+    if current != content {
+        let metadata = fs::metadata(source).map_err(AppError::fs)?;
+        let has_bom = fs::read(source)
+            .map_err(AppError::fs)?
+            .starts_with(&[0xef, 0xbb, 0xbf]);
+        let mut temporary = tempfile::NamedTempFile::new_in(
+            source
+                .parent()
+                .ok_or_else(|| AppError::invalid("external_path_invalid", "源文件目录无效"))?,
+        )
+        .map_err(AppError::fs)?;
+        if has_bom {
+            temporary
+                .write_all(&[0xef, 0xbb, 0xbf])
+                .map_err(AppError::fs)?;
+        }
+        temporary
+            .write_all(content.as_bytes())
+            .map_err(AppError::fs)?;
+        temporary
+            .as_file()
+            .set_permissions(metadata.permissions())
+            .map_err(AppError::fs)?;
+        temporary.as_file().sync_all().map_err(AppError::fs)?;
+        // Recheck immediately before replacement, including a replaced symlink.
+        let (latest_path, latest) = read_external_markdown(source)?;
+        if latest_path != canonical || latest != current {
+            return Err(AppError::invalid(
+                "external_file_changed",
+                "源文件在保存期间发生变化，请重新打开",
+            ));
+        }
+        temporary.persist(source).map_err(AppError::fs)?;
+    }
+    let fingerprint = format!("{:x}", md5::compute(content.as_bytes()));
+    let updated_at = now();
+    let mut next = records.clone();
+    let updated = next
+        .iter_mut()
+        .find(|record| record.id == id)
+        .expect("locked record exists");
+    updated.fingerprint = fingerprint.clone();
+    updated.updated_at = updated_at.clone();
+    mappings.save(&next)?;
+    *records = next;
+    Ok(ExternalMarkdownBinding {
+        id: id.into(),
         fingerprint,
-        updated_at: now(),
-    });
-    mappings.save(&records)
+        updated_at,
+    })
+}
+
+#[tauri::command]
+fn external_markdown_write(
+    mappings: State<'_, ExternalMarkdownMappings>,
+    id: String,
+    content: String,
+    expected_fingerprint: String,
+) -> Result<ExternalMarkdownBinding, AppError> {
+    write_external_markdown(&mappings, &id, &content, &expected_fingerprint)
 }
 
 #[tauri::command]
@@ -378,9 +515,7 @@ fn external_markdown_read(
     if let Some(content) = file.content.as_deref() {
         file.changed = format!("{:x}", md5::compute(content.as_bytes())) != fingerprint;
     }
-    if !file.changed {
-        file.content = None;
-    } else if file.content.is_some() {
+    if file.content.is_some() {
         pending
             .0
             .lock()
@@ -421,17 +556,19 @@ fn sanitized_credential_account(account: &str) -> Result<String, AppError> {
     }
     Ok(account.to_owned())
 }
-fn credential_entry(account: &str) -> Result<keyring::Entry, AppError> {
-    keyring::Entry::new(CREDENTIAL_SERVICE, &sanitized_credential_account(account)?).map_err(
-        |error| AppError::Operation {
-            code: "credential_store_unavailable".into(),
-            message: error.to_string(),
-        },
+fn credential_entry(app: &AppHandle, account: &str) -> Result<keyring::Entry, AppError> {
+    keyring::Entry::new(
+        &app.config().identifier,
+        &sanitized_credential_account(account)?,
     )
+    .map_err(|error| AppError::Operation {
+        code: "credential_store_unavailable".into(),
+        message: error.to_string(),
+    })
 }
 #[tauri::command]
-fn credential_get(account: String) -> Result<Option<String>, AppError> {
-    match credential_entry(&account)?.get_password() {
+fn credential_get(app: AppHandle, account: String) -> Result<Option<String>, AppError> {
+    match credential_entry(&app, &account)?.get_password() {
         Ok(value) => Ok(Some(value)),
         Err(keyring::Error::NoEntry) => Ok(None),
         Err(error) => Err(AppError::Operation {
@@ -441,14 +578,14 @@ fn credential_get(account: String) -> Result<Option<String>, AppError> {
     }
 }
 #[tauri::command]
-fn credential_set(account: String, secret: String) -> Result<(), AppError> {
+fn credential_set(app: AppHandle, account: String, secret: String) -> Result<(), AppError> {
     if secret.is_empty() || secret.len() > 16 * 1024 {
         return Err(AppError::invalid(
             "credential_secret_invalid",
             "凭据内容无效",
         ));
     }
-    credential_entry(&account)?
+    credential_entry(&app, &account)?
         .set_password(&secret)
         .map_err(|error| AppError::Operation {
             code: "credential_write_failed".into(),
@@ -456,8 +593,8 @@ fn credential_set(account: String, secret: String) -> Result<(), AppError> {
         })
 }
 #[tauri::command]
-fn credential_delete(account: String) -> Result<(), AppError> {
-    match credential_entry(&account)?.delete_credential() {
+fn credential_delete(app: AppHandle, account: String) -> Result<(), AppError> {
+    match credential_entry(&app, &account)?.delete_credential() {
         Ok(()) | Err(keyring::Error::NoEntry) => Ok(()),
         Err(error) => Err(AppError::Operation {
             code: "credential_delete_failed".into(),
@@ -815,8 +952,8 @@ pub fn run() {
         })
         .invoke_handler(tauri::generate_handler![
             app_take_pending_markdown_files,
-            external_markdown_validate,
             external_markdown_bind,
+            external_markdown_write,
             external_markdown_list,
             external_markdown_read,
             external_markdown_clear,
@@ -854,6 +991,135 @@ pub fn run() {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn external_fixture() -> (tempfile::TempDir, ExternalMarkdownMappings, PathBuf, String) {
+        let directory = tempfile::tempdir().unwrap();
+        let source = directory.path().join("note.md");
+        fs::write(&source, b"\xef\xbb\xbf# Original\r\n").unwrap();
+        let source = fs::canonicalize(source).unwrap();
+        let mappings = ExternalMarkdownMappings::load(&directory.path().join("app"));
+        let pending = PendingMarkdownFiles::default();
+        pending.0.lock().unwrap().authorized.insert(source.clone());
+        let binding = bind_external_markdown(
+            &mappings,
+            &pending,
+            OpenExternalMarkdown {
+                path: source.to_string_lossy().into_owned(),
+                content_markdown: "# Original\r\n".into(),
+            },
+            "external:test".into(),
+            "Original".into(),
+        )
+        .unwrap();
+        (directory, mappings, source, binding.fingerprint)
+    }
+
+    #[test]
+    fn external_save_preserves_source_bom_and_crlf_from_editor_lf_after_restart() {
+        let (directory, mappings, source, fingerprint) = external_fixture();
+        let binding = write_external_markdown(
+            &mappings,
+            "external:test",
+            "# Edited\n\n> a\n> b\n",
+            &fingerprint,
+        )
+        .unwrap();
+        assert_eq!(
+            fs::read(&source).unwrap(),
+            b"\xef\xbb\xbf# Edited\r\n\r\n> a\r\n> b\r\n"
+        );
+        let restored = ExternalMarkdownMappings::load(&directory.path().join("app"));
+        assert_eq!(
+            restored.records.lock().unwrap()[0].fingerprint,
+            binding.fingerprint
+        );
+        let repeated = write_external_markdown(
+            &restored,
+            "external:test",
+            "# Edited\n\n> a\n> b\n",
+            &binding.fingerprint,
+        )
+        .unwrap();
+        assert_eq!(binding.fingerprint, repeated.fingerprint);
+        assert_eq!(
+            fs::read(&source).unwrap(),
+            b"\xef\xbb\xbf# Edited\r\n\r\n> a\r\n> b\r\n"
+        );
+        write_external_markdown(&restored, "external:test", "next", &binding.fingerprint).unwrap();
+        assert_eq!(fs::read(&source).unwrap(), b"\xef\xbb\xbfnext");
+    }
+
+    #[test]
+    fn external_save_rejects_changed_missing_and_unbound_sources() {
+        let (_directory, mappings, source, fingerprint) = external_fixture();
+        fs::write(&source, "Changed elsewhere").unwrap();
+        assert!(
+            matches!(write_external_markdown(&mappings, "external:test", "Overwrite", &fingerprint), Err(AppError::InvalidInput { code, .. }) if code == "external_file_changed")
+        );
+        assert_eq!(fs::read_to_string(&source).unwrap(), "Changed elsewhere");
+        assert!(
+            write_external_markdown(&mappings, "external:unknown", "Overwrite", &fingerprint)
+                .is_err()
+        );
+        fs::remove_file(&source).unwrap();
+        assert!(
+            write_external_markdown(&mappings, "external:test", "Overwrite", &fingerprint).is_err()
+        );
+        assert!(!source.exists());
+    }
+
+    #[test]
+    fn external_binding_requires_a_system_authorization_and_checks_contents() {
+        let (_directory, mappings, source, _) = external_fixture();
+        let pending = PendingMarkdownFiles::default();
+        let input = || OpenExternalMarkdown {
+            path: source.to_string_lossy().into_owned(),
+            content_markdown: "# Original\r\n".into(),
+        };
+        assert!(bind_external_markdown(
+            &mappings,
+            &pending,
+            input(),
+            "external:new".into(),
+            "title".into()
+        )
+        .is_err());
+        pending.0.lock().unwrap().authorized.insert(source.clone());
+        let mut stale = input();
+        stale.content_markdown = "stale".into();
+        assert!(bind_external_markdown(
+            &mappings,
+            &pending,
+            stale,
+            "external:new".into(),
+            "title".into()
+        )
+        .is_err());
+        let binding = bind_external_markdown(
+            &mappings,
+            &pending,
+            input(),
+            "external:new".into(),
+            "title".into(),
+        )
+        .unwrap();
+        assert_eq!(binding.id, "external:test");
+        assert!(pending.0.lock().unwrap().authorized.is_empty());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn external_save_rejects_a_replaced_symlink_without_touching_its_target() {
+        let (directory, mappings, source, fingerprint) = external_fixture();
+        let target = directory.path().join("other.md");
+        fs::write(&target, "# Original\r\n").unwrap();
+        fs::remove_file(&source).unwrap();
+        std::os::unix::fs::symlink(&target, &source).unwrap();
+        assert!(
+            write_external_markdown(&mappings, "external:test", "Overwrite", &fingerprint).is_err()
+        );
+        assert_eq!(fs::read_to_string(target).unwrap(), "# Original\r\n");
+    }
     #[test]
     fn credential_accounts_are_scoped() {
         assert!(sanitized_credential_account("access-token").is_ok());

@@ -1,12 +1,15 @@
 export type JsonPrimitive = string | number | boolean | null
 export type JsonValue = JsonPrimitive | JsonValue[] | { [key: string]: JsonValue }
 
-export interface Note { id: string; notebookId: string | null; knowledgeBaseId: string | null; title: string; contentHtml: string; contentText: string; contentMarkdown: string; pinned: boolean; version?: number; deletedAt: string | null; createdAt: string; updatedAt: string; external?: boolean; externalPath?: string }
+export interface Note { id: string; notebookId: string | null; knowledgeBaseId: string | null; title: string; contentHtml: string; contentText: string; contentMarkdown: string; pinned: boolean; version?: number; deletedAt: string | null; createdAt: string; updatedAt: string; external?: boolean; externalPath?: string; externalFingerprint?: string }
 export interface Notebook { id: string; parentId: string | null; name: string; description: string; version?: number; createdAt: string; updatedAt: string }
+export type NoteSummary = Pick<Note, 'id' | 'notebookId' | 'knowledgeBaseId' | 'title' | 'pinned' | 'version' | 'deletedAt' | 'createdAt' | 'updatedAt'> & { excerpt: string }
+export interface NotePageFilter { search?: string; deleted?: boolean; pinned?: boolean; notebookId?: string; knowledgeBaseId?: string; tagId?: string; excludeTagId?: string; untagged?: boolean; cursor?: string; limit?: number }
+export interface NotePage { items: NoteSummary[]; nextCursor: string; hasMore: boolean; total: number; notebookCounts?: Record<string, number> }
 export interface Tag { id: string; name: string; noteCount: number; version?: number; createdAt: string; updatedAt: string }
 export interface KnowledgeBase { id: string; category: string; name: string; description: string; cover: string | null; rootPath: string; version?: number; createdAt: string; updatedAt: string }
 export interface LibraryEntry { name: string; relativePath: string; kind: 'file' | 'folder'; size: number; modifiedAt: string | null; extension: string | null }
-export interface LibraryPreview { kind: string; title: string; content: string; mimeType: string }
+export interface LibraryPreview { kind: string; title: string; content: string; mimeType: string; downloadPath?: string }
 export interface NoteTemplate { id: string; name: string; description: string; title: string; contentMarkdown: string; builtin: boolean; updatedAt: string }
 export interface NoteLink { sourceNoteId: string; targetNoteId: string; targetTitle: string }
 export interface ModelProfile { id: string; name: string; providerId: string | null; connectionName: string | null; provider: string; baseUrl: string; model: string; endpointType: string; apiKeyConfigured: boolean; isDefault: boolean; imageEnabled: boolean; isImageDefault: boolean; scope?: 'user' | 'platform'; version?: number }

@@ -109,7 +109,7 @@ export const useTasksStore = defineStore('tasks', {
       if (event.type === 'delta' || event.type === 'textDelta') {
         this.upsert({ ...task, status: 'running', output: `${task.output || ''}${event.text || ''}` })
       } else if (event.type === 'started') {
-        this.upsert({ ...task, status: 'running' })
+        this.upsert({ ...task, status: 'running', output: '' })
       } else if (event.type === 'status' && event.status) {
         this.upsert({ ...task, status: event.status })
       } else if (event.type === 'sources') {

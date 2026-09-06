@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { toRaw } from 'vue'
 import { createPinia, setActivePinia } from 'pinia'
 import type { Note } from '../types/domain'
 
@@ -52,7 +53,7 @@ describe('notes save queue', () => {
     store.notes.push(noteFixture())
     const note = store.notes[0]
 
-    const firstSave = store.save(note)
+    const firstSave = store.save(toRaw(note))
     await vi.waitFor(() => expect(invokeMock).toHaveBeenCalledTimes(1))
     expect(invokeMock.mock.calls[0][1].input).toMatchObject({ contentText: '第一版', version: 1 })
 

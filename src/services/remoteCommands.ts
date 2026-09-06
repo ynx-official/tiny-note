@@ -1,11 +1,10 @@
 import { apiRequest, ApiError } from './apiClient'
 import type { CommandArgs, CommandName, CommandResult } from './commandMap'
-import type { ModelProfile, Note } from '../types/domain'
+import type { ModelProfile } from '../types/domain'
 import type { AgentRun, BackgroundTask } from '../types/domain'
 import type { ImageAsset } from '../types/domain'
 import type { EventChannel } from './eventChannel'
-import { invoke as tauriInvoke } from '@tauri-apps/api/core'
-import type { ExternalMarkdownSource } from '../types/domain'
+import { openExternalDocument } from './externalDocument'
 
 function query(values: Record<string, unknown>): string {
   const params = new URLSearchParams()
@@ -68,26 +67,15 @@ function knowledgeBasePath(id: unknown): string {
   return `/knowledge-bases/${encodeURIComponent(String(id))}/library`
 }
 
-async function openExternalMarkdown(input: Record<string, unknown>): Promise<Note> {
-  if (!window.__TAURI_INTERNALS__) throw new ApiError('desktop_capability_required', '外部 Markdown 仅支持桌面应用', 400)
-  const fingerprint = await tauriInvoke<string>('external_markdown_validate', { input })
-  const sources = await tauriInvoke<ExternalMarkdownSource[]>('external_markdown_list')
-  const source = sources.find(item => item.path === input.path)
-  let note = source ? await apiRequest<Note | null>(`/notes/${encodeURIComponent(source.id)}`) : null
-  if (note) {
-    note = await apiRequest<Note>(`/notes/${encodeURIComponent(note.id)}`, { method: 'PUT', body: { ...input, path: undefined, version: note.version } })
-  } else {
-    note = await apiRequest<Note>('/notes', { method: 'POST', body: { ...input, path: undefined } })
-  }
-  await tauriInvoke('external_markdown_bind', { id: note.id, path: input.path, title: note.title, fingerprint })
-  return note
-}
-
 export async function remoteInvoke<K extends CommandName>(command: K, args: CommandArgs<K>): Promise<CommandResult<K>> {
   // CommandMap validates the shape at every call site; the router intentionally
   // uses a dynamic record so a single exhaustive switch can bridge legacy names.
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const input = args as Record<string, any>
+  const noteIds = [input.id, input.noteId, input.targetNoteId, ...(input.noteIds || [])]
+  if (noteIds.some(id => typeof id === 'string' && id.startsWith('external:'))) {
+    throw new ApiError('external_document_requires_import', '请先将外部文件导入到笔记，再执行此操作。', 400)
+  }
   let result: unknown
   switch (command) {
     case 'settings_get': result = await apiRequest('/settings'); break
@@ -100,6 +88,7 @@ export async function remoteInvoke<K extends CommandName>(command: K, args: Comm
     case 'model_test': result = await apiRequest(`/models/${encodeURIComponent(input.modelId)}/test`, { method: 'POST' }); break
     case 'model_query_balance': result = await apiRequest(`/models/${encodeURIComponent(input.modelId)}/balance`); break
     case 'note_list': result = await apiRequest(`/notes${query(input)}`); break
+    case 'note_page': result = await apiRequest(`/notes/page${query(input)}`); break
     case 'note_get': result = await apiRequest(`/notes/${encodeURIComponent(input.id)}`); break
     case 'note_create': result = await apiRequest('/notes', { method: 'POST', body: input.input }); break
     case 'note_update': result = await apiRequest(`/notes/${encodeURIComponent(input.id)}`, { method: 'PUT', body: input.input }); break
@@ -111,7 +100,7 @@ export async function remoteInvoke<K extends CommandName>(command: K, args: Comm
     case 'note_set_pinned': result = await apiRequest(`/notes/${encodeURIComponent(input.id)}`, { method: 'PUT', body: { version: input.version, pinned: input.pinned } }); break
     case 'note_move': result = await apiRequest(`/notes/${encodeURIComponent(input.id)}`, { method: 'PUT', body: { version: input.version, notebookId: input.notebookId } }); break
     case 'note_move_to_knowledge_base': result = await apiRequest(`/notes/${encodeURIComponent(input.id)}`, { method: 'PUT', body: { version: input.version, knowledgeBaseId: input.knowledgeBaseId } }); break
-    case 'note_open_external_markdown': result = await openExternalMarkdown(input.input); break
+    case 'note_open_external_markdown': result = await openExternalDocument(input.input); break
     case 'note_template_list': result = await apiRequest('/note-templates'); break
     case 'note_template_upsert': { const id = input.template.id || crypto.randomUUID(); result = await apiRequest(`/note-templates/${encodeURIComponent(id)}`, { method: 'PUT', body: { ...input.template, id } }); break }
     case 'note_template_delete': result = await apiRequest(`/note-templates/${encodeURIComponent(input.id)}`, { method: 'DELETE' }); break

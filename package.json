@@ -22,7 +22,9 @@
     "measure:startup": "node scripts/measure-release-startup-direct.mjs",
     "release:manifest": "node scripts/update-manifest.mjs",
     "release:check": "node scripts/release-notes.mjs --check-current",
-    "release:notes": "node scripts/release-notes.mjs"
+    "release:notes": "node scripts/release-notes.mjs",
+    "predev": "node scripts/prepare-pdf-assets.mjs",
+    "prebuild": "node scripts/prepare-pdf-assets.mjs"
   },
   "pnpm": {
     "onlyBuiltDependencies": [
@@ -71,6 +73,7 @@
     "lucide-vue-next": "^0.468.0",
     "marked": "^15.0.7",
     "mermaid": "11.17.1",
+    "pdfjs-dist": "6.3.289",
     "pinia": "^3.0.4",
     "turndown": "^7.2.0",
     "vue": "^3.5.13",
@@ -79,10 +82,10 @@
   },
   "devDependencies": {
     "@tauri-apps/cli": "^2.10.1",
-    "@vitejs/plugin-vue": "^5.2.1",
-    "@vue/test-utils": "^2.4.6",
     "@types/node": "~22.20.0",
     "@types/turndown": "~5.0.6",
+    "@vitejs/plugin-vue": "^5.2.1",
+    "@vue/test-utils": "^2.4.6",
     "eslint": "^9.18.0",
     "eslint-plugin-vue": "~10.10.0",
     "jsdom": "^25.0.1",

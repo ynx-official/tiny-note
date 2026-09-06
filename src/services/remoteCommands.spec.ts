@@ -11,7 +11,15 @@ vi.mock('./apiClient', () => ({
 vi.mock('@tauri-apps/api/core', () => ({ invoke: vi.fn() }))
 
 describe('remote command optimistic versions', () => {
-  beforeEach(() => apiRequest.mockReset())
+  beforeEach(() => { apiRequest.mockReset() })
+
+  it('passes bounded catalog filters and opaque cursors to the summary endpoint', async () => {
+    const page = { items: [], total: 0, nextCursor: '', hasMore: false }
+    apiRequest.mockResolvedValue(page)
+    const { remoteInvoke } = await import('./remoteCommands')
+    expect(await remoteInvoke('note_page', { search: '笔记', limit: 80, cursor: 'opaque', pinned: false })).toEqual(page)
+    expect(apiRequest).toHaveBeenCalledWith('/notes/page?search=%E7%AC%94%E8%AE%B0&limit=80&cursor=opaque&pinned=false')
+  })
 
   it('submits the editor version without fetching and replacing it', async () => {
     apiRequest.mockResolvedValue({ id: 'note-1', version: 4 })

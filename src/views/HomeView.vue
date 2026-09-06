@@ -4,7 +4,8 @@ import { storeToRefs } from 'pinia'
 import { useRouter } from 'vue-router'
 import { useI18n } from 'vue-i18n'
 import { BookOpen, ChevronDown, ChevronLeft, ChevronRight, File, FileSearch2, FileText, Folder, Globe2, LibraryBig, MessageSquare, NotebookPen, Paperclip, PenLine, Send, Settings2, Sparkles, Wrench, X } from 'lucide-vue-next'
-import { useNotesStore } from '../stores/notes'
+import { useNotePicker } from '../composables/useNotePicker'
+import NotePageControls from '../components/notes/NotePageControls.vue'
 import { useLibraryStore } from '../stores/library'
 import { useAppStore } from '../stores/app'
 import { useAuthStore } from '../stores/auth'
@@ -16,14 +17,15 @@ import kimiIcon from '../assets/providers/kimi.png'
 import minimaxIcon from '../assets/providers/minimax.png'
 import otherIcon from '../assets/providers/other.png'
 import { modelProviderLabel } from '../utils/modelProvider'
-import type { LibraryEntry, ModelProfile, Note } from '../types/domain'
+import type { LibraryEntry, ModelProfile, NoteSummary } from '../types/domain'
 
 interface HomeReference { key: string; type: 'note' | 'file'; name: string; noteId?: string; baseId?: string | null; baseName?: string; relativePath?: string }
 interface HomeCopy { subtitle: string; placeholder: string; noteMode: string; localAi: string; features: Array<[string, string, Component, string]>; start: string }
 
 const router = useRouter()
 const { locale, t } = useI18n()
-const notes = useNotesStore()
+const notePicker = useNotePicker()
+const { query: noteQuery } = notePicker
 const library = useLibraryStore()
 const appStore = useAppStore()
 const auth = useAuthStore()
@@ -44,7 +46,7 @@ const modelMenuMaxHeight = ref(460)
 const modelSelectButton = ref<HTMLButtonElement | null>(null)
 const personalBases = computed(() => library.bases.filter(item => item.category === 'personal'))
 const localBases = computed(() => library.bases.filter(item => item.category === 'local'))
-const noteCandidates = computed(() => notes.notes.filter(note => !note.deletedAt))
+const noteCandidates = computed(() => notePicker.page.items)
 const selectedModel = computed(() => models.value.find(model => model.id === selectedModelId.value) || models.value.find(model => model.isDefault) || models.value[0] || null)
 const providerIcons: Record<string, string> = { doubao: doubaoIcon, qwen: qwenIcon, zhipu: zhipuIcon, deepseek: deepseekIcon, kimi: kimiIcon, minimax: minimaxIcon, custom: otherIcon }
 const providerAliases: Record<string, string[]> = { doubao: ['doubao', '豆包'], qwen: ['qwen', '千问', '通义'], zhipu: ['zhipu', '智谱'], deepseek: ['deepseek'], kimi: ['kimi', 'moonshot'], minimax: ['minimax'], custom: ['custom', '其他', 'openai'] }
@@ -132,7 +134,7 @@ async function openReferenceMenu() {
 }
 async function openReferencePicker(type: 'note' | 'file') {
   referencePicker.value = type
-  if (type === 'note' && !notes.notes.length) await notes.load()
+  if (type === 'note') await notePicker.refresh()
   if (type === 'file' && !library.bases.length) await library.load()
 }
 function addReference(reference: HomeReference) {
@@ -142,7 +144,7 @@ function addReference(reference: HomeReference) {
 function removeReference(key: string) {
   references.value = references.value.filter(item => item.key !== key)
 }
-function addNoteReference(note: Note) {
+function addNoteReference(note: NoteSummary) {
   addReference({ key: `note:${note.id}`, type: 'note', name: note.title || t('untitled'), noteId: note.id })
 }
 function addFileReference(entry: LibraryEntry) {
@@ -243,8 +245,10 @@ watch(models, value => {
 
                 <template v-else-if="referencePicker === 'note'">
                   <div class="home-reference-menu-header"><button type="button" @click="referencePicker = null"><ChevronLeft :size="15" /></button><strong>{{ t('referenceNote') }}</strong></div>
-                  <div v-if="!noteCandidates.length" class="home-reference-empty">{{ t('referenceNoNotes') }}</div>
+                  <input v-model="noteQuery" class="search-input" aria-label="搜索引用笔记" placeholder="搜索笔记" />
+                  <div v-if="!noteCandidates.length && !notePicker.page.loading && !notePicker.page.error" class="home-reference-empty">{{ t('referenceNoNotes') }}</div>
                   <button v-for="note in noteCandidates" :key="note.id" class="home-reference-option" @click="addNoteReference(note)"><FileText :size="15" /><span>{{ note.title || t('untitled') }}</span></button>
+                  <NotePageControls :page="notePicker.page" @more="notePicker.more" @retry="notePicker.retry" />
                 </template>
 
                 <template v-else>

@@ -6,6 +6,7 @@ vi.mock('./tauri', () => ({ invoke: mocks.invoke }))
 vi.mock('@tauri-apps/api/event', () => ({ listen: mocks.listen }))
 
 import { openPendingMarkdownFiles, startExternalMarkdownOpen } from './externalMarkdown'
+import { registerNoteEditorFlush } from './noteEditorFlush'
 
 afterEach(() => {
   delete window.__TAURI_INTERNALS__
@@ -14,6 +15,19 @@ afterEach(() => {
 })
 
 describe('openPendingMarkdownFiles', () => {
+  it('keeps the current editor and does not open a system file when its latest draft cannot be saved', async () => {
+    const flush = vi.fn(async () => false)
+    const unregister = registerNoteEditorFlush(flush)
+    try {
+      const store = { openExternalMarkdown: vi.fn() }
+      const router = { push: vi.fn() }
+      const count = await openPendingMarkdownFiles([{ fileName: 'next.md', path: '/notes/next.md', content: 'next', error: null }], { store, router, notify: vi.fn() })
+      expect(flush).toHaveBeenCalledOnce()
+      expect(count).toBe(0)
+      expect(store.openExternalMarkdown).not.toHaveBeenCalled()
+      expect(router.push).not.toHaveBeenCalled()
+    } finally { unregister() }
+  })
   it('binds readable Markdown files to their source and opens the last note', async () => {
     const quotedMetadata = [
       '> 文档状态：Review（解释视图）',

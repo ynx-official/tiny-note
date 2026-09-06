@@ -1,6 +1,6 @@
 # Tiny Note 远程后端契约
 
-`src/services/commandMap.ts` 是桌面端契约的唯一权威清单。当前共 128 个命令，由 `npm run check:contracts` 强制每个命令只能归属于以下一类：
+`src/services/commandMap.ts` 是桌面端契约的唯一权威清单。当前共 129 个命令，由 `npm run check:contracts` 强制每个命令只能归属于以下一类：
 
 认证在命令映射之外直接使用 REST：应用未登录时仍进入 Friday 桌面外壳和首页；`POST /auth/login` 只发送 `username`、`password`，取得访问令牌后再调用需认证的 `POST /auth/device` 上报随机安装 ID 与应用/系统摘要。设备上报不包含硬件指纹，失败不阻断登录；401 会清理安全凭据和用户作用域的前端状态，并由左上角狗狗头像账号面板重新登录。
 
@@ -32,3 +32,7 @@
 ## SSE 事件
 
 每个事件包含 `eventId`, `runId`, `sequence`, `type`, `payload`。终态类型只有 `completed`, `error`, `cancelled`。Agent 扩展事件为 `toolCall`, `toolResult`, `approvalRequired`, `inputRequired`。事件先持久化到 MySQL，再投递 Redis Stream，因此断线与跨实例恢复不依赖单个进程内存。
+
+## 知识库原文件读取
+
+预览 DTO 统一为 `{ kind, title, content, mimeType, downloadPath? }`。图片/PDF 的 `content` 为空，通过 `downloadPath` 指向的 `GET /knowledge-bases/{id}/library/content?relativePath=...` 以 Bearer 认证读取字节，不下发可绕过当前会话的对象 URL。服务端返回 attachment、nosniff、private/no-store；跨用户无法取得字节。超过 2 MB 的文本返回 binary 类型并保留下载入口。

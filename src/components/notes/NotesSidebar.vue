@@ -1,11 +1,12 @@
 <script setup lang="ts">
 import { ArrowDownAZ, BookOpen, Download, FileClock, FolderInput, FolderPlus, Pin, Plus, Search as SearchIcon, Trash2 } from 'lucide-vue-next'
+import NotePageControls from './NotePageControls.vue'
 import NotebookTreeItem from '../NotebookTreeItem.vue'
 import type { NotesWorkspace } from '../../composables/useNotesWorkspace'
 
 const props = defineProps<{ workspace: NotesWorkspace }>()
 const workspace = props.workspace
-const { t, store, library, route, showDeleted, searchMode, query, sidebarCollapsed, sidebarWidth, isResizing, onResizeStart, newNoteMenu, folderItemMenu, folderItemMenuStyle, importInput, expandedNotebookIds, externalSourcesOpen, notebookTree, list, create, createFromTemplate, importFiles, createRootNotebook, toggleNewNoteMenu, selectAllNotes, selectFolder, selectNote, toggleNotebook, toggleExternalSources, clearExternalSources, openExternalSource, openFolderItemMenu, closeMenus, closeContextMenu, restoreContextNote, deleteContextNote, renameNotebook, deleteNotebook, createChildNotebook, moveNotebookByPrompt, dropTreeNode, openContextMenu } = workspace
+const { openTrash, t, store, library, route, showDeleted, searchMode, query, sidebarCollapsed, sidebarWidth, isResizing, onResizeStart, newNoteMenu, folderItemMenu, folderItemMenuStyle, importInput, expandedNotebookIds, externalSourcesOpen, notebookTree, list, create, createFromTemplate, importFiles, createRootNotebook, toggleNewNoteMenu, selectAllNotes, selectFolder, selectNote, toggleNotebook, toggleExternalSources, clearExternalSources, openExternalSource, openFolderItemMenu, closeMenus, closeContextMenu, restoreContextNote, deleteContextNote, renameNotebook, deleteNotebook, createChildNotebook, moveNotebookByPrompt, dropTreeNode, openContextMenu } = workspace
 </script>
 
 <template>
@@ -38,14 +39,18 @@ const { t, store, library, route, showDeleted, searchMode, query, sidebarCollaps
         </div>
         <div class="notebook-tree" role="tree" aria-label="笔记本和笔记">
           <button class="tree-row tree-all-row" :class="{ active: store.selectedTreeNode.type === 'all' && !showDeleted }" @click="selectAllNotes">
-            <BookOpen :size="16" :stroke-width="1.9" /><span class="tree-label">{{ t('allNotes') }}</span><small>{{ store.listed.length }}</small>
+            <BookOpen :size="16" :stroke-width="1.9" /><span class="tree-label">{{ t('allNotes') }}</span><small>{{ store.catalog.total }}</small>
           </button>
+          <p v-if="store.loadError" role="alert">{{ store.loadError }} <button type="button" @click="store.load()">重试</button></p>
+          <NotePageControls v-if="store.catalog.loading || store.catalog.error" :page="store.catalog" @retry="store.loadCatalog()" />
           <NotebookTreeItem
             v-for="node in notebookTree"
             :key="node.id"
             :node="node"
             :expanded="expandedNotebookIds"
             :selected="store.selectedTreeNode"
+            @more-notes="id => store.loadNotebook(id, true)"
+            @retry-notes="id => store.loadNotebook(id, Boolean(store.notebookPages[id]?.nextCursor))"
             @toggle="toggleNotebook"
             @select-notebook="selectFolder"
             @select-note="selectNote"
@@ -54,6 +59,11 @@ const { t, store, library, route, showDeleted, searchMode, query, sidebarCollaps
             @drop-node="dropTreeNode"
           />
           <div v-if="!notebookTree.length" class="note-list-empty">{{ query ? '没有匹配的笔记' : t('emptyNotes') }}</div>
+          <button class="tree-row" :class="{ active: showDeleted }" @click="openTrash"><Trash2 :size="16" /><span class="tree-label">{{ t('recentlyDeleted') }}</span></button>
+          <div v-if="showDeleted">
+            <button v-for="note in store.trashPage.items" :key="note.id" class="tree-row tree-note-row" @click="selectNote(note)" @contextmenu.prevent="openContextMenu($event, note)"><span class="tree-label">{{ note.title }}</span></button>
+            <NotePageControls :page="store.trashPage" @more="store.loadTrash(true)" @retry="store.loadTrash(Boolean(store.trashPage.nextCursor))" />
+          </div>
           <div class="tree-row tree-external-row" :class="{ active: store.selectedTreeNode.type === 'external' }">
             <button type="button" class="tree-row-main" :aria-expanded="externalSourcesOpen" @click="toggleExternalSources">
               <FileClock :size="16" :stroke-width="1.9" /><span class="tree-label">外部来源</span>

@@ -48,6 +48,15 @@ describe('background task store', () => {
     expect(invoke.mock.calls.filter(([command]) => command === 'background_task_transition')).toHaveLength(0)
   })
 
+  it('replaces partial output when a recovered execution starts again', async () => {
+    const store = useTasksStore()
+    store.tasks = [{ id: 'recovered-task', kind: 'conversation_summary', status: 'running', payload: {}, output: 'old partial' }]
+    await store.handleEvent('recovered-task', { type: 'started' })
+    await store.handleEvent('recovered-task', { type: 'delta', text: 'new complete output' })
+    expect(store.tasks[0].output).toBe('new complete output')
+    expect(invoke).not.toHaveBeenCalled()
+  })
+
   it('does not expose legacy Agent runs in the task center', async () => {
     invoke.mockImplementation(async command => {
       if (command === 'background_task_list') return [

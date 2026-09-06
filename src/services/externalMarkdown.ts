@@ -3,6 +3,7 @@ import { useNotesStore } from '../stores/notes'
 import { markdownToEditorHtml, sanitizeEditorHtml, textFromEditorHtml } from '../utils/noteMarkdown'
 import { showToast } from './appFeedback'
 import { invoke } from './tauri'
+import { flushOpenNoteEditor } from './noteEditorFlush'
 import type { Pinia } from 'pinia'
 import type { Router } from 'vue-router'
 import type { ExternalMarkdownFile, Note } from '../types/domain'
@@ -14,6 +15,7 @@ function noteTitle(fileName: string) {
 }
 
 export async function openPendingMarkdownFiles(files: ExternalMarkdownFile[], { store, router, notify = showToast }: { store: ReturnType<typeof useNotesStore>; router: Router; notify?: typeof showToast }) {
+  if (files?.some(file => !file.error && typeof file.content === 'string') && !await flushOpenNoteEditor()) return 0
   let opened = 0
   let lastNote: Note | null = null
 

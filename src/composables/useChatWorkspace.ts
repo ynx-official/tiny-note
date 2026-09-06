@@ -6,6 +6,7 @@ import { marked } from 'marked'
 import DOMPurify from 'dompurify'
 import { invoke } from '../services/tauri'
 import { requestConfirmation } from '../services/appFeedback'
+import { useNotePicker } from './useNotePicker'
 import { useNotesStore } from '../stores/notes'
 import { useLibraryStore } from '../stores/library'
 import { useAppStore } from '../stores/app'
@@ -36,6 +37,8 @@ export function useChatWorkspace() {
   const router = useRouter()
   
   const notesStore = useNotesStore()
+  const notePicker = useNotePicker()
+  const noteQuery = notePicker.query
   
   const library = useLibraryStore()
   
@@ -343,7 +346,7 @@ export function useChatWorkspace() {
       await addAssistantNotice('请先用输入框左下角的回形针引用一篇笔记，我才能准确执行这个操作。')
       return true
     }
-    const target = notesStore.notes.find(note => note.id === targets[0]?.noteId)
+    const target = await notesStore.getNote(targets[0]!.noteId!).catch(() => null)
     if (!target) { await addAssistantNotice('这篇笔记不存在或已被删除。'); return true }
     if (command.action === 'rename') {
       if (!command.value) return true
@@ -581,11 +584,12 @@ export function useChatWorkspace() {
   async function toggleReferenceMenu() {
     referenceMenuOpen.value = !referenceMenuOpen.value
     if (!referenceMenuOpen.value) return
-    if (!notesStore.notes.length) await notesStore.load()
+    await notePicker.refresh()
     if (!library.bases.length) await library.load()
   }
   
-  function addNoteReference(note: Note) {
+  function addNoteReference(note: Pick<Note, 'id' | 'title'> & { external?: boolean }) {
+    if (note.external || note.id.startsWith('external:')) return
     const value: ChatReference = { key: `note:${note.id}`, type: 'note', name: note.title || '未命名笔记', noteId: note.id }
     if (!references.value.some(item => item.key === value.key)) references.value.push(value)
     referenceMenuOpen.value = false
@@ -681,7 +685,7 @@ export function useChatWorkspace() {
   onMounted(async () => {
     await appStore.initialize()
     await Promise.allSettled([
-      notesStore.notes.length ? Promise.resolve() : notesStore.load(),
+      notesStore.notebooks.length ? Promise.resolve() : notesStore.load(),
       library.bases.length ? Promise.resolve() : library.load(),
       invoke('agent_list_tools').then(value => { agentTools.value = value || [] })
     ])
@@ -766,7 +770,7 @@ export function useChatWorkspace() {
   }
 
   return {
-    route, router, notesStore, library, appStore, tasksStore, models, messages,
+    notePicker, noteQuery, route, router, notesStore, library, appStore, tasksStore, models, messages,
     draft, references, selectedModelId, thinkingMode, busy, streamingText, error, requestId,
     messagesRef, conversationId, conversationTitle, referenceMenuOpen, responseSources, responseProposal, pendingSummary, savedNote,
     currentMode, modeSaving, agentSegments, currentAgentRunId, pendingApproval, pendingInput, agentTools, approvalBusy,

@@ -4,6 +4,7 @@ on:
   push:
     tags:
       - tiny-note-v*
+  workflow_dispatch:
 
 permissions:
   contents: write
@@ -25,7 +26,11 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          node scripts/release-notes.mjs --tag "$GITHUB_REF_NAME"
+          if [[ "$GITHUB_REF" == refs/tags/tiny-note-v* ]]; then
+            node scripts/release-notes.mjs --tag "$GITHUB_REF_NAME"
+          else
+            node scripts/release-notes.mjs --check-current
+          fi
       - name: Generate release notes
         if: startsWith(github.ref, 'refs/tags/tiny-note-v')
         id: release-notes
@@ -40,8 +45,15 @@ jobs:
             echo 'EOF'
           } >> "$GITHUB_OUTPUT"
 
-  build:
+  checks:
     needs: preflight
+    uses: ./.github/workflows/ci.yml
+    permissions:
+      contents: read
+
+  build:
+    needs: [preflight, checks]
+    timeout-minutes: 60
     strategy:
       fail-fast: false
       matrix:
@@ -65,15 +77,26 @@ jobs:
         if: runner.os == 'Linux'
         run: |
           sudo apt-get update
-          sudo apt-get install -y libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf xdg-utils
+          sudo apt-get install -y libwebkit2gtk-4.1-dev libglib2.0-dev libgtk-3-dev build-essential curl wget file libxdo-dev libssl-dev libayatana-appindicator3-dev librsvg2-dev patchelf xdg-utils
       - uses: actions/setup-node@v4
         with: { node-version: 22, cache: npm }
       - run: npm ci
       - uses: dtolnay/rust-toolchain@stable
         with:
           targets: ${{ matrix.target }}
+          components: rustfmt, clippy
       - name: Build release bundle
         run: npx tauri build ${{ matrix.args }}
+
+      - name: Check native formatting
+        run: cargo fmt --all -- --check
+        working-directory: src-tauri
+      - name: Test native shell on the release target
+        run: cargo test --target ${{ matrix.target }}
+        working-directory: src-tauri
+      - name: Lint native shell on the release target
+        run: cargo clippy --target ${{ matrix.target }} --all-targets --all-features -- -D warnings
+        working-directory: src-tauri
 
       - name: Upload release bundle
         uses: actions/upload-artifact@v4
@@ -84,6 +107,7 @@ jobs:
 
   publish:
     needs: [preflight, build]
+    if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/tiny-note-v')
     runs-on: ubuntu-22.04
     steps:
       - uses: actions/download-artifact@v4

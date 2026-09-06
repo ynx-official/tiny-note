@@ -20,9 +20,9 @@ describe('notes store', () => {
     expect(note.contentMarkdown).toBe('')
     expect(store.activeId).toBe(note.id)
     await store.remove(note.id)
-    expect(store.deleted.some(item => item.id === note.id)).toBe(true)
+    expect(store.trashPage.items.some(item => item.id === note.id)).toBe(true)
     await store.restore(note.id)
-    expect(store.notes.some(item => item.id === note.id)).toBe(true)
+    expect(store.listed.some(item => item.id === note.id)).toBe(true)
   })
 
   it('creates a populated note from a conversation', async () => {
@@ -165,8 +165,8 @@ describe('notes store', () => {
     expect(links).toEqual([expect.objectContaining({ targetNoteId: target.id, targetTitle: '目标笔记' })])
     store.pinnedOnly = true
     await store.load()
-    expect(store.notes.map(note => note.id)).toContain(source.id)
-    expect(store.notes.map(note => note.id)).not.toContain(target.id)
+    expect(store.listed.map(note => note.id)).toContain(source.id)
+    expect(store.listed.map(note => note.id)).not.toContain(target.id)
 
     const backup = await store.exportWorkspace()
     expect(backup.format).toBe('tiny-note-workspace')
@@ -175,6 +175,6 @@ describe('notes store', () => {
     expect(backup.noteTags).toContainEqual({ noteId: source.id, tagId: tag.id })
     expect(backup.notes.some(note => note.id === source.id && note.pinned)).toBe(true)
     await store.importWorkspace(backup)
-    expect(store.notes.some(note => note.title === '来源笔记')).toBe(true)
+    expect(store.listed.some(note => note.title === '来源笔记')).toBe(true)
   })
 })

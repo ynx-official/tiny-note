@@ -24,6 +24,8 @@ describe('ChatView background tasks', () => {
     testState.invoke.mockImplementation(async (command, args = {}) => {
       if (command === 'settings_get') return { theme: 'light', language: 'zh-CN', fimEnabled: false }
       if (command === 'model_list') return [{ id: 'model-1', provider: 'test', model: 'test-model', isDefault: true }]
+      if (command === 'note_page') return { items: [], total: 0, hasMore: false, nextCursor: '' }
+      if (command === 'external_markdown_list') return []
       if (command === 'note_list' || command === 'notebook_list' || command === 'knowledge_base_list') return []
       if (command === 'agent_list_tools') return [{ name: 'search_notes', requireApproval: false }, { name: 'create_note', requireApproval: true }]
       if (command === 'background_task_list') return testState.tasks
