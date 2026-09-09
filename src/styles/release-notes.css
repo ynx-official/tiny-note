@@ -1,0 +1,12 @@
+.release-notes-markdown { color:var(--text-secondary); font-size:13px; line-height:1.65; overflow-wrap:anywhere; }
+.release-notes-markdown p { margin:0 0 11px; }
+.release-notes-markdown p:last-child { margin-bottom:0; }
+.release-notes-markdown h1,.release-notes-markdown h2,.release-notes-markdown h3,.release-notes-markdown h4 { margin:18px 0 8px; color:var(--text-primary); font-weight:650; line-height:1.35; letter-spacing:-.015em; }
+.release-notes-markdown h1:first-child,.release-notes-markdown h2:first-child,.release-notes-markdown h3:first-child,.release-notes-markdown h4:first-child { margin-top:0; }
+.release-notes-markdown h1 { font-size:1.35em; }.release-notes-markdown h2 { font-size:1.18em; }.release-notes-markdown h3 { font-size:1.06em; }.release-notes-markdown h4 { font-size:1em; }
+.release-notes-markdown ul,.release-notes-markdown ol { margin:8px 0; padding-left:22px; }.release-notes-markdown li { margin:4px 0; padding-left:2px; }
+.release-notes-markdown blockquote { margin:11px 0; padding:7px 12px; border-left:3px solid var(--accent); border-radius:0 7px 7px 0; color:var(--text-secondary); background:color-mix(in srgb,var(--accent) 7%,transparent); }
+.release-notes-markdown a { color:var(--accent); text-decoration:underline; text-underline-offset:2px; }.release-notes-markdown strong { color:var(--text-primary); font-weight:650; }.release-notes-markdown hr { margin:15px 0; border:0; border-top:1px solid var(--line); }
+.release-notes-markdown code { padding:2px 5px; border-radius:4px; color:var(--text-primary); background:var(--surface-2); font:.9em/1.5 ui-monospace,SFMono-Regular,Menlo,Monaco,Consolas,monospace; }
+.release-notes-markdown pre { margin:11px 0; overflow:auto; padding:12px 13px; border:1px solid var(--line); border-radius:8px; background:var(--surface-2); }.release-notes-markdown pre code { padding:0; background:transparent; white-space:pre; }
+.release-notes-markdown table { display:block; max-width:100%; overflow:auto; border-collapse:collapse; }.release-notes-markdown th,.release-notes-markdown td { min-width:80px; padding:6px 9px; border:1px solid var(--line); text-align:left; }.release-notes-markdown th { color:var(--text-primary); background:var(--surface-2); font-weight:650; }

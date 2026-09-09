@@ -174,6 +174,36 @@ describe('ChatView background tasks', () => {
     wrapper.unmount()
   })
 
+  it('reuses the server-persisted successful Agent reply and restores its skill calls', async () => {
+    const base = testState.invoke.getMockImplementation()
+    const reply = { id: 'reply-1', role: 'assistant', content: '技能执行完成', references: [], agentRunId: 'run-1' }
+    testState.invoke.mockImplementation(async (command, args = {}) => {
+      if (command === 'chat_get') return { conversation: { id: 'conversation-1', title: '技能任务', mode: 'agent' }, messages: [{ ...reply }] }
+      if (command === 'agent_get_run') return { steps: [{ id: 'step-1', kind: 'tool', toolCallId: 'tool-1', toolName: 'read_skill', arguments: { name: 'notebook' }, output: '技能内容', status: 'completed' }] }
+      return base(command, args)
+    })
+    const wrapper = mountView(); await flushPromises()
+    await wrapper.findAll('.chat-mode-switch button')[1].trigger('click')
+    await wrapper.get('textarea').setValue('使用技能整理笔记')
+    await wrapper.find('form').trigger('submit'); await flushPromises()
+    const channel = testState.channels.at(-1)
+    await channel.onmessage({ type: 'started', runId: 'run-1' })
+    await channel.onmessage({ type: 'toolCall', runId: 'run-1', toolCallId: 'tool-1', toolName: 'read_skill', arguments: { name: 'notebook' } })
+    await channel.onmessage({ type: 'toolResult', runId: 'run-1', toolCallId: 'tool-1', output: '技能内容', status: 'completed' })
+    await channel.onmessage({ type: 'completed', runId: 'run-1', content: reply.content })
+    await flushPromises()
+    expect(testState.invoke.mock.calls.filter(([command, args]) => command === 'chat_add_message' && args.role === 'assistant')).toHaveLength(0)
+    expect(wrapper.findAll('.chat-page-message.is-assistant')).toHaveLength(1)
+    wrapper.unmount()
+
+    testState.route.query = { id: 'conversation-1' }
+    const reopened = mountView(); await flushPromises()
+    expect(testState.invoke).toHaveBeenCalledWith('agent_get_run', { runId: 'run-1' })
+    expect(reopened.get('[data-agent-event="tool"]').text()).toContain('技能内容')
+    expect(reopened.findAll('markdown-message-stub').some(item => item.attributes('content') === reply.content)).toBe(true)
+    reopened.unmount()
+  })
+
   it('restores persisted Agent steps when reopening a conversation', async () => {
     testState.route.query = { id: 'conversation-1' }
     const base = testState.invoke.getMockImplementation()

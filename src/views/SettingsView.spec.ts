@@ -3,6 +3,7 @@ import { mount } from '@vue/test-utils'
 import { createPinia, setActivePinia } from 'pinia'
 import { createI18n } from 'vue-i18n'
 import { messages } from '../i18n'
+import { appUpdater } from '../services/appUpdater'
 
 const model = {
   id: 'custom-model',
@@ -31,6 +32,7 @@ import { confirmAppDialog, feedbackState } from '../services/appFeedback'
 
 describe('SettingsView model services', () => {
   beforeEach(() => {
+    vi.mocked(appUpdater.check).mockReset()
     localStorage.clear()
     feedbackState.toasts.splice(0)
     setActivePinia(createPinia())
@@ -198,6 +200,30 @@ describe('SettingsView model services', () => {
     await wrapper.get('.settings-fetch-button').trigger('click')
     await vi.waitFor(() => expect(wrapper.get('.settings-model-picker-header').text()).toContain('已选 1 个'))
     expect(wrapper.get('.settings-model-save-button').attributes('disabled')).toBeUndefined()
+  })
+
+  it('renders complete available release notes as safe Markdown separately from the current release', async () => {
+    vi.mocked(appUpdater.check).mockResolvedValueOnce({ supported: true, available: true, version: '9.0.0', body: '# 新版本\n\n> 发布说明\n\n- **修复**显示\n- 第二项\n\n`代码`\n\n最后一段<script>alert(1)</script>' })
+    const wrapper = mount(SettingsView, {
+      global: { plugins: [createPinia(), createI18n({ legacy: false, locale: 'zh-CN', messages })], stubs: { AgentToolsCatalog: true } }
+    })
+    try {
+      await vi.waitFor(() => expect(wrapper.text()).toContain('关于'))
+      await wrapper.findAll('.settings-nav-item').find(button => button.text().includes('关于'))!.trigger('click')
+      await wrapper.get('.settings-update-row button').trigger('click')
+      await vi.waitFor(() => expect(wrapper.find('.settings-update-notes h1').exists()).toBe(true))
+      const notes = wrapper.get('.settings-update-notes')
+      expect(notes.get('h1').text()).toBe('新版本')
+      expect(notes.findAll('li')).toHaveLength(2)
+      expect(notes.get('blockquote').text()).toBe('发布说明')
+      expect(notes.get('strong').text()).toBe('修复')
+      expect(notes.get('code').text()).toBe('代码')
+      expect(notes.text()).toContain('最后一段')
+      expect(notes.find('script').exists()).toBe(false)
+      expect(wrapper.get('.settings-release-notes-body').classes()).toContain('release-notes-markdown')
+    } finally {
+      wrapper.unmount()
+    }
   })
 
   it('keeps the model editor open and shows the server error when saving fails', async () => {

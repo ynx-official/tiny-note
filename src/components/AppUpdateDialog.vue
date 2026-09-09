@@ -4,6 +4,8 @@ import { Download, RefreshCw, Sparkles, X } from 'lucide-vue-next'
 import { appUpdater, UPDATE_CHECK_INTERVAL_MS, UPDATE_RETRY_INTERVAL_MS } from '../services/appUpdater'
 import { errorMessage } from '../types/domain'
 import { renderMarkdown } from '../utils/markdown'
+import '../styles/app-update.css'
+import '../styles/release-notes.css'
 
 const visible = ref(false)
 const checking = ref(false)
@@ -93,7 +95,7 @@ onUnmounted(() => {
           </header>
           <div class="app-update-body">
             <div class="app-update-version"><span>{{ isChinese() ? '最新版本' : 'Latest version' }}</span><strong>v{{ info?.version }}</strong></div>
-            <div v-if="info?.body" class="app-update-notes" v-html="renderedNotes"></div>
+            <div v-if="info?.body" class="app-update-notes release-notes-markdown" tabindex="0" v-html="renderedNotes"></div>
             <div v-if="installing" class="app-update-progress" role="status"><div class="app-update-progress-track"><i :style="{ width: `${progress ?? 18}%` }"></i></div><span>{{ progress === 100 ? (isChinese() ? '安装包已打开' : 'Installer opened') : (isChinese() ? '正在准备更新…' : 'Preparing update…') }}</span></div>
             <p v-if="error" class="app-update-error" role="alert">{{ error }}</p>
             <p v-else class="app-update-hint">{{ isChinese() ? '更新包会先进行 SHA-256 校验，然后打开系统安装程序。' : 'The package is verified with SHA-256 before the installer opens.' }}</p>

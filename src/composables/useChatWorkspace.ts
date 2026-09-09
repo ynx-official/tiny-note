@@ -30,7 +30,7 @@ export function useChatWorkspace() {
   
   interface PendingInput { runId: string; toolCallId: string; inputHash: string; request: JsonValue; busy?: boolean }
   
-  interface AgentEvent { type: string; text?: string; runId?: string; toolCallId?: string; toolName?: string; arguments?: JsonValue; output?: string; status?: string; approvalHash?: string; description?: string; request?: JsonValue; inputHash?: string; sources?: JsonValue[]; proposal?: EditProposal; message?: string; content?: string }
+  interface AgentEvent { type: string; text?: string; runId?: string; toolCallId?: string; toolName?: string; arguments?: JsonValue; output?: string; status?: string; approvalHash?: string; description?: string; request?: JsonValue; inputHash?: string; sources?: JsonValue[]; proposal?: EditProposal; message?: string; content?: string; titleTaskId?: string }
   
   const route = useRoute()
   
@@ -161,9 +161,17 @@ export function useChatWorkspace() {
   async function pushResponse(content: string) {
     const text = content?.trim()
     if (!text) return
-    const saved = await saveMessage('assistant', text, [], responseSources.value, responseProposal.value?.id || null, currentAgentRunId.value || null) as ViewMessage
+    const runId = currentAgentRunId.value
+    const thread = runId ? await invoke('chat_get', { id: conversationId.value }) : null
+    if (thread) {
+      conversationVersion.value = thread.conversation.version || conversationVersion.value
+      conversationTitle.value = thread.conversation.title
+      window.dispatchEvent(new CustomEvent('tiny-note-chat-updated'))
+    }
+    const persisted = thread?.messages.find(message => message.role === 'assistant' && message.agentRunId === runId)
+    const saved: ViewMessage = persisted || await saveMessage('assistant', text, [], responseSources.value, responseProposal.value?.id || null, runId || null)
     if (currentAgentRunId.value) saved.agentSegments = agentSegments.value.map(segment => ({ ...segment }))
-    messages.value.push(saved)
+    if (!messages.value.some(message => message.id === saved.id)) messages.value.push(saved)
   }
   
   async function completeResponse() {
@@ -423,6 +431,7 @@ export function useChatWorkspace() {
         if (!await retainInterruptedAgentRun('cancelled', '已停止 Tiny Agent 执行。')) { streamingText.value = ''; busy.value = false; pendingApproval.value = null; pendingInput.value = null }
       }
       if (event.type === 'completed') {
+        if (event.titleTaskId && conversationId.value) watchTitleTask(conversationId.value, event.titleTaskId)
         if ((!streamingText.value || streamingText.value === '正在思考…') && event.content) { streamingText.value = event.content; if (currentMode.value === 'agent') appendAgentText(event.content) }
         finishStreamingAgentText()
         if (currentMode.value === 'agent') await refreshDataAfterAgent()

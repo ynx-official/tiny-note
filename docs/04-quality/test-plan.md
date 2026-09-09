@@ -1,6 +1,8 @@
 # 测试计划
 
-最后更新：2026-09-06。以当前云端架构为准；执行结果与剩余验收见[稳定性计划](../06-delivery/stabilization.md)和[隔离桌面验收](desktop-qa.md)。下面列出覆盖要求，不代表每一项已通过真实安装包验收。
+状态：Review。最后更新：2026-09-09。以当前云端架构为准；执行结果与剩余验收见[稳定性计划](../06-delivery/stabilization.md)和[隔离桌面验收](desktop-qa.md)。下面列出覆盖要求，不代表每一项已通过真实安装包验收。
+
+- Agent 历史回归：完成技能调用后，前端复用后端保存的回复而不重复写入；重新挂载会话后正文、技能参数与返回仍可见。后端成功事务须保存带运行关联的回复，工具无正文时也有完成记录；旧成功运行可恢复缺失回复，已有回复和未完成运行不被重复或错误追加。对应规则见[远程后端契约](../backend-migration-contract.md)。MySQL/SSE 集成验收还须验证客户端未写助手消息的情况下，完成事件后历史已有回复及步骤。
 
 - 启动性能：验证设置/模型 IPC 未完成或失败时静态外壳和 Vue 外壳仍可见；构建后解析 Vite manifest，首页达到可交互前的 minified JS 不超过 500KB、CSS 不超过 100KB，且关键依赖闭包不包含 TipTap、CodeMirror、Mermaid 或 html2pdf。Windows release 使用 `npm run measure:startup` 独立启动 5 次并取中位数；2026-08-27 最终打包后的 release 可执行文件实测外壳 599ms、ready 691ms，前者仍未达到 500ms，实际 NSIS 安装后程序仍需复测。
 - TypeScript：`src/` 不允许 `.js/.mjs` 运行时代码或测试；应用、测试与 Node 配置分别执行 `vue-tsc`/`tsc`。ESLint 覆盖 `.ts` 与 `.vue` 并以零 warning 结束；所有生产 SFC 不超过 300 行且结构检查不使用历史例外。浏览器模拟后端按业务域实现同一 `CommandMap` 契约，外部持久化值从 `unknown` 收窄；NoteEditor 测试按编辑模式、保存、AI、内容和公共契约独立执行。
