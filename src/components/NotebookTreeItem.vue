@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { FileText, Folder, Pin } from 'lucide-vue-next'
+import { ChevronRight, FileText, Folder, Pin } from 'lucide-vue-next'
 import NotePageControls from './notes/NotePageControls.vue'
 import type { NotePageState } from '../services/notePage'
 import type { NoteSummary, Notebook } from '../types/domain'
@@ -44,8 +44,8 @@ function folderKeydown(event: KeyboardEvent) {
       @click="$emit('select-notebook', node)"
       @contextmenu.prevent.stop="$emit('notebook-menu', $event, node)"
     >
-      <button class="tree-disclosure" :aria-label="expanded.has(node.id) ? '折叠' : '展开'" @click.stop="$emit('toggle', node.id)">
-        <span :class="{ expanded: expanded.has(node.id) }">›</span>
+      <button type="button" class="tree-disclosure" :aria-expanded="expanded.has(node.id)" :aria-label="expanded.has(node.id) ? '折叠' : '展开'" @click.stop="$emit('toggle', node.id)">
+        <ChevronRight :size="16" :stroke-width="1.9" class="tree-disclosure-icon" :class="{ expanded: expanded.has(node.id) }" aria-hidden="true" />
       </button>
       <Folder :size="16" :stroke-width="1.9" />
       <span class="tree-label">{{ node.name }}</span>

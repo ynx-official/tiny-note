@@ -852,8 +852,8 @@ body, button, input, select, textarea { font-family: -apple-system, BlinkMacSyst
 .external-source-context-menu button:disabled:hover { background:transparent; }
 @media (hover:none) { .external-sources-clear { opacity:1; } }
 .tree-disclosure { width:16px; height:22px; display:grid; place-items:center; flex:none; border:0; padding:0; color:var(--text-secondary); background:transparent; }
-.tree-disclosure span { display:block; font-size:20px; line-height:1; transform:rotate(0); transition:transform .12s ease; }
-.tree-disclosure span.expanded { transform:rotate(90deg); }
+.tree-disclosure-icon { display:block; width:16px; height:16px; flex:none; transform-origin:center; transform:rotate(0); transition:transform .12s ease; }
+.tree-disclosure-icon.expanded { transform:rotate(90deg); }
 .tree-note-row { color:var(--text-primary); font-weight:400; }
 .tree-note-row.active { color:var(--text-primary); }
 .tree-pin { flex:none; color:var(--text-tertiary); }

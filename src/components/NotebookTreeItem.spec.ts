@@ -23,4 +23,18 @@ describe('NotebookTreeItem', () => {
     await wrapper.get('.tree-folder-row').trigger('keydown', { key: 'ArrowRight' })
     expect(wrapper.emitted('toggle')?.[0]).toEqual(['root'])
   })
+
+  it('keeps the disclosure button while toggling without selecting the notebook', async () => {
+    const wrapper = mount(NotebookTreeItem, { props: { node, expanded: new Set(), selected: { type: 'all', id: 'all' } } })
+    const button = wrapper.get('.tree-disclosure')
+    expect(button.attributes('aria-expanded')).toBe('false')
+    await button.trigger('click')
+    expect(wrapper.emitted('toggle')?.[0]).toEqual(['root'])
+    expect(wrapper.emitted('select-notebook')).toBeUndefined()
+    await wrapper.setProps({ expanded: new Set(['root']) })
+    expect(wrapper.get('.tree-disclosure').element).toBe(button.element)
+    expect(button.attributes('aria-expanded')).toBe('true')
+    expect(button.attributes('aria-label')).toBe('折叠')
+    wrapper.unmount()
+  })
 })
