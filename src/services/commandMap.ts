@@ -4,32 +4,36 @@ import type {
   ExternalMarkdownFile, ExternalMarkdownSelection, ExternalMarkdownSource, ImageAsset, ImageGeneration,
   JsonValue, KnowledgeBase, LibraryEntry, LibraryPreview, McpServer, MemoryFile,
   ModelOption, ModelProfile, ModelTestResult, Note, Notebook, NoteLink,
-  NoteTemplate, Reminder, Tag, Todo, TodoList, UpdateInfo, UsageStats
+  NoteTemplate, NotePage, NotePageFilter, Reminder, Tag, Todo, TodoList, UpdateInfo, UsageStats
 } from '../types/domain'
-import type { Channel } from '@tauri-apps/api/core'
+import type { EventChannel } from './eventChannel'
 
 export interface CommandDefinition<Args extends object, Result> { args: Args; result: Result }
 type Command<Args extends object, Result = void> = CommandDefinition<Args, Result>
 export type NoCommandArgs = Record<string, never>
 type NoArgs<Result = void> = Command<NoCommandArgs, Result>
 type IdArgs = { id: string }
+type VersionedIdArgs = IdArgs & { version: number }
+type Versioned<T extends object> = T & { version: number }
 type JsonObject = { [key: string]: JsonValue }
-type CommandChannel = Channel<never>
+type CommandChannel = EventChannel<never>
 
 export interface ModelFetchRequest { provider: string; profileId: string | null; baseUrl: string; apiKey: string | null; endpointType: string }
 export interface BalanceData { supported: boolean; available: boolean | null; currency: string | null; totalBalance: number; grantedBalance: number; toppedUpBalance: number; voucherBalance: number; cashBalance: number; updatedAt: string }
 export interface BackgroundTaskFilter { statuses: string[]; kinds: string[] }
-export interface BackgroundTaskTransition { id: string; status: string; outputDelta?: string | null; result?: JsonValue | null; errorCode?: string | null; errorMessage?: string | null; agentRunId?: string | null }
 export interface ImageInput { name: string; mimeType: string; dataUrl: string }
 export interface ImageGenerateRequest { requestId: string; imageModelProfileId: string; prompt: string; size: string; count: number; mode?: string; inputImages?: ImageInput[]; maskImage?: ImageInput | null }
+export interface ImageGenerationTaskRequest { requestKey: string; imageModelProfileId: string; prompt: string; size: string; count: number; mode?: string; inputImages?: ImageInput[]; maskImage?: ImageInput | null }
+export interface ConversationSummaryTaskRequest { conversationId: string; requestKey: string; modelProfileId?: string | null; thinkingMode?: string | null }
+export interface NoteAITaskRequest { noteId: string; requestKey: string; action: string; instruction?: string | null; targetLanguage?: string | null; modelProfileId?: string | null; thinkingMode?: string | null; mode?: string; baseVersion: number; selection?: JsonObject | null; references?: JsonValue[] }
 export interface ImageGenerateResult { generationId: string; assets: ImageAsset[]; usage: JsonValue | null }
 export interface ChatReferenceInput { key: string; type: string; name: string; noteId?: string; knowledgeBaseId?: string | null; baseId?: string | null; baseName?: string; relativePath?: string }
 export interface ChatAddMessage { conversationId: string; role: string; content: string; references?: ChatReferenceInput[]; sources?: JsonValue[]; proposalId?: string | null; agentRunId?: string | null }
-export interface AgentInvokeRequest { requestId: string; conversationId: string; message: string; modelProfileId: string | null; thinkingMode: string | null; references: JsonValue[] }
+export interface AgentInvokeRequest { requestId: string; conversationId: string; messageId: string; message: string; modelProfileId: string | null; thinkingMode: string | null; references: JsonValue[] }
 export interface AgentResumeRequest { runId: string; toolCallId: string; approvalHash: string; decision: string; reason: string | null }
 export interface AgentInputResponseRequest { runId: string; toolCallId: string; inputHash: string; outcome: string; selectedOptionId?: string | null; otherText?: string | null }
 export interface McpServerRequest { id: string; name: string; command: string; args: string[]; enabled: boolean }
-export interface AiRequest { requestId: string; action: string; text: string; instruction: string | null; modelProfileId: string | null; thinkingMode?: string | null; source?: string | null; conversationId?: string | null; mode?: string | null; references?: JsonValue[]; targetNoteId?: string | null; selection?: JsonObject | null; targetLanguage?: string | null }
+export interface AiRequest { requestId: string; action: string; text: string; instruction: string | null; modelProfileId: string | null; thinkingMode?: string | null; source?: string | null; conversationId?: string | null; messageId?: string | null; mode?: string | null; references?: JsonValue[]; targetNoteId?: string | null; selection?: JsonObject | null; targetLanguage?: string | null }
 export interface ExportWriteRequest { directory: string; fileName: string; contentBase64: string }
 
 export interface CommandMap {
@@ -43,17 +47,18 @@ export interface CommandMap {
   model_query_balance: Command<{ modelId: string }, BalanceData>
 
   note_list: Command<{ search?: string | null; deleted?: boolean; pinned?: boolean | null; knowledgeBaseId?: string | null }, Note[]>
+  note_page: Command<NotePageFilter, NotePage>
   note_get: Command<IdArgs, Note | null>
   note_create: Command<{ input: Partial<Note> }, Note>
-  note_update: Command<IdArgs & { input: Partial<Note> }, Note>
+  note_update: Command<IdArgs & { input: Versioned<Partial<Note>> }, Note>
   note_copy: Command<IdArgs, Note>
-  note_delete: Command<IdArgs>
+  note_delete: Command<VersionedIdArgs>
   note_purge: Command<IdArgs>
   note_purge_expired: NoArgs<number>
-  note_restore: Command<IdArgs>
-  note_set_pinned: Command<IdArgs & { pinned: boolean }, Note>
-  note_move: Command<IdArgs & { notebookId: string | null }>
-  note_move_to_knowledge_base: Command<IdArgs & { knowledgeBaseId: string | null }, Note>
+  note_restore: Command<VersionedIdArgs>
+  note_set_pinned: Command<VersionedIdArgs & { pinned: boolean }, Note>
+  note_move: Command<VersionedIdArgs & { notebookId: string | null }, Note>
+  note_move_to_knowledge_base: Command<VersionedIdArgs & { knowledgeBaseId: string | null }, Note>
   note_open_external_markdown: Command<{ input: Partial<Note> & { path: string } }, Note>
   note_template_list: NoArgs<NoteTemplate[]>
   note_template_upsert: Command<{ template: Partial<NoteTemplate> }, NoteTemplate>
@@ -68,12 +73,12 @@ export interface CommandMap {
 
   notebook_list: NoArgs<Notebook[]>
   notebook_create: Command<{ name: string; description: string; parentId: string | null }, Notebook>
-  notebook_update: Command<IdArgs & { name: string; description: string; parentId: string | null }, Notebook>
-  notebook_move: Command<IdArgs & { parentId: string | null }, Notebook>
+  notebook_update: Command<VersionedIdArgs & { name: string; description: string; parentId: string | null }, Notebook>
+  notebook_move: Command<VersionedIdArgs & { parentId: string | null }, Notebook>
   notebook_delete: Command<IdArgs>
   tag_list: NoArgs<Tag[]>
   tag_create: Command<{ name: string }, Tag>
-  tag_update: Command<IdArgs & { name: string }, Tag>
+  tag_update: Command<VersionedIdArgs & { name: string }, Tag>
   tag_delete: Command<IdArgs>
   note_tag_list: Command<{ noteId: string }, Tag[]>
   tag_note_list: Command<{ tagId: string | null; untagged: boolean }, Note[]>
@@ -89,8 +94,8 @@ export interface CommandMap {
   app_take_pending_markdown_files: NoArgs<ExternalMarkdownFile[]>
   knowledge_base_list: NoArgs<KnowledgeBase[]>
   knowledge_base_create: Command<{ input: Pick<KnowledgeBase, 'name' | 'category'> & Partial<KnowledgeBase> }, KnowledgeBase>
-  knowledge_base_update: Command<IdArgs & Pick<KnowledgeBase, 'name' | 'description' | 'cover'>, KnowledgeBase>
-  knowledge_base_delete: Command<IdArgs>
+  knowledge_base_update: Command<VersionedIdArgs & Pick<KnowledgeBase, 'name' | 'description' | 'cover'>, KnowledgeBase>
+  knowledge_base_delete: Command<VersionedIdArgs>
   library_list: Command<{ knowledgeBaseId: string; relativePath: string; search?: string | null }, LibraryEntry[]>
   library_preview: Command<{ knowledgeBaseId: string | null; relativePath: string }, LibraryPreview>
   library_create_folder: Command<{ knowledgeBaseId: string | null; relativePath: string; name: string }>
@@ -103,27 +108,28 @@ export interface CommandMap {
   calendar_event_list: Command<{ start?: string; end?: string }, CalendarEvent[]>
   calendar_event_get: Command<IdArgs, CalendarEvent | null>
   calendar_event_create: Command<{ input: Omit<Partial<CalendarEvent>, 'reminder'> & { reminder?: Partial<Reminder> | null } }, CalendarEvent>
-  calendar_event_update: Command<IdArgs & { input: Omit<Partial<CalendarEvent>, 'reminder'> & { reminder?: Partial<Reminder> | null } }, CalendarEvent>
+  calendar_event_update: Command<VersionedIdArgs & { input: Omit<Partial<CalendarEvent>, 'reminder'> & { reminder?: Partial<Reminder> | null } }, CalendarEvent>
   calendar_event_delete: Command<IdArgs>
   todo_list: NoArgs<Todo[]>
   todo_get: Command<IdArgs, Todo | null>
   todo_create: Command<{ input: Omit<Partial<Todo>, 'reminder'> & { reminder?: Partial<Reminder> | null } }, Todo>
-  todo_update: Command<IdArgs & { input: Omit<Partial<Todo>, 'reminder'> & { reminder?: Partial<Reminder> | null } }, Todo>
-  todo_set_completed: Command<IdArgs & { completed: boolean }, Todo>
+  todo_update: Command<VersionedIdArgs & { input: Omit<Partial<Todo>, 'reminder'> & { reminder?: Partial<Reminder> | null } }, Todo>
+  todo_set_completed: Command<VersionedIdArgs & { completed: boolean }, Todo>
   todo_delete: Command<IdArgs>
   todo_custom_list_list: NoArgs<TodoList[]>
   todo_custom_list_create: Command<{ input: Partial<TodoList> }, TodoList>
-  todo_custom_list_update: Command<IdArgs & { input: Partial<TodoList> }, TodoList>
+  todo_custom_list_update: Command<VersionedIdArgs & { input: Partial<TodoList> }, TodoList>
   todo_custom_list_delete: Command<IdArgs>
   reminder_stop: Command<{ ownerType: string; ownerId: string }>
 
   background_task_list: Command<{ filter?: BackgroundTaskFilter | null }, BackgroundTask[]>
   background_task_get: Command<IdArgs, BackgroundTask | null>
-  background_task_enqueue: Command<{ input: Partial<BackgroundTask> }, BackgroundTask>
-  background_task_transition: Command<{ input: BackgroundTaskTransition }, BackgroundTask>
   background_task_retry: Command<IdArgs, BackgroundTask>
   background_task_cancel: Command<IdArgs, BackgroundTask>
   background_task_clear_finished: NoArgs<number>
+  conversation_summary_task_create: Command<ConversationSummaryTaskRequest, BackgroundTask>
+  note_ai_task_create: Command<NoteAITaskRequest, BackgroundTask>
+  image_generation_task_create: Command<ImageGenerationTaskRequest, BackgroundTask>
   image_model_list: NoArgs<ModelProfile[]>
   image_generation_list: Command<{ limit?: number }, ImageGeneration[]>
   image_generation_delete: Command<{ generationId: string }>
@@ -134,7 +140,7 @@ export interface CommandMap {
   chat_get: Command<IdArgs, ChatThread>
   chat_create: Command<{ modelProfileId?: string | null; mode?: string }, ChatConversation>
   chat_delete: Command<IdArgs>
-  chat_set_mode: Command<IdArgs & { mode: string }, ChatConversation>
+  chat_set_mode: Command<VersionedIdArgs & { mode: string }, ChatConversation>
   chat_add_message: Command<ChatAddMessage, ChatMessage>
   chat_generate_title: Command<{ conversationId: string; modelProfileId?: string | null }, string>
   agent_list_tools: NoArgs<AgentTool[]>
@@ -156,7 +162,7 @@ export interface CommandMap {
   agent_skill_delete: Command<{ name: string }>
   memory_list: NoArgs<MemoryFile[]>
   memory_update: Command<{ fileName: string; content: string }, MemoryFile>
-  usage_get_stats: Command<{ range: string }, UsageStats>
+  usage_get_stats: Command<{ range: string; timezoneOffsetMinutes?: number }, UsageStats>
   usage_clear: NoArgs
 
   note_ai_stream: Command<{ request: AiRequest; onEvent: CommandChannel }, string>

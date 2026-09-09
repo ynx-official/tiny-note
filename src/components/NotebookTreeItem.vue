@@ -1,12 +1,14 @@
 <script setup lang="ts">
 import { FileText, Folder, Pin } from 'lucide-vue-next'
-import type { Note, Notebook } from '../types/domain'
+import NotePageControls from './notes/NotePageControls.vue'
+import type { NotePageState } from '../services/notePage'
+import type { NoteSummary, Notebook } from '../types/domain'
 
-interface TreeNode extends Notebook { children: TreeNode[]; notes: Note[]; totalNoteCount: number }
+interface TreeNode extends Notebook { children: TreeNode[]; notes: NoteSummary[]; page?: NotePageState; totalNoteCount: number }
 
 defineOptions({ name: 'NotebookTreeItem' })
 const props = withDefaults(defineProps<{ node: TreeNode; depth?: number; expanded: Set<unknown>; selected: { type: string; id: string } }>(), { depth: 0 })
-const emit = defineEmits(['toggle', 'select-notebook', 'select-note', 'notebook-menu', 'note-menu', 'drop-node'])
+const emit = defineEmits(['toggle', 'select-notebook', 'select-note', 'notebook-menu', 'note-menu', 'drop-node', 'more-notes', 'retry-notes'])
 
 function dragStart(event: DragEvent, kind: string, id: string) {
   if (!event.dataTransfer) return
@@ -57,6 +59,8 @@ function folderKeydown(event: KeyboardEvent) {
         :depth="depth + 1"
         :expanded="expanded"
         :selected="selected"
+        @more-notes="$emit('more-notes', $event)"
+        @retry-notes="$emit('retry-notes', $event)"
         @toggle="$emit('toggle', $event)"
         @select-notebook="$emit('select-notebook', $event)"
         @select-note="$emit('select-note', $event)"
@@ -79,6 +83,7 @@ function folderKeydown(event: KeyboardEvent) {
         <span class="tree-label">{{ note.title || '未命名笔记' }}</span>
         <Pin v-if="note.pinned" :size="12" :stroke-width="1.9" class="tree-pin" />
       </button>
+      <NotePageControls v-if="node.page" :page="node.page" @more="$emit('more-notes', node.id)" @retry="$emit('retry-notes', node.id)" />
     </div>
   </div>
 </template>

@@ -31,4 +31,26 @@ describe('SkillsManagement', () => {
     await dialog.get('[aria-label="关闭说明"]').trigger('click')
     expect(wrapper.find('[role="dialog"][aria-label="Agent 技能与工具说明"]').exists()).toBe(false)
   })
+
+  it('renders cloud system skills as read-only', async () => {
+    invoke.mockResolvedValueOnce([{
+      id: 'system-1',
+      name: 'note-organizer',
+      fileName: 'note-organizer/SKILL.md',
+      description: '管理笔记',
+      builtin: true,
+      scope: 'system',
+      enabled: true
+    }])
+
+    const wrapper = mount(SkillsManagement)
+    await flushPromises()
+
+    const card = wrapper.get('.skill-card')
+    expect(card.text()).toContain('系统')
+    expect(card.find('[title="编辑"]').exists()).toBe(false)
+    expect(card.find('[title="删除"]').exists()).toBe(false)
+    expect(wrapper.text()).toContain('系统技能由云端统一提供且只读')
+    expect(wrapper.text()).not.toContain('技能保存在本机')
+  })
 })

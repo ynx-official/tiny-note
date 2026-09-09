@@ -9,10 +9,14 @@ import { requestConfirmation, showToast } from '../services/appFeedback'
 import { invoke } from '../services/tauri'
 import { openPendingMarkdownFiles } from '../services/externalMarkdown'
 import { useWorkspaceSidebar } from '../utils/workspaceSidebar'
-import { errorMessage, type ExternalMarkdownSource, type Note, type Notebook, type Tag } from '../types/domain'
+import { errorMessage, type ExternalMarkdownSource, type Note, type NoteSummary, type Notebook, type Tag } from '../types/domain'
+import { noteSummary } from '../services/noteCache'
+import { registerNoteEditorFlush } from '../services/noteEditorFlush'
+import type { NotePageState } from '../services/notePage'
+import { compareNotebooks } from '../utils/notebooks'
 
 export function useNotesWorkspace() {
-  interface NotebookTreeNode extends Notebook { children: NotebookTreeNode[]; notes: Note[]; totalNoteCount: number }
+  interface NotebookTreeNode extends Notebook { children: NotebookTreeNode[]; notes: NoteSummary[]; page?: NotePageState; totalNoteCount: number }
   
   interface NoteContextMenu { noteId: string; x: number; y: number }
   
@@ -36,7 +40,14 @@ export function useNotesWorkspace() {
   
   const searchMode = ref(false)
   
-  const query = ref('')
+  const query = ref(store.search)
+  const bodyLoading = ref(false)
+  const bodyError = ref('')
+  let selectionSequence = 0
+  let retryNoteId = ''
+  let mounted = false
+  let disposed = false
+  let unregisterEditorFlush = () => {}
   
   const sidebarCollapsed = ref(false)
   
@@ -92,11 +103,11 @@ export function useNotesWorkspace() {
 
   const externalPickerBusy = ref(false)
   
-  const list = computed(() => showDeleted.value ? store.deleted : store.listed)
+  const list = computed(() => showDeleted.value ? store.trashPage.items : store.listed)
   
   const contextNote = computed(() => {
     const menu = contextMenu.value
-    return menu ? list.value.find(note => note.id === menu.noteId) || store.notes.find(note => note.id === menu.noteId) || store.deleted.find(note => note.id === menu.noteId) || null : null
+    return menu ? store.findMetadata(menu.noteId) || null : null
   })
   
   const notebookTree = computed(() => {
@@ -106,16 +117,17 @@ export function useNotesWorkspace() {
       if (!notebookByParent.has(parentId)) notebookByParent.set(parentId, [])
       notebookByParent.get(parentId)!.push(notebook)
     }
-    for (const books of notebookByParent.values()) books.sort((a, b) => a.name.localeCompare(b.name, undefined, { numeric: true, sensitivity: 'base' }))
+    for (const books of notebookByParent.values()) books.sort(compareNotebooks)
     const queryText = query.value.trim().toLocaleLowerCase()
-    const noteMatches = (note: Note) => (!store.pinnedOnly || note.pinned) && (!queryText || `${note.title} ${note.contentText}`.toLocaleLowerCase().includes(queryText))
     const build = (notebook: Notebook, ancestors = new Set<string>()): NotebookTreeNode | null => {
       if (ancestors.has(notebook.id)) return null
       const nextAncestors = new Set(ancestors).add(notebook.id)
       const children = (notebookByParent.get(notebook.id) || []).map(child => build(child, nextAncestors)).filter((child): child is NotebookTreeNode => Boolean(child))
-      const notes = store.listed.filter(note => note.notebookId === notebook.id && noteMatches(note)).sort((a, b) => Number(Boolean(b.pinned)) - Number(Boolean(a.pinned)) || String(b.updatedAt).localeCompare(String(a.updatedAt)))
-      if (queryText && !notes.length && !children.length) return null
-      return { ...notebook, children, notes, totalNoteCount: notes.length + children.reduce((sum, child) => sum + child.totalNoteCount, 0) }
+      const page = store.notebookPages[notebook.id]
+      const notes = page?.items || []
+      const totalNoteCount = (store.catalog.notebookCounts[notebook.id] || 0) + children.reduce((sum, child) => sum + child.totalNoteCount, 0)
+      if ((queryText || store.pinnedOnly) && !totalNoteCount) return null
+      return { ...notebook, children, notes, page, totalNoteCount }
     }
     return (notebookByParent.get(null) || []).map(book => build(book)).filter((book): book is NotebookTreeNode => Boolean(book))
   })
@@ -125,14 +137,21 @@ export function useNotesWorkspace() {
     { id: 'local', label: t('local'), items: library.bases.filter(base => base.category === 'local') }
   ].filter(group => group.items.length))
   
-  watch(query, value => {
-    if (!value.trim()) return
-    const expanded = new Set<string>()
-    const visit = (nodes: NotebookTreeNode[]) => nodes.forEach(node => { expanded.add(node.id); visit(node.children) })
-    visit(notebookTree.value)
-    expandedNotebookIds.value = expanded
+  let searchTimer: ReturnType<typeof setTimeout> | undefined
+  watch([query, () => store.pinnedOnly], () => {
+    clearTimeout(searchTimer)
+    searchTimer = setTimeout(async () => {
+      store.search = query.value.trim()
+      await store.loadCatalog()
+      if (!mounted || !store.search) return
+      const expanded = new Set<string>()
+      const visit = (nodes: NotebookTreeNode[]) => nodes.forEach(node => { expanded.add(node.id); visit(node.children) })
+      visit(notebookTree.value)
+      expandedNotebookIds.value = expanded
+      await Promise.all([...expanded].filter(id => !store.notebookPages[id]).map(id => store.loadNotebook(id)))
+    }, 250)
   })
-  
+
   watch(() => store.activeId, () => { tocVisible.value = false })
   
   let creatingFromQuery = false
@@ -144,40 +163,55 @@ export function useNotesWorkspace() {
   }
   
   onMounted(async () => {
+    unregisterEditorFlush = registerNoteEditorFlush(flushCurrent)
     // The notes page can be the first route mounted. Load its own data instead
     // of relying on another tab (for example LibraryView) to hydrate the store.
     await store.load()
+    if (disposed) return
     await Promise.all([store.loadTemplates(), tagsStore.load()])
-    await createFromQuery()
+    if (disposed) return
+    mounted = true
+    if (route.query.new) await createFromQuery()
+    else if (route.query.note) await openRoutedNote()
+    else if (store.active) await selectNote({ id: store.active.id })
+    else if (store.listed[0]) await selectNote(store.listed[0])
   })
   
   watch(() => route.query.new, createFromQuery)
   
-  function openRoutedNote() {
+  async function openRoutedNote() {
     const id = String(route.query.note || '')
-    const note = store.notes.find(item => item.id === id)
-    if (!note) return
-    showDeleted.value = false
-    store.activeId = id
-    store.selectedTreeNode = { type: note.external ? 'external-note' : 'note', id }
-    if (note.external) {
-      externalSourcesOpen.value = true
-      return
-    }
+    if (id) await selectNote({ id })
+  }
+
+  async function revealNote(note: Note) {
+    if (note.external) { externalSourcesOpen.value = true; return }
     const expanded = new Set(expandedNotebookIds.value)
-    const visited = new Set()
+    const visited = new Set<string>()
     let notebook = store.notebooks.find(book => book.id === note.notebookId)
+    const loads: Promise<unknown>[] = []
     while (notebook && !visited.has(notebook.id)) {
       visited.add(notebook.id)
       expanded.add(notebook.id)
+      if (!store.notebookPages[notebook.id]) loads.push(store.loadNotebook(notebook.id))
       const parentId = notebook.parentId
       notebook = store.notebooks.find(book => book.id === parentId)
     }
     expandedNotebookIds.value = expanded
+    await Promise.all(loads)
+    // A deep link can target a note beyond the first page. Keep it visible without
+    // pretending it increased the server's count; later pages deduplicate by ID.
+    const page = note.notebookId ? store.notebookPages[note.notebookId] : undefined
+    if (page && !page.items.some(item => item.id === note.id) && !store.search && !store.pinnedOnly) page.items.unshift(noteSummary(note))
   }
-  
-  watch(() => [route.query.note, store.notes.length], openRoutedNote, { immediate: true })
-  
+
+  watch(() => route.query.note, () => { if (mounted) void openRoutedNote() })
+
+  async function flushCurrent() {
+    try { return !noteEditorRef.value || await noteEditorRef.value.saveLatestContent() }
+    catch (error) { showToast(errorMessage(error, '当前笔记尚未保存'), { tone: 'error' }); return false }
+  }
+
   function clearReviewedProposal() {
     if (!route.query.proposal) return
     const query = { ...route.query }
@@ -185,20 +219,26 @@ export function useNotesWorkspace() {
     router.replace({ path: '/notes', query })
   }
   
-  async function create() { showDeleted.value = false; await store.create() }
+  async function create() { if (!await flushCurrent()) return; selectionSequence++; bodyLoading.value = false; showDeleted.value = false; await revealNote(await store.create()) }
   
-  async function createFromTemplate(templateId: string) { showDeleted.value = false; newNoteMenu.value = false; await store.createFromTemplate(templateId) }
+  async function createFromTemplate(templateId: string) { if (!await flushCurrent()) return; selectionSequence++; bodyLoading.value = false; showDeleted.value = false; newNoteMenu.value = false; await revealNote(await store.createFromTemplate(templateId)) }
   
-  async function togglePinned(note: Note | null) {
+  async function togglePinned(note: Note | NoteSummary | null) {
     if (!note) return
+    if (!await flushCurrent()) return
     await store.setPinned(note.id, !note.pinned)
-    await store.load()
   }
   
-  async function remove(id: string) { if (await requestConfirmation({ title: '移入最近删除', message: t('confirmDelete'), tone: 'danger', confirmLabel: '删除' })) await store.remove(id) }
+  async function remove(id: string) {
+    if (!await flushCurrent()) return
+    if (showDeleted.value) {
+      if (await requestConfirmation({ title: '永久删除笔记', message: '删除后无法恢复，确定继续吗？', tone: 'danger', confirmLabel: '永久删除' })) await store.purge(id)
+    } else if (await requestConfirmation({ title: '移入最近删除', message: t('confirmDelete'), tone: 'danger', confirmLabel: '删除' })) await store.remove(id)
+  }
   
   async function importExternalNote(note: Note) {
     try {
+      if (!await flushCurrent()) return
       const imported = await store.importExternal(note)
       showDeleted.value = false
       store.selectedNotebook = imported.notebookId || 'all'
@@ -219,6 +259,9 @@ export function useNotesWorkspace() {
   
   async function openExternalSource(source: ExternalMarkdownSource) {
     try {
+      if (source.id !== store.activeId && !await flushCurrent()) return
+      selectionSequence++
+      bodyLoading.value = false
       const note = await store.openExternalSource(source)
       showDeleted.value = false
       externalSourcesOpen.value = true
@@ -348,6 +391,8 @@ export function useNotesWorkspace() {
   
   async function importFiles(event: Event) {
     const input = event.target as HTMLInputElement
+    if (!await flushCurrent()) return
+    selectionSequence++
     for (const file of input.files || []) await store.importText(file)
     input.value = ''
   }
@@ -375,18 +420,43 @@ export function useNotesWorkspace() {
     store.selectedTreeNode = { type: 'all', id: 'all' }
   }
   
-  function selectNote(note: Note) {
-    showDeleted.value = false
-    store.activeId = note.id
-    store.selectedTreeNode = { type: 'note', id: note.id }
+  async function selectNote(summary: Pick<NoteSummary, 'id'> & { version?: number }) {
+    const sequence = ++selectionSequence
+    bodyError.value = ''
+    retryNoteId = summary.id
+    if (!await flushCurrent() || sequence !== selectionSequence) { if (sequence === selectionSequence) bodyLoading.value = false; return }
+    bodyLoading.value = true
+    try {
+      const note = await store.getNote(summary.id, summary.version)
+      if (sequence !== selectionSequence) return
+      store.activeId = note.id
+      showDeleted.value = Boolean(note.deletedAt)
+      store.selectedTreeNode = { type: note.external ? 'external-note' : 'note', id: note.id }
+      if (!note.deletedAt) await revealNote(note)
+    } catch (error) {
+      if (sequence === selectionSequence) bodyError.value = errorMessage(error, '笔记读取失败，请重试')
+    } finally { if (sequence === selectionSequence) bodyLoading.value = false }
   }
-  
-  function toggleNotebook(id: string) {
+
+  function retryNote() { if (retryNoteId) void selectNote({ id: retryNoteId }) }
+
+  async function toggleNotebook(id: string) {
     const next = new Set(expandedNotebookIds.value)
-    if (next.has(id)) next.delete(id); else next.add(id)
+    if (next.has(id)) next.delete(id)
+    else { next.add(id); if (!store.notebookPages[id]) void store.loadNotebook(id) }
     expandedNotebookIds.value = next
   }
-  
+
+  async function openTrash() {
+    if (!await flushCurrent()) return
+    selectionSequence++
+    bodyLoading.value = false
+    bodyError.value = ''
+    store.activeId = null
+    showDeleted.value = true
+    await store.loadTrash()
+  }
+
   async function createRootNotebook() {
     const name = await requestPrompt(t('newNotebook'))
     if (name?.trim()) await store.createNotebook(name.trim(), null)
@@ -408,7 +478,7 @@ export function useNotesWorkspace() {
   
   async function deleteNotebook() {
     const folder = folderItemMenu.value
-    const directNotes = store.listed.filter(note => note.notebookId === folder?.id).length
+    const directNotes = (folder ? store.catalog.notebookCounts[folder.id] || 0 : 0)
     const childNotebooks = store.notebooks.filter(book => book.parentId === folder?.id).length
     if (!folder || !(await requestConfirmation({ title: '删除笔记本', message: `“${folder.name}”包含 ${directNotes} 篇直属笔记和 ${childNotebooks} 个子笔记本。子笔记本将提升一级，直属笔记将移入“未分类”。`, tone: 'danger', confirmLabel: '删除' }))) return
     await store.deleteNotebook(folder.id)
@@ -452,7 +522,7 @@ export function useNotesWorkspace() {
     contextKnowledgeTimer = null
   }
   
-  async function openContextMenu(event: MouseEvent, note: Note) {
+  async function openContextMenu(event: MouseEvent, note: Note | NoteSummary) {
     const menuWidth = 180
     const menuHeight = showDeleted.value ? 108 : 180
     contextMoveOpen.value = false
@@ -492,7 +562,8 @@ export function useNotesWorkspace() {
   }
   
   async function duplicateContextNote() {
-    if (contextNote.value) await store.duplicate(contextNote.value.id)
+    if (!await flushCurrent()) return
+    if (contextNote.value) await revealNote(await store.duplicate(contextNote.value.id))
     closeContextMenu()
   }
   
@@ -545,7 +616,8 @@ export function useNotesWorkspace() {
     const note = contextNote.value
     if (!note || !knowledgeBaseId) return
     try {
-      await library.addNoteReference(knowledgeBaseId, note)
+      if (!await flushCurrent()) return
+      await store.moveToKnowledge(note.id, knowledgeBaseId)
       closeContextMenu()
     } catch (error) {
       showToast(errorMessage(error, '添加到知识库失败，请重试'), { tone: 'error' })
@@ -590,13 +662,14 @@ export function useNotesWorkspace() {
   }
   
   async function moveContextNote(notebookId: string | null) {
+    if (!await flushCurrent()) return
     if (contextNote.value) await store.move(contextNote.value.id, notebookId)
     closeContextMenu()
   }
   
   async function deleteContextNote() {
     const note = contextNote.value
-    if (!note) return
+    if (!note || !await flushCurrent()) return
     if (showDeleted.value) {
       if (await requestConfirmation({ title: '永久删除笔记', message: '删除后无法恢复，确定继续吗？', tone: 'danger', confirmLabel: '永久删除' })) await store.purge(note.id)
     } else if (await requestConfirmation({ title: '移入最近删除', message: t('confirmDelete'), tone: 'danger', confirmLabel: '删除' })) {
@@ -647,12 +720,17 @@ export function useNotesWorkspace() {
   }
   
   onBeforeUnmount(() => {
+    unregisterEditorFlush()
+    mounted = false
+    disposed = true
+    selectionSequence++
+    clearTimeout(searchTimer)
     document.body.style.cursor = ''
     document.body.style.userSelect = ''
   })
 
   return {
-    store, library, tagsStore, route, router, t, showDeleted, searchMode,
+    bodyLoading, bodyError, retryNote, openTrash, store, library, tagsStore, route, router, t, showDeleted, searchMode,
     query, sidebarCollapsed, sidebarWidth, isResizing, onResizeStart, newNoteMenu, folderItemMenu, folderItemMenuStyle,
     importInput, noteEditorRef, tocVisible, contextMenu, contextMoveOpen, contextMenuRef, contextMoveAnchorRef, contextMoveSubmenuRef,
     contextMoveStyle, contextKnowledgeOpen, contextTagsOpen, contextTagIds, contextKnowledgeAnchorRef, contextKnowledgeSubmenuRef, contextKnowledgeStyle, contextMoveTimer,

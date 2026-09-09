@@ -1,11 +1,12 @@
 import { computed, nextTick, onMounted, onUnmounted, ref, watch } from 'vue'
 import { storeToRefs } from 'pinia'
 import { useRoute, useRouter } from 'vue-router'
-import { Channel } from '@tauri-apps/api/core'
+import { EventChannel } from '../services/eventChannel'
 import { marked } from 'marked'
 import DOMPurify from 'dompurify'
 import { invoke } from '../services/tauri'
 import { requestConfirmation } from '../services/appFeedback'
+import { useNotePicker } from './useNotePicker'
 import { useNotesStore } from '../stores/notes'
 import { useLibraryStore } from '../stores/library'
 import { useAppStore } from '../stores/app'
@@ -29,13 +30,15 @@ export function useChatWorkspace() {
   
   interface PendingInput { runId: string; toolCallId: string; inputHash: string; request: JsonValue; busy?: boolean }
   
-  interface AgentEvent { type: string; text?: string; runId?: string; toolCallId?: string; toolName?: string; arguments?: JsonValue; output?: string; status?: string; approvalHash?: string; description?: string; request?: JsonValue; inputHash?: string; sources?: JsonValue[]; proposal?: EditProposal; message?: string; content?: string }
+  interface AgentEvent { type: string; text?: string; runId?: string; toolCallId?: string; toolName?: string; arguments?: JsonValue; output?: string; status?: string; approvalHash?: string; description?: string; request?: JsonValue; inputHash?: string; sources?: JsonValue[]; proposal?: EditProposal; message?: string; content?: string; titleTaskId?: string }
   
   const route = useRoute()
   
   const router = useRouter()
   
   const notesStore = useNotesStore()
+  const notePicker = useNotePicker()
+  const noteQuery = notePicker.query
   
   const library = useLibraryStore()
   
@@ -66,6 +69,8 @@ export function useChatWorkspace() {
   const messagesRef = ref<HTMLElement | null>(null)
   
   const conversationId = ref('')
+
+  const conversationVersion = ref(0)
   
   const conversationTitle = ref('新对话')
   
@@ -97,11 +102,12 @@ export function useChatWorkspace() {
   
   const approvalError = ref('')
   
-  const titlesGenerating = new Set<string>()
   
   let responseFinalizing = false
   
   let agentTextSequence = 0
+
+  let activeResponseChannel: EventChannel<AgentEvent> | null = null
   
   const fromHome = computed(() => route.query.from === 'home')
   
@@ -117,16 +123,11 @@ export function useChatWorkspace() {
     })
   }
   
-  function assistantContext() {
-    const referenceText = references.value.map(item => `${item.type === 'note' ? '笔记' : '文件'}：${item.name}`).join('\n')
-    const history = messages.value.slice(-8).map(item => `${item.role === 'user' ? '用户' : '助手'}：${item.content}`).join('\n')
-    return [referenceText ? `用户选择的引用：\n${referenceText}` : '', history ? `此前对话：\n${history}` : ''].filter(Boolean).join('\n\n') || '无额外上下文'
-  }
-  
   async function ensureConversation() {
     if (conversationId.value) return conversationId.value
     const conversation = await invoke('chat_create', { modelProfileId: selectedModel.value?.id || null, mode: currentMode.value })
     conversationId.value = conversation.id
+    conversationVersion.value = conversation.version || 0
     conversationTitle.value = conversation.title
     await router.replace({ path: '/chat', query: { id: conversation.id, ...(fromHome.value ? { from: 'home' } : {}) } })
     window.dispatchEvent(new CustomEvent('tiny-note-chat-updated'))
@@ -136,29 +137,41 @@ export function useChatWorkspace() {
   async function saveMessage(role: string, content: string, messageReferences: ChatReference[] = [], sources: JsonValue[] = [], proposalId: string | null = null, agentRunId: string | null = null): Promise<ViewMessage> {
     const id = await ensureConversation()
     const saved = await invoke('chat_add_message', { conversationId: id, role, content, references: messageReferences, sources, proposalId, agentRunId })
+    conversationVersion.value += 1
     window.dispatchEvent(new CustomEvent('tiny-note-chat-updated'))
+    if (saved.titleTaskId) watchTitleTask(id, saved.titleTaskId)
     return saved
   }
-  
-  async function generateTitle() {
-    const id = conversationId.value
-    if (!id || conversationTitle.value !== '新对话' || titlesGenerating.has(id)) return
-    titlesGenerating.add(id)
-    try {
-      const title = await invoke('chat_generate_title', { conversationId: id, modelProfileId: selectedModel.value?.id || null })
-      if (conversationId.value === id) conversationTitle.value = title
-      window.dispatchEvent(new CustomEvent('tiny-note-chat-updated'))
-    } catch (cause) {
-      console.warn('Conversation title generation failed', cause)
-    } finally { titlesGenerating.delete(id) }
+
+  function watchTitleTask(id: string, taskId: string) {
+    const channel = new EventChannel<{ type?: string }>()
+    channel.onmessage = event => {
+      if (!['completed', 'error', 'cancelled'].includes(event.type || '')) return
+      void invoke('chat_get', { id }).then(thread => {
+        if (conversationId.value === id) {
+          conversationTitle.value = thread.conversation.title
+          conversationVersion.value = thread.conversation.version || conversationVersion.value
+        }
+        window.dispatchEvent(new CustomEvent('tiny-note-chat-updated'))
+      })
+    }
+    void channel.connect(taskId).catch(() => undefined)
   }
   
   async function pushResponse(content: string) {
     const text = content?.trim()
     if (!text) return
-    const saved = await saveMessage('assistant', text, [], responseSources.value, responseProposal.value?.id || null, currentAgentRunId.value || null) as ViewMessage
+    const runId = currentAgentRunId.value
+    const thread = runId ? await invoke('chat_get', { id: conversationId.value }) : null
+    if (thread) {
+      conversationVersion.value = thread.conversation.version || conversationVersion.value
+      conversationTitle.value = thread.conversation.title
+      window.dispatchEvent(new CustomEvent('tiny-note-chat-updated'))
+    }
+    const persisted = thread?.messages.find(message => message.role === 'assistant' && message.agentRunId === runId)
+    const saved: ViewMessage = persisted || await saveMessage('assistant', text, [], responseSources.value, responseProposal.value?.id || null, runId || null)
     if (currentAgentRunId.value) saved.agentSegments = agentSegments.value.map(segment => ({ ...segment }))
-    messages.value.push(saved)
+    if (!messages.value.some(message => message.id === saved.id)) messages.value.push(saved)
   }
   
   async function completeResponse() {
@@ -169,7 +182,6 @@ export function useChatWorkspace() {
     try {
       await pushResponse(content)
       if (pendingSummary.value && content.trim()) await createNoteFromText(content, `${conversationTitle.value === '新对话' ? '对话总结' : conversationTitle.value} · 总结`)
-      if (messages.value.filter(message => message.role === 'assistant').length === 1) generateTitle()
     } catch (cause) { error.value = errorMessage(cause, '回复保存失败') } finally { busy.value = false; responseSources.value = []; responseProposal.value = null; pendingSummary.value = false; agentSegments.value = []; currentAgentRunId.value = ''; pendingApproval.value = null; pendingInput.value = null; approvalBusy.value = false; approvalError.value = ''; responseFinalizing = false }
   }
   
@@ -178,6 +190,28 @@ export function useChatWorkspace() {
     if (step.kind === 'input') return { id: step.toolCallId || step.id, type: 'input', toolName: step.toolName, arguments: step.arguments || {}, response: parseInputResponse(step.output), status: step.status }
     if (step.kind !== 'tool') return null
     return { id: step.toolCallId || step.id, type: 'tool', toolName: step.toolName, arguments: step.arguments || {}, output: step.output || '', status: step.status }
+  }
+
+  function isProcessedApprovalError(cause: unknown) {
+    const message = errorMessage(cause, '')
+    return message.includes('待处理 Agent 步骤不存在') || message.includes('Agent 步骤已处理')
+  }
+
+  async function reconcileProcessedApproval(approval: PendingApproval) {
+    try {
+      const run = await invoke('agent_get_run', { runId: approval.runId })
+      const step = run.steps.find(item => item.toolCallId === approval.toolCallId)
+      if (!step || step.status === 'awaiting_approval' || (step.approvalHash && step.approvalHash !== approval.approvalHash)) return false
+      const segment = mapAgentStep(step)
+      const index = agentSegments.value.findIndex(item => item.id === approval.toolCallId)
+      if (segment && index >= 0) agentSegments.value[index] = segment
+      pendingApproval.value = null
+      approvalError.value = ''
+      error.value = ''
+      return true
+    } catch {
+      return false
+    }
   }
   
   function appendAgentText(text: string) {
@@ -220,6 +254,39 @@ export function useChatWorkspace() {
     await completeResponse()
     return true
   }
+
+  async function settleFailedResponse(message: string) {
+    const detail = String(message || '模型请求失败').trim().slice(0, 1000)
+    const notice = currentMode.value === 'agent' ? `Tiny Agent 执行失败：${detail}` : `模型请求失败：${detail}`
+    finishStreamingAgentText()
+    if (currentMode.value === 'agent') markActiveAgentSteps('error')
+    const persistedSegments = agentSegments.value.map(segment => ({ ...segment }))
+    try {
+      const thread = conversationId.value ? await invoke('chat_get', { id: conversationId.value }) : null
+      const persisted = [...(thread?.messages || [])].reverse().find(item => item.role === 'assistant' && item.content === notice) as ViewMessage | undefined
+      if (persisted && !messages.value.some(item => item.id === persisted.id)) {
+        if (persistedSegments.length) persisted.agentSegments = persistedSegments
+        messages.value.push(persisted)
+      } else if (!persisted) {
+        const saved = await saveMessage('assistant', notice)
+        if (persistedSegments.length) saved.agentSegments = persistedSegments
+        messages.value.push(saved)
+      }
+    } catch {
+      // The visible error remains available even if the fallback write fails.
+    }
+    streamingText.value = ''
+    busy.value = false
+    pendingSummary.value = false
+    pendingApproval.value = null
+    pendingInput.value = null
+    approvalBusy.value = false
+    approvalError.value = ''
+    responseSources.value = []
+    responseProposal.value = null
+    agentSegments.value = []
+    currentAgentRunId.value = ''
+  }
   
   function parseInputResponse(output: JsonValue | string | null | undefined): JsonValue | null {
     if (!output) return null
@@ -252,7 +319,7 @@ export function useChatWorkspace() {
   }
   
   async function refreshDataAfterAgent() {
-    // Agent tools write through Rust directly, so the Pinia lists need an
+    // Agent tools write through the remote service, so the Pinia lists need an
     // explicit reload before the user navigates back to Notes or Library.
     const activeBaseId = library.activeId
     const activePath = library.path
@@ -287,7 +354,7 @@ export function useChatWorkspace() {
       await addAssistantNotice('请先用输入框左下角的回形针引用一篇笔记，我才能准确执行这个操作。')
       return true
     }
-    const target = notesStore.notes.find(note => note.id === targets[0]?.noteId)
+    const target = await notesStore.getNote(targets[0]!.noteId!).catch(() => null)
     if (!target) { await addAssistantNotice('这篇笔记不存在或已被删除。'); return true }
     if (command.action === 'rename') {
       if (!command.value) return true
@@ -310,7 +377,8 @@ export function useChatWorkspace() {
   }
   
   function createResponseChannel() {
-    const channel = new Channel<AgentEvent>()
+    activeResponseChannel?.close()
+    const channel = new EventChannel<AgentEvent>()
     channel.onmessage = async event => {
       if (event.type === 'delta' || event.type === 'textDelta') {
         if (streamingText.value === '正在思考…') streamingText.value = ''
@@ -345,24 +413,32 @@ export function useChatWorkspace() {
       if (event.type === 'toolResult') {
         const segment = agentSegments.value.find(item => item.id === event.toolCallId)
         if (segment) Object.assign(segment, { status: event.status || 'completed', output: event.output || '', response: segment.type === 'input' ? parseInputResponse(event.output) : segment.response })
+        if (pendingApproval.value?.toolCallId === event.toolCallId) {
+          pendingApproval.value = null
+          approvalBusy.value = false
+          approvalError.value = ''
+        }
+        if (pendingInput.value?.toolCallId === event.toolCallId) pendingInput.value = null
       }
       if (event.type === 'sources') responseSources.value = event.sources || []
       if (event.type === 'editProposal') responseProposal.value = event.proposal || null
       if (event.type === 'error') {
         const message = event.message || '模型请求失败'
         error.value = message
-        if (!await retainInterruptedAgentRun('error', `Tiny Agent 执行失败：${message}`)) { streamingText.value = ''; busy.value = false; pendingApproval.value = null; pendingInput.value = null }
+        await settleFailedResponse(message)
       }
       if (event.type === 'cancelled') {
         if (!await retainInterruptedAgentRun('cancelled', '已停止 Tiny Agent 执行。')) { streamingText.value = ''; busy.value = false; pendingApproval.value = null; pendingInput.value = null }
       }
       if (event.type === 'completed') {
+        if (event.titleTaskId && conversationId.value) watchTitleTask(conversationId.value, event.titleTaskId)
         if ((!streamingText.value || streamingText.value === '正在思考…') && event.content) { streamingText.value = event.content; if (currentMode.value === 'agent') appendAgentText(event.content) }
         finishStreamingAgentText()
         if (currentMode.value === 'agent') await refreshDataAfterAgent()
         await completeResponse()
       }
     }
+    activeResponseChannel = channel
     return channel
   }
   
@@ -372,15 +448,15 @@ export function useChatWorkspace() {
     error.value = ''
     approvalError.value = ''
     approvalBusy.value = true
-    // A Tauri Channel is closed when the worker that emitted ApprovalRequired
-    // returns. Every resume starts a new worker and therefore needs a new channel.
-    const channel = createResponseChannel()
+    // 续跑复用当前运行的事件通道，重连时从持久化事件游标继续，避免重复消费。
+    const channel = activeResponseChannel || createResponseChannel()
     const segment = agentSegments.value.find(item => item.id === approval.toolCallId)
     if (segment) segment.status = decision === 'approve' ? 'running' : 'rejected'
     try {
       await invoke('agent_resume', { request: { runId: approval.runId, toolCallId: approval.toolCallId, approvalHash: approval.approvalHash, decision, reason: decision === 'reject' ? '用户拒绝执行此操作' : null }, onEvent: channel })
       if (pendingApproval.value?.toolCallId === approval.toolCallId) pendingApproval.value = null
     } catch (cause) {
+      if (isProcessedApprovalError(cause) && await reconcileProcessedApproval(approval)) return
       approvalError.value = errorMessage(cause, '审批回传失败')
       error.value = approvalError.value
       pendingApproval.value = approval
@@ -426,7 +502,7 @@ export function useChatWorkspace() {
           return
         }
         const channel = createResponseChannel()
-        await invoke('agent_invoke', { request: { requestId: requestId.value, conversationId: conversationId.value, message, references: contextAllowed ? messageReferenceCopies : [], modelProfileId: selectedModel.value?.id || null, thinkingMode: thinkingMode.value }, onEvent: channel })
+        await invoke('agent_invoke', { request: { requestId: requestId.value, conversationId: conversationId.value, messageId: savedUserMessage.id, message, references: contextAllowed ? messageReferenceCopies : [], modelProfileId: selectedModel.value?.id || null, thinkingMode: thinkingMode.value }, onEvent: channel })
       } else {
         const targetNotes = messageReferenceCopies.filter(item => item.type === 'note')
         const editMode = targetNotes.length === 1 && isNoteEditIntent(message)
@@ -435,12 +511,12 @@ export function useChatWorkspace() {
           return
         }
         const channel = createResponseChannel()
-        await invoke('note_ai_stream', { request: { requestId: requestId.value, action: 'custom', mode: editMode ? 'edit' : 'chat', text: assistantContext(), instruction: message, references: contextAllowed ? messageReferenceCopies : [], targetNoteId: targetNotes.length === 1 ? targetNotes[0].noteId : null, modelProfileId: selectedModel.value?.id || null, thinkingMode: thinkingMode.value, source: 'chat', conversationId: conversationId.value }, onEvent: channel })
+        await invoke('note_ai_stream', { request: { requestId: requestId.value, action: 'custom', mode: editMode ? 'edit' : 'chat', text: message, instruction: message, references: contextAllowed ? messageReferenceCopies : [], targetNoteId: targetNotes.length === 1 ? targetNotes[0].noteId : null, modelProfileId: selectedModel.value?.id || null, thinkingMode: thinkingMode.value, source: 'chat', conversationId: conversationId.value, messageId: savedUserMessage.id }, onEvent: channel })
       }
     } catch (cause) {
       const message = errorMessage(cause, '模型请求失败')
       error.value = message
-      if (!await retainInterruptedAgentRun('error', `Tiny Agent 执行失败：${message}`)) { streamingText.value = ''; busy.value = false }
+      await settleFailedResponse(message)
     }
   }
   
@@ -448,19 +524,8 @@ export function useChatWorkspace() {
   
   async function summarizeConversation(event: MouseEvent) {
     if (isBusy.value || messages.value.length < 2 || tasksStore.activeSummaryForConversation(conversationId.value)) return
-    const snapshot = messages.value.map(item => `${item.role === 'user' ? '用户' : '助手'}：${item.content}`).join('\n\n')
     try {
-      await tasksStore.enqueue({
-        kind: 'conversation_summary',
-        title: `${conversationTitle.value === '新对话' ? '对话' : conversationTitle.value} · 总结为笔记`,
-        conversationId: conversationId.value,
-        modelProfileId: selectedModel.value?.id || null,
-        payload: {
-          fallbackTitle: `${conversationTitle.value === '新对话' ? '对话总结' : conversationTitle.value} · 总结`,
-          snapshot,
-          request: { action: 'custom', mode: 'chat', text: snapshot, instruction: '请把以下对话整理为一篇结构清晰的 Markdown 笔记：提炼主题、关键结论、重要细节和待办事项；不要添加对话中没有的信息。', references: [], modelProfileId: selectedModel.value?.id || null, thinkingMode: thinkingMode.value, source: 'conversation_summary', conversationId: conversationId.value }
-        }
-      }, { sourceElement: event.currentTarget instanceof Element ? event.currentTarget : null })
+      await tasksStore.createConversationSummary({ conversationId: conversationId.value, requestKey: crypto.randomUUID(), modelProfileId: selectedModel.value?.id || null, thinkingMode: thinkingMode.value }, { sourceElement: event.currentTarget instanceof Element ? event.currentTarget : null })
     } catch (cause) { error.value = errorMessage(cause, '总结任务创建失败') }
   }
   
@@ -481,7 +546,7 @@ export function useChatWorkspace() {
     input.busy = true
     const segment = agentSegments.value.find(item => item.id === input.toolCallId)
     if (segment) segment.status = 'submitting'
-    const channel = createResponseChannel()
+    const channel = activeResponseChannel || createResponseChannel()
     try {
       await invoke('agent_respond_input', {
         request: {
@@ -507,11 +572,14 @@ export function useChatWorkspace() {
   
   function newChat() {
     if (isBusy.value) return
+    activeResponseChannel?.close()
+    activeResponseChannel = null
     messages.value = []
     references.value = []
     draft.value = ''
     error.value = ''
     conversationId.value = ''
+    conversationVersion.value = 0
     conversationTitle.value = '新对话'
     currentMode.value = 'chat'
     agentSegments.value = []
@@ -525,11 +593,12 @@ export function useChatWorkspace() {
   async function toggleReferenceMenu() {
     referenceMenuOpen.value = !referenceMenuOpen.value
     if (!referenceMenuOpen.value) return
-    if (!notesStore.notes.length) await notesStore.load()
+    await notePicker.refresh()
     if (!library.bases.length) await library.load()
   }
   
-  function addNoteReference(note: Note) {
+  function addNoteReference(note: Pick<Note, 'id' | 'title'> & { external?: boolean }) {
+    if (note.external || note.id.startsWith('external:')) return
     const value: ChatReference = { key: `note:${note.id}`, type: 'note', name: note.title || '未命名笔记', noteId: note.id }
     if (!references.value.some(item => item.key === value.key)) references.value.push(value)
     referenceMenuOpen.value = false
@@ -570,12 +639,15 @@ export function useChatWorkspace() {
   
   async function loadConversation(id: string, force = false) {
     if (!id || (!force && id === conversationId.value)) return
+    activeResponseChannel?.close()
+    activeResponseChannel = null
     busy.value = false
     streamingText.value = ''
     try {
       const thread = await invoke('chat_get', { id })
       if (!thread) throw new Error('对话不存在')
       conversationId.value = thread.conversation.id
+      conversationVersion.value = thread.conversation.version || 0
       conversationTitle.value = thread.conversation.title
       currentMode.value = thread.conversation.mode || 'chat'
       selectedModelId.value = thread.conversation.modelProfileId || selectedModelId.value
@@ -605,10 +677,10 @@ export function useChatWorkspace() {
       references.value = (storedReferences as JsonValue[]).filter((item: JsonValue): item is ChatReference & JsonValue => Boolean(item && typeof item === 'object' && !Array.isArray(item) && typeof item.key === 'string' && (item.type === 'note' || item.type === 'file') && typeof item.name === 'string'))
       draft.value = ''
       error.value = ''
-      if (conversationTitle.value === '新对话' && messages.value.some(message => message.role === 'user') && messages.value.some(message => message.role === 'assistant')) generateTitle()
     } catch (cause) {
       error.value = errorMessage(cause, '历史对话读取失败')
       conversationId.value = ''
+      conversationVersion.value = 0
       messages.value = []
     }
   }
@@ -617,12 +689,12 @@ export function useChatWorkspace() {
   
   watch(() => [messages.value.length, streamingText.value, busy.value], scrollToBottom, { flush: 'post' })
   
-  watch(() => route.query.id, id => { if (id) loadConversation(String(id)); else if (conversationId.value && !isBusy.value) { conversationId.value = ''; conversationTitle.value = '新对话'; messages.value = [] } })
+  watch(() => route.query.id, id => { if (id) loadConversation(String(id)); else if (conversationId.value && !isBusy.value) { conversationId.value = ''; conversationVersion.value = 0; conversationTitle.value = '新对话'; messages.value = [] } })
   
   onMounted(async () => {
     await appStore.initialize()
     await Promise.allSettled([
-      notesStore.notes.length ? Promise.resolve() : notesStore.load(),
+      notesStore.notebooks.length ? Promise.resolve() : notesStore.load(),
       library.bases.length ? Promise.resolve() : library.load(),
       invoke('agent_list_tools').then(value => { agentTools.value = value || [] })
     ])
@@ -645,7 +717,11 @@ export function useChatWorkspace() {
     if (pending?.message) await sendMessage(pending.message, references.value)
   })
   
-  onUnmounted(() => { window.removeEventListener('tiny-note-chat-deleted', handleDeleted) })
+  onUnmounted(() => {
+    activeResponseChannel?.close()
+    activeResponseChannel = null
+    window.removeEventListener('tiny-note-chat-deleted', handleDeleted)
+  })
   
   async function selectMode(mode: string) {
     if (isBusy.value || modeSaving.value || mode === currentMode.value) return
@@ -655,8 +731,9 @@ export function useChatWorkspace() {
     }
     modeSaving.value = true
     try {
-      await invoke('chat_set_mode', { id: conversationId.value, mode })
+      const updated = await invoke('chat_set_mode', { id: conversationId.value, mode, version: conversationVersion.value })
       currentMode.value = mode
+      conversationVersion.value = updated.version || conversationVersion.value + 1
       window.dispatchEvent(new CustomEvent('tiny-note-chat-updated'))
     } catch (cause) {
       error.value = errorMessage(cause, '对话模式切换失败')
@@ -665,9 +742,10 @@ export function useChatWorkspace() {
     }
   }
   
-  const toolLabels: Record<string, string> = { create_knowledge_base: '创建知识库', list_knowledge_bases: '读取知识库目录', update_knowledge_base: '更新知识库', delete_knowledge_base: '删除知识库', list_notes: '列出笔记', search_notes: '搜索笔记', get_note: '读取笔记', list_notebooks: '列出笔记本', create_notebook: '创建笔记本', update_notebook: '更新笔记本', move_notebook: '移动笔记本', delete_notebook: '删除笔记本', get_current_time: '获取当前时间', create_note: '创建笔记', update_note: '生成修改提案', delete_note: '删除笔记', update_memory: '更新记忆', list_agent_files: '浏览工作区', read_agent_file: '读取工作区文件', write_agent_file: '写入工作区文件', read_skill: '读取技能', write_skill: '更新技能', list_mcp_tools: '查找 MCP 工具', call_mcp_tool: '调用 MCP 工具', delegate_task: '委派子 Agent', run_sandbox_script: '运行隔离脚本' }
+  const toolLabels: Record<string, string> = { create_knowledge_base: '创建知识库', list_knowledge_bases: '读取知识库目录', update_knowledge_base: '更新知识库', delete_knowledge_base: '删除知识库', list_notes: '列出笔记', search_notes: '搜索笔记', get_note: '读取笔记', list_notebooks: '列出笔记本', create_notebook: '创建笔记本', update_notebook: '更新笔记本', move_notebook: '移动笔记本', delete_notebook: '删除笔记本', get_current_time: '获取当前时间', request_user_input: '请求用户输入', create_note: '创建笔记', create_note_in_knowledge_base: '在知识库中新建笔记', move_note_to_knowledge_base: '移动笔记到知识库', update_note: '生成修改提案', delete_note: '删除笔记', update_memory: '更新记忆', list_agent_files: '浏览工作区', read_agent_file: '读取工作区文件', write_agent_file: '写入工作区文件', read_skill: '读取技能', write_skill: '更新技能', list_mcp_tools: '查找 MCP 工具', call_mcp_tool: '调用 MCP 工具', delegate_task: '委派子 Agent', run_sandbox_script: '运行隔离脚本', create_todo: '创建待办', create_calendar_event: '创建日历事件' }
   
   function toolLabel(name: string | null | undefined) {
+    if (name?.startsWith('mcp_')) return agentTools.value.find(tool => tool.name === name)?.description || `调用 MCP 工具 · ${name}`
     return (name ? toolLabels[name] : '') || name || '调用工具'
   }
   
@@ -701,12 +779,12 @@ export function useChatWorkspace() {
   }
 
   return {
-    route, router, notesStore, library, appStore, tasksStore, models, messages,
+    notePicker, noteQuery, route, router, notesStore, library, appStore, tasksStore, models, messages,
     draft, references, selectedModelId, thinkingMode, busy, streamingText, error, requestId,
     messagesRef, conversationId, conversationTitle, referenceMenuOpen, responseSources, responseProposal, pendingSummary, savedNote,
     currentMode, modeSaving, agentSegments, currentAgentRunId, pendingApproval, pendingInput, agentTools, approvalBusy,
-    approvalError, titlesGenerating, responseFinalizing, agentTextSequence, fromHome, selectedModel, agentApprovalCount, isBusy,
-    scrollToBottom, assistantContext, ensureConversation, saveMessage, generateTitle, pushResponse, completeResponse, mapAgentStep,
+    approvalError, responseFinalizing, agentTextSequence, fromHome, selectedModel, agentApprovalCount, isBusy,
+    scrollToBottom, ensureConversation, saveMessage, pushResponse, completeResponse, mapAgentStep,
     appendAgentText, finishStreamingAgentText, hasAgentText, agentMessageTail, markActiveAgentSteps, retainInterruptedAgentRun, parseInputResponse, ensureContextConsent,
     noteHtml, noteTitle, createNoteFromText, refreshDataAfterAgent, saveAssistantAsNote, openSavedNote, addAssistantNotice, performNoteCommand,
     createResponseChannel, decideApproval, sendMessage, submit, summarizeConversation, stop, respondInput, goBack,

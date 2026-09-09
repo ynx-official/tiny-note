@@ -1,10 +1,11 @@
-import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
+import { computed, nextTick, onBeforeUnmount, onMounted, ref, toRaw, watch } from 'vue'
 import { useEditor } from '@tiptap/vue-3'
 import { TextSelection, type EditorState } from '@tiptap/pm/state'
 import type { Editor } from '@tiptap/core'
 import type { Mark, Node as ProseMirrorNode } from '@tiptap/pm/model'
 import type { EditorView } from '@tiptap/pm/view'
-import { Channel } from '@tauri-apps/api/core'
+import { protectNoteDraft, trackPersistedNote } from '../services/noteCache'
+import { EventChannel } from '../services/eventChannel'
 import { createLowlight } from 'lowlight'
 import javascript from 'highlight.js/lib/languages/javascript'
 import typescript from 'highlight.js/lib/languages/typescript'
@@ -144,7 +145,7 @@ export function useNoteEditor(props: Readonly<NoteEditorProps>, emit: NoteEditor
   const READING_POSITION_PREFIX = 'tiny-note:reading-position:'
   let readingPositionTimer: ReturnType<typeof setTimeout> | undefined
   const pendingSourceDrafts = new Map<string, string>()
-  const persistedSignatures = new Map<string, string>()
+  const persistedSignatures = new WeakMap<Note, string>()
   const exportingFormat = ref<ExportFormat>('')
   const exportStatusLabel = computed(() => exportingFormat.value ? ({ html: t('exportingHtml'), pdf: t('exportingPdf'), print: t('preparingPrint') })[exportingFormat.value] : '')
   const externalFileName = computed(() => String(props.note?.externalPath || '').split(/[\\/]/).pop() || props.note?.title || 'Markdown 文件')
@@ -356,14 +357,15 @@ export function useNoteEditor(props: Readonly<NoteEditorProps>, emit: NoteEditor
   function scheduleNoteSave(note: Note | null = props.note) {
     if (!note) return
     const signature = noteContentSignature(note)
-    store.scheduleSave(note, () => persistedSignatures.set(note.id, signature))
+    store.scheduleSave(note, () => persistedSignatures.set(toRaw(note), signature))
   }
   
   async function saveDirtyNote(note: Note | null = props.note) {
-    if (!note || persistedSignatures.get(note.id) === noteContentSignature(note)) return
+    if (!note || persistedSignatures.get(toRaw(note)) === noteContentSignature(note)) return
     if (store.saveTimer != null) clearTimeout(store.saveTimer)
+    const signature = noteContentSignature(note)
     await store.save(note)
-    persistedSignatures.set(note.id, noteContentSignature(note))
+    persistedSignatures.set(toRaw(note), signature)
   }
   
   function handleRichEditorUpdate(instance: Editor) {
@@ -442,6 +444,7 @@ export function useNoteEditor(props: Readonly<NoteEditorProps>, emit: NoteEditor
     sourceDirty.value = true
     markdownParseError.value = ''
     pendingSourceDrafts.set(props.note.id, value)
+    protectNoteDraft(props.note)
     queueMarkdownParse()
   }
   
@@ -467,7 +470,7 @@ export function useNoteEditor(props: Readonly<NoteEditorProps>, emit: NoteEditor
     if (sourceDirty.value) markdownParseError.value = '预览正在等待刷新，源码草稿仍保留'
     if (note) {
       const titleChanged = syncNoteTitle(note, editor.value?.getText() || textFromPreparedEditorContent(preparedContent))
-      persistedSignatures.set(note.id, titleChanged ? previousSignature : noteContentSignature(note))
+      persistedSignatures.set(toRaw(note), titleChanged ? previousSignature : noteContentSignature(note))
       if (titleChanged) scheduleNoteSave(note)
     }
   }
@@ -693,29 +696,45 @@ export function useNoteEditor(props: Readonly<NoteEditorProps>, emit: NoteEditor
     clearTimeout(markdownPasteTimer)
   }
   
-  watch(() => props.note?.id, async (id, previousId) => {
+  watch(() => props.note?.id, async (id, previousId, onCleanup) => {
+    let cancelled = false
+    onCleanup(() => { cancelled = true })
     if (previousId && previousId !== id) {
       clearTimeout(readingPositionTimer)
       saveReadingPosition(previousId)
       const previous = [...store.notes, ...store.deleted].find(note => note.id === previousId)
       if (previous) await flushLatestContent({ note: previous, save: true })
     }
+    if (cancelled) return
     resetTransientEditorState()
     if (props.note?.external) editorMode.value = 'rich'
     resetEditorSession(props.note)
-    noteLinks.value = id ? (await store.listLinks(id).catch(() => [])) || [] : []
+    const links = id ? (await store.listLinks(id).catch(() => [])) || [] : []
+    if (cancelled) return
+    noteLinks.value = links
     await nextTick()
+    if (cancelled) return
     setupSplitObserver()
     restoreReadingPosition(id)
     loadExternalProposal()
   }, { immediate: true, flush: 'post' })
+
+  // A reopened source or a refreshed clean body keeps the same ID. The store
+  // preserves dirty objects; replacing this object starts a fresh editor session.
+  watch(() => props.note, (next, previous) => {
+    if (!next || next === previous || next.id !== previous?.id) return
+    pendingSourceDrafts.delete(next.id)
+    persistedSignatures.delete(toRaw(next))
+    resetTransientEditorState()
+    resetEditorSession(next)
+  }, { flush: 'post' })
   
   watch(assistantOpen, () => nextTick(setupSplitObserver))
   
   async function handleBackgroundNoteTask(event: Event) {
     const task = (event as CustomEvent<BackgroundTask>).detail
     if (!task || ![aiRequestId.value, assistantRequestId.value].includes(task.id)) return
-    const active = ['queued', 'running', 'awaiting_approval', 'awaiting_input'].includes(task.status)
+    const active = ['queued', 'running', 'finalizing', 'cancelling', 'awaiting_approval', 'awaiting_input'].includes(task.status)
     if (task.id === aiRequestId.value) {
       aiBusy.value = active
       if (task.output) aiText.value = task.output
@@ -829,8 +848,13 @@ export function useNoteEditor(props: Readonly<NoteEditorProps>, emit: NoteEditor
     if (request?.kind === 'assistant') sendAssistantMessage(request.prompt, null, request.taskFlight)
     else if (request) runAi(request.action, request.requestText, request.instruction, request.taskFlight)
   }
+  function requireCloudNote() {
+    if (!props.note?.external) return true
+    showToast('请先将外部文件导入到笔记，再使用笔记 AI。', { tone: 'info' })
+    return false
+  }
   async function runAi(action: AiAction = aiAction.value, requestText: string | null = null, instruction: string | null = null, taskFlight: TaskFlight | null = null) {
-    if (!props.note || aiBusy.value) return
+    if (!props.note || aiBusy.value || !requireCloudNote()) return
     if (!hasNoteContextConsent()) {
       pendingAiRequest = { kind: 'editor', action, requestText, instruction, taskFlight }
       aiConsentOpen.value = true
@@ -862,9 +886,13 @@ export function useNoteEditor(props: Readonly<NoteEditorProps>, emit: NoteEditor
     }
     const selection = savedSelection ? { ...savedSelection, text: editor.value?.state.doc.textBetween(savedSelection.from, savedSelection.to, '\n') || requestText } : null
     try {
-      const task = await tasksStore.enqueue({ kind: 'note_ai', title: `${props.note.title || '未命名笔记'} · ${actionLabel}`, targetNoteId: props.note.id, payload: { previewOutput: `(${action})\n${instruction ? `${instruction}\n` : ''}${requestText.slice(0, 140)}`, request: { action, mode: action === 'interpret' ? 'chat' : 'edit', text: requestText, instruction, targetNoteId: props.note.id, selection, modelProfileId: null, thinkingMode: 'disabled', source: 'note_ai' } } }, { preparedFlight: taskFlight })
+      const task = await tasksStore.createNoteAI({ noteId: props.note.id, requestKey: aiRequestId.value, action, mode: action === 'interpret' ? 'chat' : 'edit', instruction, selection, modelProfileId: null, thinkingMode: 'disabled', baseVersion: props.note.version || 1 }, { preparedFlight: taskFlight })
       aiRequestId.value = task.id
-    } catch { aiText.value = 'AI 请求失败，请检查模型设置。'; aiBusy.value = false }
+    } catch (cause) {
+      const event: AiEvent = typeof cause === 'object' && cause !== null ? cause as AiEvent : { message: String(cause || '') }
+      aiText.value = `${actionLabel}失败：${aiEventErrorMessage(event)}`
+      aiBusy.value = false
+    }
   }
   function captureAssistantSelection() {
     const instance = editor.value
@@ -874,6 +902,7 @@ export function useNoteEditor(props: Readonly<NoteEditorProps>, emit: NoteEditor
     return text ? { from, to, text } : null
   }
   function openAssistant(selection: SelectionRange | null = captureAssistantSelection()) {
+    if (!requireCloudNote()) return
     clearTimeout(assistantTriggerTimer)
     if (selection) assistantSelection.value = selection
     assistantTriggerVisible.value = false
@@ -891,12 +920,6 @@ export function useNoteEditor(props: Readonly<NoteEditorProps>, emit: NoteEditor
     if (assistantOpen.value) closeAssistant()
     else openAssistant()
   }
-  function assistantContext() {
-    const titleText = props.note?.title || '未命名笔记'
-    const noteText = props.note?.contentText || editor.value?.getText() || ''
-    const selected = assistantSelection.value?.text || '（本次没有单独选中文字）'
-    return `当前文章：${titleText}\n\n文章全文：\n${noteText}\n\n选中的文字：\n${selected}`
-  }
   function assistantReferences() {
     const references: Array<{ key: string; type: string; label: string; preview?: string }> = [{ key: `note:${props.note?.id}`, type: 'note', label: `当前文章 · ${props.note?.title || '未命名笔记'}` }]
     if (assistantSelection.value?.text) references.push({ key: `selection:${assistantSelection.value.from}:${assistantSelection.value.to}`, type: 'selection', label: '选中文字', preview: assistantSelection.value.text.replace(/\s+/g, ' ').trim().slice(0, 60) })
@@ -908,7 +931,7 @@ export function useNoteEditor(props: Readonly<NoteEditorProps>, emit: NoteEditor
   }
   function assistantEditIntent(message: string) { return /(扩写|改写|修改|润色|精炼|替换|翻译|续写|修正|重写|rewrite|translate|polish|edit)/i.test(message) }
   async function sendAssistantMessage(prompt: string, sourceElement: EventTarget | null = null, preparedFlight: TaskFlight | null = null) {
-    if (!props.note || assistantBusy.value || !prompt?.trim()) return
+    if (!props.note || assistantBusy.value || !prompt?.trim() || !requireCloudNote()) return
     const taskFlight = preparedFlight || prepareTaskFlight(sourceElement)
     if (!hasNoteContextConsent()) {
       pendingAiRequest = { kind: 'assistant', prompt: prompt.trim(), taskFlight }
@@ -925,9 +948,8 @@ export function useNoteEditor(props: Readonly<NoteEditorProps>, emit: NoteEditor
     assistantRequestId.value = crypto.randomUUID()
     assistantResponseSources.value = []
     assistantResponseProposal.value = null
-    const context = assistantContext()
     try {
-      const task = await tasksStore.enqueue({ kind: 'note_ai', title: `${props.note.title || '未命名笔记'} · 助手`, targetNoteId: props.note.id, payload: { previewOutput: `我已参考当前文章${assistantSelection.value?.text ? '和你选中的文字' : ''}。\n\n你的问题：${message}`, request: { action: 'custom', mode: assistantEditIntent(message) ? 'edit' : 'chat', text: context, instruction: message, targetNoteId: props.note.id, selection: assistantSelection.value, modelProfileId: null, source: 'note_ai' } } }, { preparedFlight: taskFlight })
+      const task = await tasksStore.createNoteAI({ noteId: props.note.id, requestKey: assistantRequestId.value, action: 'custom', mode: assistantEditIntent(message) ? 'edit' : 'chat', instruction: message, selection: assistantSelection.value, modelProfileId: null, baseVersion: props.note.version || 1 }, { preparedFlight: taskFlight })
       assistantRequestId.value = task.id
     } catch {
       pushAssistantResponse('AI 请求失败，请检查模型设置。')
@@ -1110,8 +1132,10 @@ export function useNoteEditor(props: Readonly<NoteEditorProps>, emit: NoteEditor
       contentMarkdown: activeNote.contentMarkdown || getEditorMarkdown()
     })
     Object.assign(activeNote, updated)
+    trackPersistedNote(activeNote)
+    store.syncSummary(activeNote)
     markdownDraft.value = updated.contentMarkdown || getEditorMarkdown()
-    persistedSignatures.set(updated.id, noteContentSignature(updated))
+    persistedSignatures.set(toRaw(activeNote), noteContentSignature(updated))
     change.proposal.status = 'applied'
     savedSelection = null
   }
@@ -1270,7 +1294,7 @@ export function useNoteEditor(props: Readonly<NoteEditorProps>, emit: NoteEditor
     closeAiPanel()
     openAssistant(captureAssistantSelection())
   }
-  async function runFim() { if (editorMode.value !== 'rich' || !fimEnabled.value || !editor.value || !props.note?.contentText) return; const id = crypto.randomUUID(); const channel = new Channel<{ type: string; text?: string }>(); let result = ''; channel.onmessage = event => { if (event.type === 'delta') result += event.text || ''; if (event.type === 'completed') fimSuggestion.value = result }; try { await (await import('../services/tauri')).invoke('note_fim_stream', { request: { requestId: id, action: 'continue_write', text: props.note.contentText.slice(-800), instruction: `Continue naturally. Context after cursor: ${props.note.contentText.slice(-400)}`, modelProfileId: null }, onEvent: channel }) } catch { fimSuggestion.value = '' } }
+  async function runFim() { if (props.note?.external || editorMode.value !== 'rich' || !fimEnabled.value || !editor.value || !props.note?.contentText) return; const id = crypto.randomUUID(); const channel = new EventChannel<{ type: string; text?: string }>(); let result = ''; channel.onmessage = event => { if (event.type === 'delta') result += event.text || ''; if (event.type === 'completed') fimSuggestion.value = result }; try { await (await import('../services/tauri')).invoke('note_fim_stream', { request: { requestId: id, action: 'continue_write', text: props.note.contentText.slice(-800), instruction: `Continue naturally. Context after cursor: ${props.note.contentText.slice(-400)}`, modelProfileId: null }, onEvent: channel }) } catch { fimSuggestion.value = '' } }
   function acceptFim() { if (fimSuggestion.value && editor.value) { editor.value.commands.insertContent(fimSuggestion.value); fimSuggestion.value = '' } }
   function handleEditorTab(event: KeyboardEvent) {
     if (!fimSuggestion.value || !editor.value || editorMode.value !== 'rich') return
@@ -1420,9 +1444,11 @@ export function useNoteEditor(props: Readonly<NoteEditorProps>, emit: NoteEditor
   async function saveNoteMetadata() {
     if (!props.note) return
     await flushLatestContent({ save: true })
-    await store.save(props.note)
-    persistedSignatures.set(props.note.id, noteContentSignature(props.note))
-    noteLinks.value = (await store.listLinks(props.note.id).catch(() => [])) || []
+    const target = props.note
+    const signature = noteContentSignature(target)
+    await store.save(target)
+    persistedSignatures.set(toRaw(target), signature)
+    if (props.note?.id === target.id) noteLinks.value = (await store.listLinks(target.id).catch(() => [])) || []
   }
   async function importExternalSource() {
     try {
@@ -1461,7 +1487,7 @@ export function useNoteEditor(props: Readonly<NoteEditorProps>, emit: NoteEditor
     scheduleReadingPositionSave, restoreReadingPosition, toggleMarkdownPreview, viewPastedMarkdown,
     resetTransientEditorState, handleBackgroundNoteTask, setEditorEditable, loadExternalProposal, toggle, applyMarkdownFormat, setMarkdownHeading, setMarkdownSmallBody,
     hasNoteContextConsent, cancelAiConsent, confirmAiConsent, runAi, captureAssistantSelection, openAssistant, closeAssistant, toggleAssistant,
-    assistantContext, assistantReferences, pushAssistantResponse, assistantEditIntent, sendAssistantMessage, stopAssistant, copyAssistantMessage, stopAi,
+    assistantReferences, pushAssistantResponse, assistantEditIntent, sendAssistantMessage, stopAssistant, copyAssistantMessage, stopAi,
     exportBodyHtml, prepareExportSnapshot, runArticleExport, exportMarkdown, exportHtml, exportPdf, printNote, restoreSavedSelection,
     clearAiResultState, syncNoteFromEditor, selectedContentMarks, insertPendingAiContent, stagePendingAiChange, restoreAiChange, persistAiChange, confirmPendingAiChange,
     applyAiResult, insertAi, replaceWithAi, copyAi, toggleAiFeedback, dismissAiResult, closeAiResult, stopAiDrag,
@@ -1472,4 +1498,3 @@ export function useNoteEditor(props: Readonly<NoteEditorProps>, emit: NoteEditor
     clearRichFormatting, normalizeLinkHref, editLink, saveNoteMetadata, importExternalSource,
   }
 }
-

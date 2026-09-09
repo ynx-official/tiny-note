@@ -1,17 +1,23 @@
 <script setup lang="ts">
-import { computed, defineAsyncComponent, onMounted, onUnmounted, reactive, ref } from 'vue'
+import { computed, defineAsyncComponent, onMounted, onUnmounted, reactive, ref, watch } from 'vue'
 import { useRouter } from 'vue-router'
 import { useI18n } from 'vue-i18n'
 import { getCurrentWindow } from '@tauri-apps/api/window'
-import { AlertCircle, BookOpen, CalendarDays, CheckCircle2, ClipboardList, FileText, ImagePlus, ListTodo, LoaderCircle, Settings, Plus, Minus, Square, Copy, X, PanelLeftClose, PanelLeftOpen, Home, Tags, Clock } from 'lucide-vue-next'
+import { AlertCircle, BookOpen, CalendarDays, CheckCircle2, ClipboardList, FileText, ImagePlus, ListTodo, LoaderCircle, Settings, Minus, Square, Copy, X, PanelLeftClose, PanelLeftOpen, Home, Tags, Clock } from 'lucide-vue-next'
 import { useTasksStore } from '../stores/tasks'
+import { useAuthStore } from '../stores/auth'
+import { getActivePinia } from 'pinia'
+import { resetWorkspaceSession } from '../services/workspaceSession'
+import { resolveAvatarSource } from '../utils/avatar'
 const AvatarDrawer = defineAsyncComponent(() => import('./AvatarDrawer.vue'))
 const ChatHistoryDrawer = defineAsyncComponent(() => import('./ChatHistoryDrawer.vue'))
 
-const props = defineProps<{ active?: string }>()
+const props = withDefaults(defineProps<{ active?: string; loginRequested?: boolean; loginRedirect?: string }>(), { loginRequested: false, loginRedirect: '' })
 const router = useRouter()
 const { t, te } = useI18n()
 const tasksStore = useTasksStore()
+const auth = useAuthStore()
+const pinia = getActivePinia()
 const railCollapsed = ref(false)
 const isMaximized = ref(false)
 const avatarOpen = ref(false)
@@ -28,6 +34,7 @@ let appWindow: ReturnType<typeof getCurrentWindow> | null = null
 let stopResizeListener: (() => void) | null = null
 let taskArrivalTimer: number | null = null
 const calendarLabel = computed(() => te('calendar') ? t('calendar') : '日历')
+const avatarSource = computed(() => resolveAvatarSource(auth.user))
 const todosLabel = computed(() => te('todos') ? t('todos') : '待办')
 const nav = computed(() => [{ key: 'notes', label: t('notes'), icon: FileText, path: '/notes' }, { key: 'library', label: t('library'), icon: BookOpen, path: '/library' }, { key: 'tags', label: t('tags'), icon: Tags, path: '/tags' }, { key: 'calendar', label: calendarLabel.value, icon: CalendarDays, path: '/calendar' }, { key: 'todos', label: todosLabel.value, icon: ClipboardList, path: '/todos' }, { key: 'images', label: '生图', icon: ImagePlus, path: '/images' }, { key: 'tasks', label: '任务中心', icon: ListTodo, path: '/tasks' }, { key: 'settings', label: t('settings'), icon: Settings, path: '/settings' }])
 function showRailTooltip(event: Event, text: string) {
@@ -51,6 +58,19 @@ function openAvatar() {
   hideRailTooltip()
   avatarHostReady.value = true
   avatarOpen.value = true
+}
+function setAvatarOpen(value: boolean) {
+  avatarOpen.value = value
+  if (!value && props.loginRequested && !auth.authenticated) void router.replace('/home')
+}
+async function handleSignedIn() {
+  avatarOpen.value = false
+  if (props.loginRedirect.startsWith('/')) await router.replace(props.loginRedirect)
+  else if (props.loginRequested) await router.replace('/home')
+}
+async function handleSignedOut() {
+  avatarOpen.value = true
+  await router.replace('/home')
 }
 function toggleHistory() {
   hideRailTooltip()
@@ -117,17 +137,25 @@ onMounted(async () => {
   try { stopResizeListener = await current.onResized(syncMaximized) } catch { /* keep controls usable if event permission is unavailable */ }
 })
 onUnmounted(() => { if (stopResizeListener) stopResizeListener(); if (taskArrivalTimer !== null) window.clearTimeout(taskArrivalTimer); window.removeEventListener('tiny-note-task-flight-arrival', handleTaskArrival); document.removeEventListener('pointerdown', closeHistoryOnOutsideClick) })
+watch(() => props.loginRequested, requested => {
+  if (!requested) return
+  avatarHostReady.value = true
+  avatarOpen.value = true
+}, { immediate: true })
+watch(() => auth.authenticated, (authenticated, previouslyAuthenticated) => {
+  if (!authenticated && previouslyAuthenticated && pinia) void resetWorkspaceSession(pinia)
+})
 </script>
 <template>
   <div class="window-shell app-container">
     <header class="topbar tauri-drag-region" @mousedown="startWindowDrag">
       <div class="topbar-leading"><button class="sidebar-toggle-btn" :title="railCollapsed ? '展开导航' : '收起导航'" @click="railCollapsed = !railCollapsed"><PanelLeftOpen v-if="railCollapsed" :size="16" :stroke-width="1.8" /><PanelLeftClose v-else :size="16" :stroke-width="1.8" /></button></div>
-      <div class="tab-strip"><button v-for="tab in [{ key: 'home', label: t('appName'), path: '/', icon: Home }, { key: 'notes', label: t('notes'), path: '/notes', icon: FileText }, { key: 'library', label: t('library'), path: '/library', icon: BookOpen }, { key: 'tags', label: t('tags'), path: '/tags', icon: Tags }, { key: 'calendar', label: calendarLabel, path: '/calendar', icon: CalendarDays }, { key: 'todos', label: todosLabel, path: '/todos', icon: ClipboardList }]" :key="tab.key" :class="['tab', { active: active === tab.key }]" @click="navigate(tab.path)"><component :is="tab.icon" :size="14" :stroke-width="1.8" /><span>{{ tab.label }}</span><span v-if="active === tab.key" class="tab-close">×</span></button><button v-if="active === 'settings'" class="tab active" @click="navigate('/settings')"><Settings :size="14" :stroke-width="1.8" /><span>{{ t('settings') }}</span><span class="tab-close">×</span></button><button class="tab-plus" :title="t('newNote')" @click="navigate('/notes?new=1')"><Plus :size="16" :stroke-width="2" /></button><div class="tabs-area-spacer"></div></div>
+      <div class="tab-strip"><button v-for="tab in [{ key: 'home', label: t('appName'), path: '/', icon: Home }, { key: 'notes', label: t('notes'), path: '/notes', icon: FileText }, { key: 'library', label: t('library'), path: '/library', icon: BookOpen }, { key: 'tags', label: t('tags'), path: '/tags', icon: Tags }, { key: 'calendar', label: calendarLabel, path: '/calendar', icon: CalendarDays }, { key: 'todos', label: todosLabel, path: '/todos', icon: ClipboardList }]" :key="tab.key" :class="['tab', { active: active === tab.key }]" @click="navigate(tab.path)"><component :is="tab.icon" :size="14" :stroke-width="1.8" /><span>{{ tab.label }}</span><span v-if="active === tab.key" class="tab-close">×</span></button><button v-if="active === 'settings'" class="tab active" @click="navigate('/settings')"><Settings :size="14" :stroke-width="1.8" /><span>{{ t('settings') }}</span><span class="tab-close">×</span></button><div class="tabs-area-spacer"></div></div>
       <div class="window-actions"><button aria-label="Minimize" title="Minimize" @click="minimizeWindow"><Minus :size="15" /></button><button :aria-label="isMaximized ? 'Restore' : 'Maximize'" :title="isMaximized ? 'Restore' : 'Maximize'" @click="toggleMaximize"><Copy v-if="isMaximized" :size="13" /><Square v-else :size="13" /></button><button class="close" aria-label="Close" title="Close" @click="closeWindow"><X :size="15" /></button></div>
     </header>
     <div class="app-body main-body">
       <aside class="rail sidebar" :class="{ 'is-collapsed': railCollapsed }">
-        <button class="rail-avatar" aria-label="Tiny Note" @mouseenter="showRailTooltip($event, 'Tiny Note')" @mouseleave="hideRailTooltip" @focus="showRailTooltip($event, 'Tiny Note')" @blur="hideRailTooltip" @click="openAvatar"><span>🐶</span><i class="avatar-status"></i></button>
+        <button class="rail-avatar" :aria-label="auth.authenticated ? '打开账号与助手中心' : '登录 Tiny Note'" :title="auth.authenticated ? auth.user?.nickname || auth.user?.username || '账号' : '登录 Tiny Note'" @click="openAvatar"><img v-if="avatarSource" class="rail-avatar-image" :src="avatarSource" alt="" /><span v-else>🐶</span><i class="avatar-status" :class="{ 'is-offline': !auth.authenticated }"></i></button>
         <nav><button v-for="item in nav.filter(item => !['settings', 'tasks'].includes(item.key))" :key="item.key" :class="['rail-item', { active: props.active === item.key }]" :aria-label="item.label" @mouseenter="showRailTooltip($event, item.label)" @mouseleave="hideRailTooltip" @focus="showRailTooltip($event, item.label)" @blur="hideRailTooltip" @click="navigate(item.path)"><component :is="item.icon" :size="19" /><span>{{ item.label }}</span></button></nav>
         <div class="rail-spacer"></div>
         <button data-task-center-target class="rail-item rail-tasks" :class="{ active: props.active === 'tasks', 'has-running-task': tasksStore.runningCount, 'task-center-arrival': taskArrival, 'has-failed-task': tasksStore.failedCount }" aria-label="任务中心" @mouseenter="showRailTooltip($event, '任务中心')" @mouseleave="hideRailTooltip" @focus="showRailTooltip($event, '任务中心')" @blur="hideRailTooltip" @click="openTaskCenter"><AlertCircle v-if="tasksStore.failedCount" class="rail-task-state is-failed" :size="20" /><LoaderCircle v-else-if="tasksStore.runningCount" class="rail-task-state is-running" :size="20" /><CheckCircle2 v-else-if="tasksStore.unreadSucceededCount && !tasksStore.waitingCount" class="rail-task-state is-succeeded" :size="20" /><ListTodo v-else :size="19" /><span>任务中心</span><b v-if="tasksStore.failedCount || tasksStore.waitingCount" class="rail-task-badge" :class="{ 'is-failed': tasksStore.failedCount }">{{ Math.min(tasksStore.failedCount || tasksStore.waitingCount, 99) }}</b></button>
@@ -136,7 +164,7 @@ onUnmounted(() => { if (stopResizeListener) stopResizeListener(); if (taskArriva
       </aside>
       <main class="content-wrap main-content"><div class="content-card content-wrapper"><slot /></div></main>
     </div>
-    <AvatarDrawer v-if="avatarHostReady" v-model="avatarOpen" />
+    <AvatarDrawer v-if="avatarHostReady" :model-value="avatarOpen" @update:model-value="setAvatarOpen" @signed-in="handleSignedIn" @signed-out="handleSignedOut" />
     <ChatHistoryDrawer v-if="historyHostReady" v-model="historyOpen" @open="openConversation" />
     <Teleport to="body"><div v-if="railTooltip.visible" class="floating-tooltip" role="tooltip" :style="railTooltip.style">{{ railTooltip.text }}</div></Teleport>
   </div>

@@ -56,13 +56,7 @@ export const useImagesStore = defineStore('images', {
     },
     async enqueue({ prompt, modelId, size, count, mode = 'generate', inputImages = [], maskImage = null }: ImageGenerationRequest) {
       const tasks = useTasksStore()
-      const modeLabel = { generate: '生图', reference: '参考图', edit: '图片编辑', inpaint: '局部重绘' }[mode] || '生图'
-      return tasks.enqueue({
-        kind: 'image_generation',
-        title: `${modeLabel}：${String(prompt).trim().slice(0, 36)}`,
-        modelProfileId: modelId,
-        payload: { request: { imageModelProfileId: modelId, prompt, size, count, mode, inputImages, maskImage } }
-      })
+      return tasks.createImageGeneration({ requestKey: crypto.randomUUID(), imageModelProfileId: modelId, prompt, size, count, mode, inputImages, maskImage })
     },
     async deleteGeneration(generationId: string) {
       await invoke('image_generation_delete', { generationId })

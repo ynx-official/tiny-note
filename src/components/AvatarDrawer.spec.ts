@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import { mount } from '@vue/test-utils'
 import { createI18n } from 'vue-i18n'
+import { createPinia } from 'pinia'
 import { readFileSync } from 'node:fs'
 import { resolve } from 'node:path'
 
@@ -12,7 +13,7 @@ describe('AvatarDrawer', () => {
       props: { modelValue: true },
       attachTo: document.body,
       global: {
-        plugins: [createI18n({
+        plugins: [createPinia(), createI18n({
           legacy: false,
           locale: 'zh-CN',
           messages: {
@@ -24,6 +25,7 @@ describe('AvatarDrawer', () => {
           }
         })],
         stubs: {
+          AccountPanel: true,
           MemoryManagement: true,
           SkillsManagement: true,
           McpManagement: true,
@@ -40,6 +42,21 @@ describe('AvatarDrawer', () => {
     expect(styles).toMatch(/\.assistant-drawer-overlay\s*\{[^}]*position:fixed/)
     expect(styles).toMatch(/\.assistant-drawer-overlay\s*\{[^}]*display:grid/)
 
+    wrapper.unmount()
+  })
+
+  it('uses the account section as the signed-out entry point', () => {
+    const wrapper = mount(AvatarDrawer, {
+      props: { modelValue: true },
+      attachTo: document.body,
+      global: {
+        plugins: [createPinia(), createI18n({ legacy: false, locale: 'zh-CN', messages: { 'zh-CN': { assistantCenter: '助手中心', memoryManagement: '记忆管理', usageStatistics: '用量统计' } } })],
+        stubs: { AccountPanel: true, MemoryManagement: true, SkillsManagement: true, McpManagement: true, UsageStatistics: true },
+      }
+    })
+
+    expect(document.body.querySelector('[data-section="account"]')?.classList.contains('active')).toBe(true)
+    expect(document.body.querySelector('account-panel-stub')).not.toBeNull()
     wrapper.unmount()
   })
 })

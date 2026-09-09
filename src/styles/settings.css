@@ -218,7 +218,7 @@
 .settings-update-row .settings-setting-copy { min-width:0; }
 .settings-update-row .settings-setting-copy small { color:var(--text-tertiary); font-size:11px; line-height:1.5; }
 .settings-update-row .settings-setting-copy small.error { color:#dc2626; }
-.settings-update-notes { display:-webkit-box; overflow:hidden; max-width:560px; white-space:pre-line; -webkit-box-orient:vertical; -webkit-line-clamp:3; }
+.settings-update-notes,.settings-release-notes-body { max-height:40vh; min-height:0; overflow:auto; overscroll-behavior:contain; scrollbar-width:thin; padding-right:12px; }
 .settings-value { margin-left:auto; color:var(--text-secondary); font-size:12px; }
 .settings-value-icon { margin-left:auto; color:var(--text-tertiary); }
 .settings-version-card { display:flex; align-items:center; gap:12px; padding:14px 16px; border:1px solid var(--border-subtle); border-radius:10px; background:var(--surface-raised); }
@@ -234,10 +234,6 @@
 .settings-release-notes { margin-top:12px; }
 .settings-release-heading { display:flex; align-items:center; justify-content:space-between; padding-top:14px; }
 .settings-release-date { color:var(--text-tertiary); font-size:11px; font-weight:400; }
-.settings-release-notes-body { color:var(--text-secondary); font-size:12px; line-height:1.7; }
-.settings-release-notes-body h4 { margin:14px 0 5px; color:var(--text-primary); font-size:12px; }
-.settings-release-notes-body p { margin:4px 0; }
-.settings-release-notes-body li { margin:3px 0; }
 @media (max-width:760px) {
   .settings-page { padding:8px; }
   .settings-nav { width:160px; min-width:160px; }

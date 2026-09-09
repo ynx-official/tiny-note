@@ -3,11 +3,14 @@ import { computed } from 'vue'
 import { AlertCircle, Check, ChevronDown, ChevronRight, FlaskConical, FolderOpen, Globe2, Languages, LoaderCircle, Monitor, Pencil, Plus, RefreshCw, Trash2 } from 'lucide-vue-next'
 import AgentToolsCatalog from '../AgentToolsCatalog.vue'
 import type { SettingsWorkspace } from '../../composables/useSettingsWorkspace'
+import { renderMarkdown } from '../../utils/markdown'
+import '../../styles/release-notes.css'
 
 const props = defineProps<{ workspace: SettingsWorkspace }>()
 const workspace = props.workspace
 const { t, settings, models, activeSection, activeSectionId, themeOptions, selectTheme, showLanguageDropdown, currentLanguageLabel, selectLanguage, languageOptions, shortcutRecording, editorModeShortcutParts, beginShortcutRecording, recordEditorModeShortcut, cancelShortcutRecording, resetEditorModeShortcut, shortcutError, exportDirectoryBusy, settingsSections, chooseDefaultExportDirectory, clearDefaultExportDirectory, modelConnections, primaryModel, imageModels, primaryImageModel, providerLabel, providerIcon, providerForModel, editModel, editConnection, requestModelDelete, requestConnectionDelete, balanceModels, balanceRefreshingAll, queryAllBalances, balanceStates, formatBalance, formatBalanceTime, modelSaving, saving, addModel, primaryModelMenuOpen, imagePrimaryModelMenuOpen, providerMenuOpen, endpointLabel, modelTestStates, testModel, isDeepSeek, queryBalanceFor, appVersion, currentReleaseNotes, currentReleaseNotesHtml, updateInfo, updateMessage, updateStatus, updateButtonLabel, handleUpdateAction, updateError, backupStatus, backupInput, exportWorkspace, restoreWorkspace, setPrimaryModel, setPrimaryImageModel, save, locale } = workspace
 const runtimeLabel = computed(() => typeof window !== 'undefined' && window.__TAURI_INTERNALS__ ? 'Tauri' : (locale.value === 'zh-CN' ? '浏览器预览' : 'Browser preview'))
+const availableReleaseNotesHtml = computed(() => renderMarkdown(updateInfo.value?.body))
 </script>
 
 <template>
@@ -168,7 +171,7 @@ const runtimeLabel = computed(() => typeof window !== 'undefined' && window.__TA
             <div class="settings-section-kicker">{{ t('about') }}</div>
             <div class="settings-version-card">
               <div class="settings-version-mark" aria-hidden="true">TN</div>
-              <div class="settings-version-copy"><strong>{{ t('appName') }}</strong><span>{{ locale === 'zh-CN' ? '专注于笔记与知识整理的本地优先工作区' : 'A local-first workspace for notes and knowledge' }}</span></div>
+              <div class="settings-version-copy"><strong>{{ t('appName') }}</strong><span>{{ locale === 'zh-CN' ? '专注于笔记与知识整理的在线工作区' : 'A connected workspace for notes and knowledge' }}</span></div>
               <span class="settings-version-number">v{{ appVersion }}</span>
             </div>
             <div class="settings-version-grid">
@@ -182,15 +185,18 @@ const runtimeLabel = computed(() => typeof window !== 'undefined' && window.__TA
                 <span v-if="updateInfo">{{ locale === 'zh-CN' ? `发现 Tiny Note v${updateInfo.version}` : `Tiny Note v${updateInfo.version} is available` }}</span>
                 <span v-else>{{ locale === 'zh-CN' ? '通过 GitHub Release 获取并校验 SHA-256 的更新包。' : 'Updates are downloaded from GitHub Releases and verified with SHA-256.' }}</span>
                 <small v-if="updateMessage" :class="{ error: updateStatus === 'error' }" role="status">{{ updateMessage }}</small>
-                <small v-if="updateInfo?.body" class="settings-update-notes">{{ updateInfo.body }}</small>
               </div>
               <button type="button" class="settings-action-button" :class="{ primary: updateStatus === 'available' || updateStatus === 'manual' }" :disabled="updateStatus === 'checking' || updateStatus === 'downloading' || updateStatus === 'unsupported'" @click="handleUpdateAction">
                 <RefreshCw :size="14" :class="{ spinning: updateStatus === 'checking' || updateStatus === 'downloading' }" />{{ updateButtonLabel }}
               </button>
             </div>
+            <div v-if="updateInfo?.body" class="settings-available-release">
+              <div class="settings-subheading settings-release-heading">{{ locale === 'zh-CN' ? `新版本 v${updateInfo.version} 更新内容` : `What's new in v${updateInfo.version}` }}</div>
+              <div class="settings-update-notes release-notes-markdown" tabindex="0" v-html="availableReleaseNotesHtml"></div>
+            </div>
             <div class="settings-release-notes">
               <div class="settings-subheading settings-release-heading"><span>{{ locale === 'zh-CN' ? `v${currentReleaseNotes.version || appVersion} 更新日志` : `v${currentReleaseNotes.version || appVersion} release notes` }}</span><span class="settings-release-date">{{ currentReleaseNotes.date }}</span></div>
-              <div v-if="currentReleaseNotes.body" class="settings-release-notes-body" v-html="currentReleaseNotesHtml"></div>
+              <div v-if="currentReleaseNotes.body" class="settings-release-notes-body release-notes-markdown" tabindex="0" v-html="currentReleaseNotesHtml"></div>
               <p v-else class="settings-inline-note">{{ locale === 'zh-CN' ? '暂无当前版本更新日志。' : 'No release notes are available for this version.' }}</p>
             </div>
             <div class="settings-setting-row"><div class="settings-setting-copy"><strong>{{ t('localFirst') }}</strong><span>{{ t('noteScope') }}</span></div><Globe2 :size="17" class="settings-value-icon" /></div>

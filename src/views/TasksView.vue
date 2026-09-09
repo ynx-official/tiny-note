@@ -20,14 +20,14 @@ const filters: Array<[string, string]> = [
   ['all', '全部'], ['active', '进行中'], ['attention', '待处理'], ['succeeded', '已完成'], ['failed', '失败']
 ]
 const visibleTasks = computed(() => tasks.value.filter(task => {
-  if (filter.value === 'active') return ['queued', 'running'].includes(task.status)
+  if (filter.value === 'active') return ['queued', 'running', 'finalizing', 'cancelling'].includes(task.status)
   if (filter.value === 'attention') return ['awaiting_approval', 'awaiting_input'].includes(task.status)
   if (filter.value === 'failed') return ['failed', 'interrupted'].includes(task.status)
   if (filter.value === 'succeeded') return task.status === 'succeeded'
   return true
 }))
 const counts = computed(() => Object.fromEntries(filters.map(([key]) => [key, tasks.value.filter(task => {
-  if (key === 'active') return ['queued', 'running'].includes(task.status)
+  if (key === 'active') return ['queued', 'running', 'finalizing', 'cancelling'].includes(task.status)
   if (key === 'attention') return ['awaiting_approval', 'awaiting_input'].includes(task.status)
   if (key === 'failed') return ['failed', 'interrupted'].includes(task.status)
   if (key === 'succeeded') return task.status === 'succeeded'
@@ -37,8 +37,8 @@ const counts = computed(() => Object.fromEntries(filters.map(([key]) => [key, ta
 const kindMeta: Record<string, [string, Component]> = {
   conversation_summary: ['总结为笔记', Sparkles], note_ai: ['笔记 AI', FileText], image_generation: ['生图', ImagePlus]
 }
-const statusLabels: Record<string, string> = { queued: '排队中', running: '执行中', awaiting_approval: '等待确认', awaiting_input: '等待回答', succeeded: '已完成', failed: '失败', cancelled: '已取消', interrupted: '已中断' }
-const statusIcons: Record<string, Component> = { queued: Clock3, running: LoaderCircle, awaiting_approval: Clock3, awaiting_input: Clock3, succeeded: CheckCircle2, failed: AlertCircle, cancelled: CircleStop, interrupted: AlertCircle }
+const statusLabels: Record<string, string> = { queued: '排队中', running: '执行中', finalizing: '正在保存结果', cancelling: '正在取消', awaiting_approval: '等待确认', awaiting_input: '等待回答', succeeded: '已完成', failed: '失败', cancelled: '已取消', interrupted: '已中断' }
+const statusIcons: Record<string, Component> = { queued: Clock3, running: LoaderCircle, finalizing: LoaderCircle, cancelling: LoaderCircle, awaiting_approval: Clock3, awaiting_input: Clock3, succeeded: CheckCircle2, failed: AlertCircle, cancelled: CircleStop, interrupted: AlertCircle }
 function formatTime(value: string | null) { if (!value) return ''; return new Intl.DateTimeFormat('zh-CN', { month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' }).format(new Date(value)) }
 function executionTime(task: BackgroundTask) { return formatTaskDuration(task, now.value) }
 function hasRetryAttempt(task: BackgroundTask) { return tasks.value.some(item => item.retryOf === task.id) }
@@ -87,12 +87,12 @@ onUnmounted(() => { if (durationTimer !== undefined) window.clearInterval(durati
           <span class="task-kind-icon"><component :is="kindMeta[task.kind]?.[1] || Clock3" :size="17" /></span>
           <span class="task-copy"><strong>{{ task.title }}</strong><small>{{ kindMeta[task.kind]?.[0] || task.kind }} · {{ formatTime(task.createdAt) }}</small></span>
           <span class="task-state">
-            <span class="task-status"><component :is="statusIcons[task.status] || Clock3" :class="{ spin: task.status === 'running' }" :size="14" />{{ statusLabels[task.status] || task.status }}</span>
+            <span class="task-status"><component :is="statusIcons[task.status] || Clock3" :class="{ spin: ['running','finalizing','cancelling'].includes(task.status) }" :size="14" />{{ statusLabels[task.status] || task.status }}</span>
             <span class="task-duration"><Clock3 :size="12" />{{ executionTime(task) }}</span>
           </span>
         </button>
         <div class="task-actions">
-          <button v-if="['queued','running','awaiting_approval','awaiting_input'].includes(task.status)" type="button" title="取消任务" @click="store.cancel(task.id)"><CircleStop :size="14" />取消</button>
+          <button v-if="['queued','running','finalizing','awaiting_approval','awaiting_input'].includes(task.status)" type="button" title="取消任务" @click="store.cancel(task.id)"><CircleStop :size="14" />取消</button>
           <span v-if="['failed','cancelled','interrupted'].includes(task.status) && hasRetryAttempt(task)" class="task-retried">已重试</span>
           <button v-else-if="['failed','cancelled','interrupted'].includes(task.status)" class="task-quick-retry" type="button" :disabled="retrying.includes(task.id)" @click="quickRetry(task)"><LoaderCircle v-if="retrying.includes(task.id)" class="spin" :size="14" /><RefreshCw v-else :size="14" />{{ retrying.includes(task.id) ? '重试中' : '快速重试' }}</button>
           <button v-if="task.status === 'succeeded'" type="button" @click="openResult(task)">打开结果</button>

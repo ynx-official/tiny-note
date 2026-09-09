@@ -165,7 +165,7 @@ describe('NoteEditor AI writing', () => {
       if (command === 'model_list' || command === 'knowledge_base_list') return []
       if (command === 'background_task_list') return []
       if (command === 'note_update') return { ...note(), id: args.id, ...args.input }
-      if (command === 'background_task_enqueue') return { ...args.input, id: 'task-ai-1', status: 'queued', output: '', resourceKey: `note:${args.input.targetNoteId}`, createdAt: new Date().toISOString() }
+      if (command === 'note_ai_task_create') return { id: 'task-ai-1', kind: 'note_ai', title: 'AI 写作', status: 'queued', payload: {}, output: '', resourceKey: `note:${args.noteId}`, targetNoteId: args.noteId, createdAt: new Date().toISOString() }
       if (command === 'background_task_transition') return { id: args.input.id, kind: 'note_ai', title: 'AI 写作', status: args.input.status, output: args.input.outputDelta || '', resourceKey: 'note:note-1', targetNoteId: 'note-1', payload: {}, createdAt: new Date().toISOString() }
       return null
     })
@@ -186,11 +186,11 @@ describe('NoteEditor AI writing', () => {
     await wrapper.get('.tiny-note-send-btn').trigger('click')
     await flushPromises()
 
-    const [, payload] = tauriMocks.invoke.mock.calls.find(([command]) => command === 'background_task_enqueue')
-    expect(payload.input.payload.request.thinkingMode).toBe('disabled')
-    expect(payload.input.payload.request.text).toBe('标题')
-    expect(payload.input.payload.request.selection).toMatchObject({ from: 1, to: 3, text: '标题' })
-    expect(payload.input.payload.request).not.toHaveProperty('autoRetrieve')
+    const [, payload] = tauriMocks.invoke.mock.calls.find(([command]) => command === 'note_ai_task_create')
+    expect(payload.thinkingMode).toBe('disabled')
+    expect(payload).not.toHaveProperty('text')
+    expect(payload.selection).toMatchObject({ from: 1, to: 3, text: '标题' })
+    expect(payload).not.toHaveProperty('autoRetrieve')
     wrapper.unmount()
   })
 
@@ -202,11 +202,8 @@ describe('NoteEditor AI writing', () => {
       if (command === 'model_list' || command === 'knowledge_base_list') return []
       if (command === 'background_task_list') return []
       if (command === 'note_update') return { ...note(), id: args.id, ...args.input }
-      if (command === 'background_task_enqueue') return { ...args.input, id: 'task-ai-error', status: 'queued', output: '', resourceKey: `note:${args.input.targetNoteId}`, createdAt: new Date().toISOString() }
+      if (command === 'note_ai_task_create') throw { code: 'api_key_not_configured', message: 'api_key_not_configured' }
       if (command === 'background_task_transition') return { id: args.input.id, kind: 'note_ai', title: 'AI 写作', status: args.input.status, output: '', errorMessage: args.input.errorMessage, resourceKey: 'note:note-1', targetNoteId: 'note-1', payload: {}, createdAt: new Date().toISOString() }
-      if (command === 'note_ai_stream') {
-        await args.onEvent.onmessage({ type: 'error', code: 'ai_request_failed', message: 'api_key_not_configured' })
-      }
       return null
     })
     const wrapper = await mountEditor()

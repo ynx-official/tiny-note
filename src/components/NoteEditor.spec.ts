@@ -1,5 +1,5 @@
 import { flushPromises } from '@vue/test-utils'
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 import MarkdownSourceEditor from './MarkdownSourceEditor.vue'
 import { mountEditor, note, noteEditorTestMocks } from './NoteEditor.testHarness'
 
@@ -30,6 +30,20 @@ describe('NoteEditor export and external files', () => {
     await wrapper.get('.external-note-import').trigger('click')
     await flushPromises()
     expect(wrapper.emitted('import-external')).toEqual([[external]])
+    wrapper.unmount()
+  })
+
+  it('reloads disk content when the same external source is explicitly reopened', async () => {
+    const external = { ...note('external:same'), external: true, externalPath: '/notes/file.md' }
+    const wrapper = await mountEditor(external)
+    const reopened = { ...external, contentMarkdown: '# Changed on disk\n', contentHtml: '<h1>Changed on disk</h1>', contentText: 'Changed on disk' }
+    await wrapper.setProps({ note: reopened })
+    await flushPromises()
+    expect(wrapper.get('.tiptap').text()).toContain('Changed on disk')
+    await wrapper.get('.editor-mode-trigger').trigger('click')
+    await wrapper.findAll('[role="menuitemradio"]')[1].trigger('click')
+    await flushPromises()
+    expect(wrapper.findComponent({ name: 'MarkdownSourceEditor' }).props('modelValue')).toBe('# Changed on disk\n')
     wrapper.unmount()
   })
 
@@ -148,4 +162,21 @@ describe('NoteEditor export and external files', () => {
     wrapper.unmount()
   })
 
+})
+
+it('does not mark newer edits as saved when the previous save finishes', async () => {
+  const activeNote = note('save-race')
+  const wrapper = await mountEditor(activeNote)
+  let finish!: (value: typeof activeNote) => void
+  const save = vi.spyOn(wrapper.notesStore, 'save').mockImplementationOnce(() => new Promise(resolve => { finish = resolve })).mockResolvedValue(activeNote)
+  activeNote.contentMarkdown = 'first draft'
+  const first = wrapper.vm.saveLatestContent()
+  await flushPromises()
+  activeNote.contentMarkdown = 'newer draft'
+  finish(activeNote)
+  await first
+  await wrapper.vm.saveLatestContent()
+  expect(save).toHaveBeenCalledTimes(2)
+  expect(activeNote.contentMarkdown).toBe('newer draft')
+  wrapper.unmount()
 })

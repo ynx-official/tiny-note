@@ -1,16 +1,19 @@
 import { defineStore } from 'pinia'
 import { invoke } from '../services/tauri'
-import type { Note, Tag } from '../types/domain'
+import { requireResourceVersion } from '../services/resourceVersion'
+import type { Tag } from '../types/domain'
+import { createNotePageState, loadNotePage } from '../services/notePage'
 
 export const useTagsStore = defineStore('tags', {
   state: () => ({
     tags: [] as Tag[],
     activeId: 'untagged',
-    notes: [] as Note[],
+    page: createNotePageState(),
     search: '',
     loading: false
   }),
   getters: {
+    notes: state => state.page.items,
     visibleTags: state => {
       const query = state.search.trim().toLocaleLowerCase()
       return query ? state.tags.filter(tag => tag.name.toLocaleLowerCase().includes(query)) : state.tags
@@ -29,7 +32,10 @@ export const useTagsStore = defineStore('tags', {
       }
     },
     async loadNotes() {
-      this.notes = await invoke('tag_note_list', { tagId: this.activeId === 'untagged' ? null : this.activeId, untagged: this.activeId === 'untagged' }) || []
+      await loadNotePage(this.page, this.activeId === 'untagged' ? { untagged: true } : { tagId: this.activeId })
+    },
+    async loadMoreNotes() {
+      await loadNotePage(this.page, this.page.filter, true)
     },
     async select(id: string) {
       this.activeId = id
@@ -42,7 +48,8 @@ export const useTagsStore = defineStore('tags', {
       return tag
     },
     async rename(id: string, name: string) {
-      const updated = await invoke('tag_update', { id, name })
+      const tag = this.tags.find(item => item.id === id)
+      const updated = await invoke('tag_update', { id, name, version: requireResourceVersion(tag, '标签') })
       this.tags = await invoke('tag_list') || []
       return updated
     },

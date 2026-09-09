@@ -13,8 +13,40 @@ vi.mock('vue-router', () => ({ useRouter: () => ({ push: mocks.push }) }))
 
 import HomeView from './HomeView.vue'
 import { messages } from '../i18n'
+import { useAuthStore } from '../stores/auth'
+
+function authenticatedPinia() {
+  const pinia = createPinia()
+  const auth = useAuthStore(pinia)
+  auth.initialized = true
+  auth.authenticated = true
+  return pinia
+}
+
+function guestPinia() {
+  const pinia = createPinia()
+  const auth = useAuthStore(pinia)
+  auth.initialized = true
+  auth.authenticated = false
+  return pinia
+}
 
 describe('HomeView startup data', () => {
+  it('keeps image generation models out of the authenticated chat menu', async () => {
+    const base = mocks.invoke.getMockImplementation()
+    mocks.invoke.mockImplementation((command: string) => command === 'model_list' ? Promise.resolve([
+      { id: 'image-model', provider: 'OpenAI', model: 'gpt-image-1', isDefault: true, imageEnabled: true },
+      { id: 'chat-model', provider: 'OpenAI', model: 'gpt-4.1-mini', isDefault: false, imageEnabled: false }
+    ]) : base?.(command))
+    const wrapper = mount(HomeView, { global: { plugins: [authenticatedPinia(), createI18n({ legacy: false, locale: 'zh-CN', messages })] } })
+    await flushPromises()
+    expect(wrapper.get('.home-model-anchor .home-select-button').text()).toContain('gpt-4.1-mini')
+    await wrapper.get('.home-model-anchor .home-select-button').trigger('click')
+    expect(wrapper.findAll('.home-model-option')).toHaveLength(1)
+    expect(wrapper.text()).not.toContain('gpt-image-1')
+    wrapper.unmount()
+  })
+
   beforeEach(() => {
     localStorage.clear()
     sessionStorage.clear()
@@ -24,6 +56,7 @@ describe('HomeView startup data', () => {
       if (command === 'settings_get') return Promise.resolve({ theme: 'system', language: 'zh-CN', fimEnabled: false, exportDirectory: '' })
       if (command === 'model_list') return Promise.resolve([])
       if (command === 'knowledge_base_list') return Promise.resolve([])
+      if (command === 'note_page') return Promise.resolve({ items: [], total: 0, hasMore: false, nextCursor: '' })
       if (command === 'note_list' || command === 'notebook_list' || command === 'external_markdown_list') return Promise.resolve([])
       return Promise.resolve(null)
     })
@@ -40,7 +73,7 @@ describe('HomeView startup data', () => {
 
     const wrapper = mount(HomeView, {
       global: {
-        plugins: [createPinia(), createI18n({ legacy: false, locale: 'zh-CN', fallbackLocale: 'en', messages })]
+        plugins: [authenticatedPinia(), createI18n({ legacy: false, locale: 'zh-CN', fallbackLocale: 'en', messages })]
       }
     })
     await flushPromises()
@@ -60,7 +93,7 @@ describe('HomeView startup data', () => {
   it('keeps notes and library data off the startup path until a reference picker is opened', async () => {
     const wrapper = mount(HomeView, {
       global: {
-        plugins: [createPinia(), createI18n({ legacy: false, locale: 'zh-CN', fallbackLocale: 'en', messages })]
+        plugins: [authenticatedPinia(), createI18n({ legacy: false, locale: 'zh-CN', fallbackLocale: 'en', messages })]
       }
     })
     await flushPromises()
@@ -78,33 +111,21 @@ describe('HomeView startup data', () => {
 
     await wrapper.findAll('.home-reference-option')[0].trigger('click')
     await flushPromises()
-    expect(invokedCommands()).toContain('note_purge_expired')
+    expect(invokedCommands()).toContain('note_page')
+    expect(invokedCommands()).not.toContain('note_list')
     expect(invokedCommands()).not.toContain('knowledge_base_list')
   })
 
-  it('excludes image generation models from the home chat model menu', async () => {
-    mocks.invoke.mockImplementation((command: string) => {
-      if (command === 'settings_get') return Promise.resolve({ theme: 'system', language: 'zh-CN', fimEnabled: false, exportDirectory: '' })
-      if (command === 'model_list') return Promise.resolve([
-        { id: 'image-model', name: 'Image Model', connectionName: 'Image Service', provider: 'OpenAI', model: 'gpt-image-1', isDefault: true, imageEnabled: true },
-        { id: 'chat-model', name: 'Chat Model', connectionName: 'Chat Service', provider: 'OpenAI', model: 'gpt-4.1-mini', isDefault: false, imageEnabled: false }
-      ])
-      return Promise.resolve([])
-    })
-
+  it('shows the shell immediately without loading cloud data for a guest', async () => {
     const wrapper = mount(HomeView, {
       global: {
-        plugins: [createPinia(), createI18n({ legacy: false, locale: 'zh-CN', fallbackLocale: 'en', messages })]
+        plugins: [guestPinia(), createI18n({ legacy: false, locale: 'zh-CN', fallbackLocale: 'en', messages })]
       }
     })
     await flushPromises()
 
-    expect(wrapper.get('.home-model-anchor .home-select-button').text()).toContain('gpt-4.1-mini')
-    await wrapper.get('.home-model-anchor .home-select-button').trigger('click')
-
-    const options = wrapper.findAll('.home-model-option')
-    expect(options).toHaveLength(1)
-    expect(options[0].text()).toContain('gpt-4.1-mini')
-    expect(wrapper.text()).not.toContain('gpt-image-1')
+    expect(wrapper.find('.home-loader').exists()).toBe(false)
+    expect(wrapper.get('.home-guest-hint').text()).toContain('狗狗头像登录')
+    expect(mocks.invoke).not.toHaveBeenCalled()
   })
 })

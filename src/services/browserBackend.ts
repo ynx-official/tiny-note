@@ -31,13 +31,14 @@ function normalizeBrowserState(record: Record<string, unknown>): BrowserState {
   const state = record as BrowserState
   for (const key of ['notes', 'notebooks', 'tags', 'noteTags', 'kbs', 'libraryFiles', 'memories', 'agentSkills', 'mcpServers', 'usageRecords', 'imageGenerations', 'imageAssets', 'chatConversations', 'chatMessages', 'backgroundTasks', 'calendarEvents', 'todos', 'todoLists', 'reminders', 'editProposals', 'noteRevisions', 'noteLinks', 'templates', 'models'] as const) {
     state[key] = browserItems(record[key])
+    state[key].forEach(value => { if (!Number.isInteger(value.version) || Number(value.version) <= 0) value.version = 1 })
   }
   state.agentToolPolicies = isBrowserRecord(record.agentToolPolicies)
     ? Object.fromEntries(Object.entries(record.agentToolPolicies).filter((entry): entry is [string, boolean] => typeof entry[1] === 'boolean'))
     : {}
   const timestamp = new Date().toISOString()
-  if (!present.has('notebooks')) state.notebooks = browserItemList([{ id: 'uncategorized', parentId: null, name: '未分类', description: '', createdAt: timestamp, updatedAt: timestamp }])
-  if (!present.has('kbs')) state.kbs = browserItemList([{ id: 'personal-demo', category: 'personal', name: '我的笔记', description: '', rootPath: '', createdAt: timestamp, updatedAt: timestamp }, { id: 'local-demo', category: 'local', name: '我的书籍', description: '', rootPath: '', createdAt: timestamp, updatedAt: timestamp }])
+  if (!present.has('notebooks')) state.notebooks = browserItemList([{ id: 'uncategorized', parentId: null, name: '未分类', description: '', version: 1, createdAt: timestamp, updatedAt: timestamp }])
+  if (!present.has('kbs')) state.kbs = browserItemList([{ id: 'personal-demo', category: 'personal', name: '我的笔记', description: '', rootPath: '', version: 1, createdAt: timestamp, updatedAt: timestamp }, { id: 'local-demo', category: 'local', name: '我的书籍', description: '', rootPath: '', version: 1, createdAt: timestamp, updatedAt: timestamp }])
   if (!present.has('memories')) state.memories = browserItemList(browserMemorySeed.map(file => ({ ...file, updatedAt: timestamp })))
   if (!present.has('agentSkills')) state.agentSkills = browserItemList(browserSkillSeed.map(skill => ({ ...skill, updatedAt: timestamp })))
   if (!present.has('templates')) state.templates = browserItemList(browserTemplateSeed.map(template => ({ ...template, updatedAt: timestamp })))
@@ -54,9 +55,9 @@ const browserMemorySeed = [
   { fileName: 'Agent.md', nameKey: 'Agent', description: '经验与技巧', content: '# 经验与技巧\n\n> 记录 Tiny Note 助手在工作中积累的可复用经验。\n\n## 工具使用经验\n- （待补充）\n' }
 ]
 const browserSkillSeed = [
-  { name: 'knowledge-research', description: '管理 Tiny Note 知识库元数据和笔记引用。', fileName: 'knowledge-research/SKILL.md', builtin: true, content: '---\nname: knowledge-research\ndescription: 管理 Tiny Note 知识库元数据和笔记引用。\n---\n\n# 知识库管理\n\n知识库与笔记本是不同实体；当前版本不自动检索知识库正文。使用 `list_knowledge_bases`、`create_knowledge_base`、`update_knowledge_base`、`delete_knowledge_base` 管理知识库；使用 `create_note_in_knowledge_base` 和 `move_note_to_knowledge_base` 管理笔记引用。只有对话中手动选择的文件才作为本轮参考。\n' },
-  { name: 'note-organizer', description: '列出、搜索、读取、创建、修改或删除 Tiny Note 普通笔记。', fileName: 'note-organizer/SKILL.md', builtin: true, content: '---\nname: note-organizer\ndescription: 列出、搜索、读取、创建、修改或删除 Tiny Note 普通笔记。\n---\n\n# 笔记管理\n\n“我有哪些笔记”调用 `list_notes`；只有给出主题时才调用 `search_notes`。搜索无结果时缩短关键词重试。修改前用 `get_note` 读取 `contentMarkdown`；删除前确认精确 ID。创建时使用不超过 50 字符的简洁标题和完整 Markdown 正文。写操作使用 `create_note`、`update_note`、`delete_note`。\n' },
-  { name: 'notebook-manager', description: '列出、创建、修改、移动或删除 Tiny Note 笔记本。', fileName: 'notebook-manager/SKILL.md', builtin: true, content: '---\nname: notebook-manager\ndescription: 列出、创建、修改、移动或删除 Tiny Note 笔记本。\n---\n\n# 笔记本管理\n\n笔记本、笔记和知识库是不同实体。使用 `list_notebooks`、`create_notebook`、`update_notebook`、`move_notebook`、`delete_notebook`。不要修改、移动或删除系统“未分类”笔记本；移动前确认目标不是自身或后代。删除普通笔记本不会递归删除笔记或子笔记本。\n' }
+  { name: 'knowledge-research', description: '管理 Tiny Note 知识库元数据和笔记引用。', fileName: 'knowledge-research/SKILL.md', builtin: true, scope: 'system', content: '---\nname: knowledge-research\ndescription: 管理 Tiny Note 知识库元数据和笔记引用。\n---\n\n# 知识库管理\n\n知识库与笔记本是不同实体；当前版本不自动检索知识库正文。使用 `list_knowledge_bases`、`create_knowledge_base`、`update_knowledge_base`、`delete_knowledge_base` 管理知识库；使用 `create_note_in_knowledge_base` 和 `move_note_to_knowledge_base` 管理笔记引用。只有对话中手动选择的文件才作为本轮参考。\n' },
+  { name: 'note-organizer', description: '列出、搜索、读取、创建、修改或删除 Tiny Note 普通笔记。', fileName: 'note-organizer/SKILL.md', builtin: true, scope: 'system', content: '---\nname: note-organizer\ndescription: 列出、搜索、读取、创建、修改或删除 Tiny Note 普通笔记。\n---\n\n# 笔记管理\n\n“我有哪些笔记”调用 `list_notes`；只有给出主题时才调用 `search_notes`。搜索无结果时缩短关键词重试。修改前用 `get_note` 读取 `contentMarkdown`；删除前确认精确 ID。创建时使用不超过 50 字符的简洁标题和完整 Markdown 正文。写操作使用 `create_note`、`update_note`、`delete_note`。\n' },
+  { name: 'notebook-manager', description: '列出、创建、修改、移动或删除 Tiny Note 笔记本。', fileName: 'notebook-manager/SKILL.md', builtin: true, scope: 'system', content: '---\nname: notebook-manager\ndescription: 列出、创建、修改、移动或删除 Tiny Note 笔记本。\n---\n\n# 笔记本管理\n\n笔记本、笔记和知识库是不同实体。使用 `list_notebooks`、`create_notebook`、`update_notebook`、`move_notebook`、`delete_notebook`。不要修改、移动或删除系统“未分类”笔记本；移动前确认目标不是自身或后代。删除普通笔记本不会递归删除笔记或子笔记本。\n' }
 ]
 const browserTemplateSeed = [
   { id: 'daily', name: '每日记录', description: '记录当天的重点、进展和复盘', title: '每日记录', contentMarkdown: '# 今日重点\n\n## 计划\n\n## 进展\n\n## 复盘\n', builtin: true },
@@ -76,17 +77,17 @@ const browserLegacySkillContent = {
   ]
 }
 const browserAgentToolDefaults: Array<readonly [string, string, boolean]> = [
-  ['list_knowledge_bases', '列出现有知识库元数据', false], ['get_current_time', '获取本机当前时间', false],
+  ['get_current_time', '获取本机当前时间', false], ['request_user_input', '暂停运行并向用户请求结构化输入', false],
   ['list_mcp_tools', '列出已发现的 MCP 工具', false], ['call_mcp_tool', '调用外部 MCP 工具', true],
   ['delegate_task', '委派独立子任务', true], ['run_sandbox_script', '执行隔离计算脚本', true],
-  ['list_notes', '列出未删除的普通笔记', false], ['search_notes', '搜索未删除的普通笔记', false], ['get_note', '读取指定笔记的完整 Markdown', false],
-  ['list_notebooks', '列出笔记本及直属统计', false], ['list_agent_files', '浏览 Agent 工作区', false],
-  ['read_agent_file', '读取 Agent 工作区文本文件', false], ['write_agent_file', '写入 Agent 工作区文本文件', true],
   ['read_skill', '读取 Agent 技能', false], ['write_skill', '创建或更新 Agent 技能', true],
+  ['list_agent_files', '浏览 Agent 工作区', false], ['read_agent_file', '读取 Agent 工作区文本文件', false], ['write_agent_file', '写入 Agent 工作区文本文件', true],
   ['create_note', '创建笔记', true], ['create_note_in_knowledge_base', '在知识库中新建笔记', true], ['move_note_to_knowledge_base', '移动笔记到其他知识库', true], ['update_note', '生成笔记修改提案', true], ['delete_note', '将笔记移入最近删除', true],
+  ['update_memory', '更新 Agent 记忆', true],
   ['create_notebook', '创建笔记本', true], ['update_notebook', '更新笔记本信息', true], ['move_notebook', '移动笔记本层级', true], ['delete_notebook', '删除笔记本并安全归位内容', true],
   ['create_knowledge_base', '创建知识库', true], ['update_knowledge_base', '更新知识库信息', true], ['delete_knowledge_base', '删除知识库并移入回收站', true],
-  ['update_memory', '更新 Agent 记忆', true]
+  ['list_knowledge_bases', '列出现有知识库元数据', false], ['list_notes', '列出未删除的普通笔记', false], ['search_notes', '搜索未删除的普通笔记', false], ['get_note', '读取指定笔记的完整 Markdown', false], ['list_notebooks', '列出笔记本及直属统计', false],
+  ['create_todo', '创建待办', true], ['create_calendar_event', '创建日历事件', true]
 ]
 export async function browserInvoke<K extends CommandName>(command: K, commandArgs: CommandArgs<K>): Promise<CommandResult<K>> {
   const args = commandArgs as unknown as BrowserArgs
@@ -220,7 +221,6 @@ export async function browserInvoke<K extends CommandName>(command: K, commandAr
   else result = []
   writeBrowserState(state); return result as CommandResult<K>
 }
-
 
 
 

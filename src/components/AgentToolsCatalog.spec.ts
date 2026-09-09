@@ -9,32 +9,25 @@ vi.mock('../services/tauri', () => ({ invoke }))
 describe('AgentToolsCatalog', () => {
   beforeEach(() => invoke.mockReset())
 
-  it('groups tools by product domain and exposes their safety policy', async () => {
-    invoke.mockResolvedValue([
-      { name: 'get_current_time', description: '获取当前时间', requireApproval: false },
-      { name: 'list_knowledge_bases', description: '列出现有知识库及索引概况', requireApproval: false },
-      { name: 'create_knowledge_base', description: '创建知识库', requireApproval: true },
-      { name: 'update_knowledge_base', description: '更新知识库', requireApproval: true },
-      { name: 'delete_knowledge_base', description: '删除知识库', requireApproval: true },
-      { name: 'list_notes', description: '列出普通笔记', requireApproval: false },
-      { name: 'create_note', description: '创建笔记', requireApproval: true },
-      { name: 'create_note_in_knowledge_base', description: '在知识库中新建笔记引用', requireApproval: true },
-      { name: 'move_note_to_knowledge_base', description: '移动笔记到其他知识库', requireApproval: true },
-      { name: 'delete_note', description: '删除笔记', requireApproval: true },
-      { name: 'list_notebooks', description: '列出笔记本', requireApproval: false },
-      { name: 'create_notebook', description: '创建笔记本', requireApproval: true },
-      { name: 'update_notebook', description: '更新笔记本', requireApproval: true },
-      { name: 'move_notebook', description: '移动笔记本', requireApproval: true },
-      { name: 'delete_notebook', description: '删除笔记本', requireApproval: true },
-      { name: 'read_skill', description: '读取 Agent 技能', requireApproval: false },
-      { name: 'call_mcp_tool', description: '调用外部 MCP 工具', requireApproval: true }
-    ])
+  it('groups all restored tools and dynamic MCP tools by product domain', async () => {
+    const readOnly = new Set(['get_current_time', 'request_user_input', 'list_mcp_tools', 'read_skill', 'list_agent_files', 'read_agent_file', 'list_knowledge_bases', 'list_notes', 'search_notes', 'get_note', 'list_notebooks'])
+    const names = [
+      'get_current_time', 'request_user_input', 'list_mcp_tools', 'call_mcp_tool', 'delegate_task', 'run_sandbox_script',
+      'read_skill', 'write_skill', 'list_agent_files', 'read_agent_file', 'write_agent_file',
+      'create_note', 'create_note_in_knowledge_base', 'move_note_to_knowledge_base', 'update_note', 'delete_note', 'update_memory',
+      'create_knowledge_base', 'update_knowledge_base', 'delete_knowledge_base', 'list_knowledge_bases',
+      'list_notes', 'search_notes', 'get_note', 'list_notebooks', 'create_notebook', 'update_notebook', 'move_notebook', 'delete_notebook',
+      'create_todo', 'create_calendar_event'
+    ]
+    const catalog = names.map(name => ({ name, description: name, requireApproval: !readOnly.has(name), defaultRequireApproval: !readOnly.has(name) }))
+    catalog.push({ name: 'mcp_10203040_send_message', description: '发送外部消息', requireApproval: true, defaultRequireApproval: true })
+    invoke.mockResolvedValue(catalog)
 
     const wrapper = mount(AgentToolsCatalog)
     await flushPromises()
 
     expect(invoke).toHaveBeenCalledWith('agent_list_tools')
-    expect(wrapper.get('[data-testid="tool-summary"]').text()).toContain('17 个工具可用')
+    expect(wrapper.get('[data-testid="tool-summary"]').text()).toContain('32 个工具可用')
     expect(wrapper.text()).toContain('读取知识库目录')
     expect(wrapper.text()).toContain('创建知识库')
     expect(wrapper.text()).toContain('更新知识库信息')
@@ -44,12 +37,17 @@ describe('AgentToolsCatalog', () => {
     expect(wrapper.text()).toContain('移动笔记到其他知识库')
     expect(wrapper.text()).toContain('列出笔记')
     expect(wrapper.text()).toContain('移动笔记本')
-    expect(wrapper.findAll('.agent-tool-group > header strong').map(node => node.text())).toEqual(['系统', '笔记', '笔记本', '知识库', 'Agent 技能', 'MCP 服务'])
+    expect(wrapper.text()).toContain('请求用户输入')
+    expect(wrapper.text()).toContain('创建待办')
+    expect(wrapper.text()).toContain('创建日历事件')
+    expect(wrapper.text()).toContain('发送外部消息')
+    expect(wrapper.findAll('.agent-tool-group > header strong').map(node => node.text())).toEqual(['系统', '日程与待办', '笔记', '笔记本', '知识库', 'Agent 记忆', 'Agent 技能', 'Agent 工作区', 'MCP 服务', 'Agent 协作'])
     expect(wrapper.text()).not.toContain('本地只读')
     expect(wrapper.text()).not.toContain('本地写入')
     expect(wrapper.text()).toContain('每次审批')
     expect(wrapper.text()).toContain('无需审批')
     expect(wrapper.text()).toContain('list_knowledge_bases')
+    expect(wrapper.text()).toContain('mcp_10203040_send_message')
   })
 
   it('shows a retryable error when the tool catalog cannot be loaded', async () => {

@@ -12,6 +12,7 @@ const range = ref('today')
 const stats = ref<UsageStats | null>(null)
 const loading = ref(false)
 const error = ref('')
+let loadSequence = 0
 const ranges = computed(() => [
   { value: 'today', label: t('today') },
   { value: '7d', label: t('last7Days') },
@@ -29,14 +30,16 @@ const trend = computed(() => {
 })
 
 async function loadStats() {
+  const sequence = ++loadSequence
   loading.value = true
   error.value = ''
   try {
-    stats.value = await invoke('usage_get_stats', { range: range.value })
+    const result = await invoke('usage_get_stats', { range: range.value, timezoneOffsetMinutes: -new Date().getTimezoneOffset() })
+    if (sequence === loadSequence) stats.value = result
   } catch (cause) {
-    error.value = errorMessage(cause, '用量统计读取失败')
+    if (sequence === loadSequence) error.value = errorMessage(cause, '用量统计读取失败')
   } finally {
-    loading.value = false
+    if (sequence === loadSequence) loading.value = false
   }
 }
 

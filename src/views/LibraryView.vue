@@ -1,21 +1,23 @@
 <script setup lang="ts">
-import { computed, onMounted, ref, watch } from 'vue'
+import { computed, defineAsyncComponent, onMounted, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { useRouter } from 'vue-router'
 import {
   Folder, File, FileText, Plus, Search, Grid2X2, List, Upload, Trash2, Eye, ChevronLeft,
   ChevronRight, SlidersHorizontal, PanelLeftClose, PanelLeftOpen, Pencil,
-  FolderOpen, X, ArrowDownAZ, HardDrive, Clock3, Link2
+  FolderOpen, ArrowDownAZ, HardDrive, Clock3, Link2
 } from 'lucide-vue-next'
 import { useLibraryStore } from '../stores/library'
-import { useNotesStore } from '../stores/notes'
+import { useNotePicker } from '../composables/useNotePicker'
+import NotePageControls from '../components/notes/NotePageControls.vue'
 import { useWorkspaceSidebar } from '../utils/workspaceSidebar'
 import { requestPrompt } from '../services/promptDialog'
 import { requestConfirmation, showToast } from '../services/appFeedback'
-import { errorMessage, type KnowledgeBase, type LibraryEntry, type Note } from '../types/domain'
+import { errorMessage, type KnowledgeBase, type LibraryEntry, type NoteSummary } from '../types/domain'
 
+const LibraryPreviewDrawer = defineAsyncComponent(() => import('../components/library/LibraryPreviewDrawer.vue'))
 const store = useLibraryStore()
-const notesStore = useNotesStore()
+const notePicker = useNotePicker(() => ({ knowledgeBaseId: store.activeId || undefined }))
 const router = useRouter()
 const { t } = useI18n()
 const creating = ref(false)
@@ -31,15 +33,17 @@ const importing = ref(false)
 const dropActive = ref(false)
 const importInput = ref<HTMLInputElement | null>(null)
 const entries = computed(() => store.entries)
-const knowledgeNotes = computed(() => notesStore.notes.filter(note => note.knowledgeBaseId === store.activeId))
+const knowledgeNotes = computed(() => store.activeId ? notePicker.page.items : [])
 const personalBases = computed(() => store.bases.filter(base => base.category === 'personal'))
 const localBases = computed(() => store.bases.filter(base => base.category === 'local'))
 
 watch(query, async value => {
+  notePicker.query.value = value
   store.search = value
   await store.loadEntries()
 })
-onMounted(() => Promise.all([store.load(), notesStore.load()]))
+watch(() => store.activeId, id => { if (id) void notePicker.refresh() })
+onMounted(() => store.load())
 
 async function create() {
   if (name.value.trim()) {
@@ -102,7 +106,7 @@ function openEntry(entry: LibraryEntry) {
   else store.openPreview(entry.relativePath)
 }
 function selectBase(id: string) { store.selectBase(id) }
-function openNote(note: Note) { router.push({ path: '/notes', query: { note: note.id } }) }
+function openNote(note: NoteSummary) { router.push({ path: '/notes', query: { note: note.id } }) }
 </script>
 
 <template>
@@ -168,7 +172,7 @@ function openNote(note: Note) { router.push({ path: '/notes', query: { note: not
       <div v-if="store.error" class="empty-state"><div class="empty-icon">!</div><h2>{{ store.error }}</h2><button class="secondary-button" @click="store.loadEntries()">重试</button></div>
       <div v-else-if="!store.active" class="empty-state"><div class="empty-icon">⌂</div><h2>{{ t('chooseKb') }}</h2></div>
       <div v-else-if="store.loading && !entries.length" class="empty-state"><div class="empty-icon loading-dot">···</div><h2>正在读取文件</h2></div>
-      <div v-else-if="!entries.length && !knowledgeNotes.length" class="empty-state"><div class="empty-icon">⌁</div><h2>{{ t('noFiles') }}</h2><p>点击右上角导入，或将文件拖到此处</p></div>
+      <div v-else-if="!entries.length && !knowledgeNotes.length && !notePicker.page.loading && !notePicker.page.error" class="empty-state"><div class="empty-icon">⌁</div><h2>{{ t('noFiles') }}</h2><p>点击右上角导入，或将文件拖到此处</p></div>
       <div v-else :class="['file-grid', view]">
         <article v-for="note in knowledgeNotes" :key="`note:${note.id}`" class="file-card note-file-card" tabindex="0" @dblclick="openNote(note)" @keydown.enter="openNote(note)">
           <div class="file-icon file"><FileText :size="23" /></div>
@@ -181,14 +185,9 @@ function openNote(note: Note) { router.push({ path: '/notes', query: { note: not
           <div class="file-card-actions"><button v-if="entry.kind === 'file'" class="file-menu" title="预览" @click.stop="store.openPreview(entry.relativePath)"><Eye :size="15" /></button><button class="file-action" title="重命名" @click.stop="rename(entry)"><Pencil :size="14" /></button><button class="file-trash" :title="t('trash')" @click.stop="remove(entry)"><Trash2 :size="14" /></button></div>
         </article>
       </div>
+      <NotePageControls v-if="store.activeId" :page="notePicker.page" @more="notePicker.more" @retry="notePicker.retry" />
     </section>
 
-    <div v-if="store.preview" class="preview-drawer">
-      <div class="preview-head"><div><strong>{{ store.preview.title }}</strong><small>{{ store.preview.kind }}</small></div><button class="icon-button" title="关闭" @click="store.preview = null"><X :size="17" /></button></div>
-      <img v-if="store.preview.kind === 'image'" :src="store.preview.content" :alt="store.preview.title" class="library-image-preview" />
-      <div v-else-if="store.preview.kind === 'unsupported'" class="library-preview-unsupported">{{ store.preview.content }}</div>
-      <pre v-else-if="store.preview.kind !== 'html'">{{ store.preview.content }}</pre>
-      <iframe v-else sandbox="" :title="store.preview.title" :srcdoc="store.preview.content"></iframe>
-    </div>
+    <LibraryPreviewDrawer v-if="store.preview" :preview="store.preview" @close="store.preview = null" />
   </div>
 </template>

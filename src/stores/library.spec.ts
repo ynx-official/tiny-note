@@ -23,6 +23,7 @@ describe('library store', () => {
     await store.openPreview('drafts/renamed.txt')
 
     expect(store.preview.content).toBe('draft')
+    expect(store.preview.kind).toBe('text')
     expect(store.preview.title).toBe('renamed.txt')
     expect(store.path).toBe('drafts')
     await store.goBack()

@@ -1,16 +1,20 @@
 <script setup lang="ts">
-import { computed, onMounted, ref } from 'vue'
+import { computed, onMounted, onBeforeUnmount, reactive, ref, watch } from 'vue'
 import { useRouter } from 'vue-router'
 import { useI18n } from 'vue-i18n'
 import { FileText, Plus, Search, Tag, Trash2 } from 'lucide-vue-next'
 import { useTagsStore } from '../stores/tags'
-import { useNotesStore } from '../stores/notes'
+import { invoke } from '../services/tauri'
+import { createNotePageState, loadNotePage } from '../services/notePage'
+import type { Notebook } from '../types/domain'
+import NotePageControls from '../components/notes/NotePageControls.vue'
 import { requestPrompt } from '../services/promptDialog'
 import { requestConfirmation } from '../services/appFeedback'
 import { useWorkspaceSidebar } from '../utils/workspaceSidebar'
 
 const tags = useTagsStore()
-const notes = useNotesStore()
+const notebooks = ref<Notebook[]>([])
+const pickerPage = reactive(createNotePageState())
 const router = useRouter()
 const { t } = useI18n()
 const pickerOpen = ref(false)
@@ -19,20 +23,22 @@ const selectedNoteIds = ref(new Set<string>())
 const { sidebarWidth, isResizing, onResizeStart } = useWorkspaceSidebar()
 
 const activeTitle = computed(() => tags.activeId === 'untagged' ? t('untagged') : tags.activeTag?.name || t('tags'))
-const availableNotes = computed(() => {
-  const linked = new Set(tags.notes.map(note => note.id))
-  const query = pickerSearch.value.trim().toLocaleLowerCase()
-  return notes.notes.filter(note => !linked.has(note.id) && (!query || `${note.title} ${note.contentText}`.toLocaleLowerCase().includes(query)))
-})
+const availableNotes = computed(() => pickerPage.items)
+let pickerTimer: ReturnType<typeof setTimeout> | undefined
+function loadPicker() { return loadNotePage(pickerPage, { search: pickerSearch.value.trim(), excludeTagId: tags.activeTag?.id }) }
+watch(pickerSearch, () => { clearTimeout(pickerTimer); pickerTimer = setTimeout(() => { if (pickerOpen.value) void loadPicker() }, 250) })
+watch(() => tags.activeId, () => { pickerOpen.value = false; selectedNoteIds.value = new Set() })
+onBeforeUnmount(() => clearTimeout(pickerTimer))
+
 function notebookPath(notebookId: string | null) {
   const parts: string[] = []
   const visited = new Set<string>()
-  let current = notes.notebooks.find(book => book.id === notebookId)
+  let current = notebooks.value.find(book => book.id === notebookId)
   while (current && !visited.has(current.id)) {
     visited.add(current.id)
     parts.unshift(current.name)
     const parentId = current.parentId
-    current = notes.notebooks.find(book => book.id === parentId)
+    current = notebooks.value.find(book => book.id === parentId)
   }
   return parts.join(' / ') || '未分类'
 }
@@ -49,13 +55,13 @@ async function deleteTag() {
   if (!tags.activeTag || !(await requestConfirmation({ title: '删除标签', message: `删除“${tags.activeTag.name}”只会移除标签及关联关系，不会删除笔记。`, tone: 'danger', confirmLabel: '删除' }))) return
   await tags.remove(tags.activeTag.id)
 }
-function openPicker() { pickerSearch.value = ''; selectedNoteIds.value = new Set(); pickerOpen.value = true }
+function openPicker() { clearTimeout(pickerTimer); pickerSearch.value = ''; selectedNoteIds.value = new Set(); pickerOpen.value = true; void loadPicker() }
 function toggleSelection(id: string) { const next = new Set(selectedNoteIds.value); if (next.has(id)) next.delete(id); else next.add(id); selectedNoteIds.value = next }
 async function addSelected() { if (!tags.activeTag || !selectedNoteIds.value.size) return; await tags.addNotes(tags.activeTag.id, [...selectedNoteIds.value]); pickerOpen.value = false }
 async function removeNote(id: string) { if (tags.activeTag) await tags.removeNotes(tags.activeTag.id, [id]) }
 function openNote(note: { id: string }) { router.push({ path: '/notes', query: { note: note.id } }) }
 
-onMounted(() => tags.load())
+onMounted(async () => { await Promise.all([tags.load(), invoke('notebook_list').then(value => { notebooks.value = value })]) })
 </script>
 
 <template>
@@ -63,7 +69,7 @@ onMounted(() => tags.load())
     <aside class="tags-sidebar" :class="{ 'is-resizing': isResizing }" :style="{ width: sidebarWidth + 'px' }">
       <div class="tags-search"><Search :size="15" /><input v-model="tags.search" :placeholder="t('searchTags')" /></div>
       <div class="tags-heading"><strong>{{ t('tags') }}</strong><button :title="t('newTag')" @click="createTag"><Plus :size="16" /></button></div>
-      <button class="tag-row" :class="{ active: tags.activeId === 'untagged' }" @click="tags.select('untagged')"><Tag :size="14" /><span>{{ t('untagged') }}</span><small v-if="tags.activeId === 'untagged'">{{ tags.notes.length }}</small></button>
+      <button class="tag-row" :class="{ active: tags.activeId === 'untagged' }" @click="tags.select('untagged')"><Tag :size="14" /><span>{{ t('untagged') }}</span><small v-if="tags.activeId === 'untagged'">{{ tags.page.total }}</small></button>
       <button v-for="item in tags.visibleTags" :key="item.id" class="tag-row" :class="{ active: tags.activeId === item.id }" @click="tags.select(item.id)"><Tag :size="14" /><span>{{ item.name }}</span><small>{{ item.noteCount }}</small></button>
     </aside>
     <div class="sidebar-resize-handle" @mousedown="onResizeStart"></div>
@@ -76,14 +82,15 @@ onMounted(() => tags.load())
         <button v-for="note in tags.notes" :key="note.id" class="tagged-note-row" @click="openNote(note)">
           <FileText :size="17" /><span class="tagged-note-copy"><strong>{{ note.title || t('untitled') }}</strong><small>{{ notebookPath(note.notebookId) }}</small></span><time>{{ new Date(note.updatedAt).toLocaleDateString() }}</time><span v-if="tags.activeTag" class="remove-link" @click.stop="removeNote(note.id)">{{ t('removeFromTag') }}</span>
         </button>
-        <div v-if="!tags.notes.length" class="tags-empty"><Tag :size="34" /><p>{{ t('noTaggedNotes') }}</p><small>{{ tags.activeTag ? t('batchAddHint') : t('allNotesTagged') }}</small></div>
+        <NotePageControls :page="tags.page" @more="tags.loadMoreNotes" @retry="tags.page.items.length ? tags.loadMoreNotes() : tags.loadNotes()" />
+        <div v-if="!tags.notes.length && !tags.page.loading && !tags.page.error" class="tags-empty"><Tag :size="34" /><p>{{ t('noTaggedNotes') }}</p><small>{{ tags.activeTag ? t('batchAddHint') : t('allNotesTagged') }}</small></div>
       </div>
     </section>
     <div v-if="pickerOpen" class="tag-picker-backdrop" @click.self="pickerOpen = false">
       <section class="tag-picker" role="dialog" aria-modal="true" :aria-label="t('addNotes')">
         <header><div><h2>{{ t('addNotes') }}</h2><small>{{ tags.activeTag?.name }}</small></div><button @click="pickerOpen = false">×</button></header>
         <div class="tags-search"><Search :size="15" /><input v-model="pickerSearch" autofocus :placeholder="t('searchNotes')" /></div>
-        <div class="tag-picker-list"><label v-for="note in availableNotes" :key="note.id"><input type="checkbox" :checked="selectedNoteIds.has(note.id)" @change="toggleSelection(note.id)" /><span><strong>{{ note.title || t('untitled') }}</strong><small>{{ notebookPath(note.notebookId) }}</small></span></label><p v-if="!availableNotes.length">{{ t('noAvailableNotes') }}</p></div>
+        <div class="tag-picker-list"><label v-for="note in availableNotes" :key="note.id"><input type="checkbox" :checked="selectedNoteIds.has(note.id)" @change="toggleSelection(note.id)" /><span><strong>{{ note.title || t('untitled') }}</strong><small>{{ notebookPath(note.notebookId) }}</small></span></label><NotePageControls :page="pickerPage" @more="loadNotePage(pickerPage, pickerPage.filter, true)" @retry="pickerPage.items.length ? loadNotePage(pickerPage, pickerPage.filter, true) : loadPicker()" /><p v-if="!availableNotes.length && !pickerPage.loading && !pickerPage.error">{{ t('noAvailableNotes') }}</p></div>
         <footer><button @click="pickerOpen = false">{{ t('cancel') }}</button><button class="primary" :disabled="!selectedNoteIds.size" @click="addSelected">{{ t('add') }} {{ selectedNoteIds.size || '' }}</button></footer>
       </section>
     </div>

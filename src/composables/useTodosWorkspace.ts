@@ -119,7 +119,7 @@ export function useTodosWorkspace() {
         if (snapshot.version === editVersion) { saveState.value = 'error'; saveError.value = t('todoRangeInvalid') }
         return false
       }
-      let reminder = normalizedReminder(snapshot.reminder, { hasAnchor: Boolean(dueAt) })
+      let reminder = normalizedReminder(snapshot.reminder, { hasAnchor: Boolean(dueAt), anchorAt: dueAt })
       if (reminder && !(await ensureReminderPermission())) {
         reminder = null
         if (snapshot.id === selectedId.value && snapshot.version === editVersion) {
@@ -213,7 +213,7 @@ export function useTodosWorkspace() {
       quickError.value = ''
       const startAt = fromDateTimeLocal(quickStartAt.value)
       const dueAt = fromDateTimeLocal(quickDueAt.value)
-      const reminder = normalizedReminder(quickReminder.value, { hasAnchor: Boolean(dueAt) })
+      const reminder = normalizedReminder(quickReminder.value, { hasAnchor: Boolean(dueAt), anchorAt: dueAt })
       if (reminder && !(await ensureReminderPermission())) throw new Error(t('todoReminderPermissionDenied'))
       await store.create({ title, notes: '', listId: activeListId.value || null, startAt, dueAt, priority: 'none', reminder })
       quickTitle.value = ''

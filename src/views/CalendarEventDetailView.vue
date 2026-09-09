@@ -43,7 +43,8 @@ async function save() {
     error.value = ''
     if (!form.startDate || !form.endDate) throw new Error('请选择开始和结束日期')
     if (!form.allDay && (!form.startTime || !form.endTime || compareLocalEventTimes(form) <= 0)) throw new Error('结束时间需要晚于开始时间')
-    const reminder = normalizedReminder(form.reminder, { hasAnchor: !form.allDay && Boolean(form.startTime) })
+    const anchorAt = !form.allDay && form.startDate && form.startTime ? new Date(`${form.startDate}T${form.startTime}`).toISOString() : null
+    const reminder = normalizedReminder(form.reminder, { hasAnchor: Boolean(anchorAt), anchorAt })
     if (reminder && !(await ensureReminderPermission())) throw new Error('未获得系统通知权限')
     const current = event.value
     if (!current) throw new Error('日程不存在')

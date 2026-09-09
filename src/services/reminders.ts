@@ -30,14 +30,16 @@ export function reminderSummary(reminder: Partial<Reminder> | null | undefined, 
   return new Intl.DateTimeFormat(locale, { month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' }).format(new Date(reminder.triggerAt || ''))
 }
 
-export function normalizedReminder(draft: ReminderDraft | null | undefined, { hasAnchor = true } = {}) {
+export function normalizedReminder(draft: ReminderDraft | null | undefined, { hasAnchor = true, anchorAt = null as string | null } = {}) {
   if (!draft?.enabled) return null
   const mode = draft.mode || 'at'
   if (mode === 'before') {
     if (!hasAnchor) throw new Error('提前提醒需要具体的开始或截止时间')
     const offsetMinutes = Number(draft.offsetMinutes)
     if (!Number.isInteger(offsetMinutes) || offsetMinutes <= 0) throw new Error('提前分钟数必须大于 0')
-    return { mode, offsetMinutes, triggerAt: null, intervalMinutes: null, enabled: true }
+    const anchor = anchorAt ? new Date(anchorAt) : null
+    const triggerAt = anchor && !Number.isNaN(anchor.getTime()) ? new Date(anchor.getTime() - offsetMinutes * 60_000).toISOString() : null
+    return { mode, offsetMinutes, triggerAt, intervalMinutes: null, enabled: true }
   }
   const triggerAt = fromDateTimeLocal(draft.triggerAt)
   if (mode === 'at' && !triggerAt) throw new Error('请选择提醒时间')

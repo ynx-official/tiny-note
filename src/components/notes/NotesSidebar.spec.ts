@@ -33,6 +33,7 @@ describe('NotesSidebar external sources', () => {
   beforeEach(() => {
     mocks.invoke.mockReset()
     mocks.invoke.mockImplementation((command: string, payload?: { deleted?: boolean }) => {
+      if (command === 'note_page') return Promise.resolve({ items: [], total: 0, hasMore: false, nextCursor: '' })
       if (command === 'note_list') return Promise.resolve(payload?.deleted ? [] : [])
       if (command === 'external_markdown_list') return Promise.resolve([externalSource])
       if (command === 'external_markdown_pick_files' || command === 'external_markdown_pick_folder') return Promise.resolve({ selected: false, files: [] })

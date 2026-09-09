@@ -1,6 +1,7 @@
 import { flushPromises, mount } from '@vue/test-utils'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import AppUpdateDialog from './AppUpdateDialog.vue'
+import { readFileSync } from 'node:fs'
 
 const mocks = vi.hoisted(() => ({
   check: vi.fn(),
@@ -68,5 +69,27 @@ describe('AppUpdateDialog automatic scheduling', () => {
     expect(notes?.querySelector('strong')?.textContent).toBe('优化')
 
     wrapper.unmount()
+  })
+
+  it('caps the dialog at 80% of the viewport and scrolls only the notes', async () => {
+    const style = document.createElement('style')
+    style.textContent = readFileSync('src/styles/app-update.css', 'utf8')
+    document.head.append(style)
+    mocks.check.mockResolvedValueOnce({ available: true, version: '1.2.0', body: '# Updates\n\n' + '- Fix\n'.repeat(100) })
+    const wrapper = mount(AppUpdateDialog)
+    try {
+      await vi.advanceTimersByTimeAsync(2200)
+      await flushPromises()
+      const css = (selector: string) => getComputedStyle(document.querySelector(selector)!)
+      expect(css('.app-update-dialog').maxHeight).toBe('80vh')
+      expect(css('.app-update-notes').overflowY).toBe('auto')
+      expect(css('.app-update-notes').minHeight).toBe('0')
+      expect(css('.app-update-header').flexShrink).toBe('0')
+      expect(css('.app-update-actions').flexShrink).toBe('0')
+      expect(css('.app-update-version').flexShrink).toBe('0')
+    } finally {
+      wrapper.unmount()
+      style.remove()
+    }
   })
 })

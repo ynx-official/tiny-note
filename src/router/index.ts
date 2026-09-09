@@ -1,45 +1,43 @@
 import { createRouter, createWebHashHistory } from 'vue-router'
 import HomeView from '../views/HomeView.vue'
+import { getAuthSnapshot, restoreAuthSession, subscribeAuth } from '../services/apiClient'
 
 const lazyView = <T>(styles: () => Promise<unknown>, view: () => Promise<T>) => async () => {
   await styles()
   return view()
 }
 
-const loadChat = lazyView(() => import('../styles/chat.css'), () => import('../views/ChatView.vue'))
-const loadNotes = lazyView(() => import('../styles/notes.css'), () => import('../views/NotesView.vue'))
-const loadLibrary = lazyView(() => import('../styles/library.css'), () => import('../views/LibraryView.vue'))
-const loadTags = () => import('../views/TagsView.vue')
-const loadCalendar = () => import('../views/CalendarView.vue')
-const loadCalendarDetail = () => import('../views/CalendarEventDetailView.vue')
-const loadTodos = () => import('../views/TodosView.vue')
-const loadImages = lazyView(() => import('../styles/images.css'), () => import('../views/ImageGenerationView.vue'))
-const loadTasks = lazyView(() => import('../styles/tasks.css'), () => import('../views/TasksView.vue'))
-const loadSettings = lazyView(() => import('../styles/settings.css'), () => import('../views/SettingsView.vue'))
-
-/** Preload route code after the first screen is idle so tab switches stay responsive. */
-export function preloadWorkspaceRoutes(): Promise<PromiseSettledResult<unknown>[]> {
-  return Promise.allSettled([
-    loadChat(), loadNotes(), loadLibrary(), loadTags(), loadCalendar(),
-    loadCalendarDetail(), loadTodos(), loadImages(), loadTasks(), loadSettings()
-  ])
-}
-
-export default createRouter({
+const router = createRouter({
   history: createWebHashHistory(),
   routes: [
+    { path: '/login', redirect: to => ({ path: '/home', query: { login: '1', ...(typeof to.query.redirect === 'string' ? { redirect: to.query.redirect } : {}) } }) },
     { path: '/', component: HomeView },
     { path: '/home', component: HomeView },
-    { path: '/chat', component: loadChat },
-    { path: '/notes', component: loadNotes },
-    { path: '/library', component: loadLibrary },
-    { path: '/tags', component: loadTags },
-    { path: '/calendar', component: loadCalendar },
-    { path: '/calendar/:id', component: loadCalendarDetail },
-    { path: '/todos', component: loadTodos },
-    { path: '/images', component: loadImages },
-    { path: '/tasks', component: loadTasks },
-    { path: '/settings', component: loadSettings },
+    { path: '/chat', component: lazyView(() => import('../styles/chat.css'), () => import('../views/ChatView.vue')), meta: { requiresAuth: true } },
+    { path: '/notes', component: lazyView(() => import('../styles/notes.css'), () => import('../views/NotesView.vue')), meta: { requiresAuth: true } },
+    { path: '/library', component: lazyView(() => import('../styles/library.css'), () => import('../views/LibraryView.vue')), meta: { requiresAuth: true } },
+    { path: '/tags', component: () => import('../views/TagsView.vue'), meta: { requiresAuth: true } },
+    { path: '/calendar', component: () => import('../views/CalendarView.vue'), meta: { requiresAuth: true } },
+    { path: '/calendar/:id', component: () => import('../views/CalendarEventDetailView.vue'), meta: { requiresAuth: true } },
+    { path: '/todos', component: () => import('../views/TodosView.vue'), meta: { requiresAuth: true } },
+    { path: '/images', component: lazyView(() => import('../styles/images.css'), () => import('../views/ImageGenerationView.vue')), meta: { requiresAuth: true } },
+    { path: '/tasks', component: lazyView(() => import('../styles/tasks.css'), () => import('../views/TasksView.vue')), meta: { requiresAuth: true } },
+    { path: '/settings', component: lazyView(() => import('../styles/settings.css'), () => import('../views/SettingsView.vue')), meta: { requiresAuth: true } },
     { path: '/:pathMatch(.*)*', redirect: '/' }
   ]
 })
+
+router.beforeEach(async to => {
+  if (to.meta.requiresAuth && !getAuthSnapshot().authenticated) await restoreAuthSession()
+  if (!getAuthSnapshot().authenticated && to.meta.requiresAuth) return { path: '/home', query: { login: '1', redirect: to.fullPath } }
+  return true
+})
+
+subscribeAuth(() => {
+  const current = router.currentRoute.value
+  if (!getAuthSnapshot().authenticated && current.meta.requiresAuth === true) {
+    void router.replace({ path: '/home', query: { login: '1', redirect: current.fullPath, reason: 'expired' } })
+  }
+})
+
+export default router

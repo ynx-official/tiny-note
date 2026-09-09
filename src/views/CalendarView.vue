@@ -80,7 +80,8 @@ async function saveEvent() {
   try {
     saving.value = true
     formError.value = ''
-    const reminder = normalizedReminder(form.reminder, { hasAnchor: !form.allDay && Boolean(form.startTime) })
+    const anchorAt = !form.allDay && form.startDate && form.startTime ? new Date(`${form.startDate}T${form.startTime}`).toISOString() : null
+    const reminder = normalizedReminder(form.reminder, { hasAnchor: Boolean(anchorAt), anchorAt })
     if (reminder && !(await ensureReminderPermission())) { formError.value = '未获得系统通知权限，无法启用提醒'; return }
     await calendar.create({ title: form.title, startDate: form.startDate, endDate: form.endDate, startTime: form.allDay ? '' : form.startTime, endTime: form.allDay ? '' : form.endTime, allDay: form.allDay, description: form.description, color: form.color, priority: form.priority, completed: form.completed, reminder })
     modal.value = false

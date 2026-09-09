@@ -63,16 +63,16 @@ onMounted(loadSkills)
 
 <template>
   <section class="assistant-panel skills-panel">
-    <header class="assistant-panel-header"><div><div class="assistant-panel-heading"><h2>Agent 技能</h2><button type="button" class="skills-help-button" data-testid="skills-help" aria-label="了解 Agent 技能与工具的区别" :aria-expanded="helpOpen" aria-controls="agent-skills-help" @click="helpOpen = true">?</button></div><small>按需加载的本地 SKILL.md 指令</small></div><div class="skills-header-actions"><button type="button" class="assistant-secondary-button" @click="newSkill"><Plus :size="14" />新建</button><button type="button" class="assistant-close" aria-label="关闭" @click="emit('close')"><X :size="18" /></button></div></header>
+    <header class="assistant-panel-header"><div><div class="assistant-panel-heading"><h2>Agent 技能</h2><button type="button" class="skills-help-button" data-testid="skills-help" aria-label="了解 Agent 技能与工具的区别" :aria-expanded="helpOpen" aria-controls="agent-skills-help" @click="helpOpen = true">?</button></div><small>从云端按需加载的 SKILL.md 指令</small></div><div class="skills-header-actions"><button type="button" class="assistant-secondary-button" @click="newSkill"><Plus :size="14" />新建</button><button type="button" class="assistant-close" aria-label="关闭" @click="emit('close')"><X :size="18" /></button></div></header>
     <div class="assistant-panel-body">
-      <p class="memory-hint">技能保存在本机。Agent 只会在任务相关时读取完整内容；通过 Agent 修改技能仍需你的批准。</p>
+      <p class="memory-hint">系统技能由云端统一提供且只读。Agent 只会在任务相关时读取完整内容；个人技能仍仅对当前账户可见。</p>
       <div v-if="loading" class="assistant-state">正在读取…</div>
       <div v-else-if="error && !skills.length" class="assistant-state assistant-error">{{ error }}<button type="button" class="assistant-link-button" @click="loadSkills">刷新</button></div>
       <div v-else class="skills-grid">
         <article v-for="skill in skills" :key="skill.fileName" class="skill-card">
           <div class="skill-card-icon"><Sparkles :size="17" /></div>
-          <div class="skill-card-content"><div><strong>{{ skill.name }}</strong><small v-if="skill.builtin">内置</small></div><p>{{ skill.description }}</p><code>{{ skill.fileName }}</code></div>
-          <div class="skill-card-actions"><button type="button" title="编辑" @click="editSkill(skill)"><Pencil :size="14" /></button><button v-if="!skill.builtin" type="button" title="删除" @click="deleteSkill(skill)"><Trash2 :size="14" /></button></div>
+          <div class="skill-card-content"><div><strong>{{ skill.name }}</strong><small v-if="skill.builtin">系统</small></div><p>{{ skill.description }}</p><code>{{ skill.fileName }}</code></div>
+          <div class="skill-card-actions"><button v-if="!skill.builtin" type="button" title="编辑" @click="editSkill(skill)"><Pencil :size="14" /></button><button v-if="!skill.builtin" type="button" title="删除" @click="deleteSkill(skill)"><Trash2 :size="14" /></button></div>
         </article>
       </div>
       <p v-if="error && skills.length" class="assistant-state assistant-error">{{ error }}</p>
@@ -95,7 +95,7 @@ onMounted(loadSkills)
         <div class="skill-help-content">
           <p class="skill-help-lead"><strong>技能决定怎么做，工具决定能做什么。</strong> 技能可以指导 Agent 组合工具，但不能凭空增加系统能力。</p>
           <div class="skill-help-comparison">
-            <section><span>Agent 技能</span><strong>可编辑的操作手册</strong><p>以本地 SKILL.md 保存任务步骤、判断规则和输出要求。任务相关时才会加载，本身不直接执行系统操作。</p></section>
+            <section><span>Agent 技能</span><strong>按需加载的操作手册</strong><p>以云端 SKILL.md 保存任务步骤、判断规则和输出要求。系统技能统一提供且只读，任务相关时才会加载，本身不直接执行系统操作。</p></section>
             <section><span>Agent 工具</span><strong>受控的执行能力</strong><p>由系统提供明确参数和执行逻辑，负责读取、写入、计算或调用外部服务，并受审批策略和审计约束。</p></section>
           </div>
           <aside class="skill-help-rule"><strong>作用边界</strong><span>技能可以编排多个工具；工具不理解完整工作流。MCP 属于工具来源，不属于技能。</span></aside>

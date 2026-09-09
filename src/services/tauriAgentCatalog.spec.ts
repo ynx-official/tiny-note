@@ -7,7 +7,7 @@ describe('browser Agent catalog', () => {
     delete window.__TAURI_INTERNALS__
   })
 
-  it('seeds the notebook skill and exposes note/notebook tools without retrieval tools', async () => {
+  it('seeds the notebook skill and exposes the restored 31-tool catalog without retrieval tools', async () => {
     const skills = await invoke('agent_skill_list')
     const tools = await invoke('agent_list_tools')
 
@@ -27,6 +27,15 @@ describe('browser Agent catalog', () => {
       'delete_notebook'
     ]))
     expect(tools.map(tool => tool.name)).not.toContain('retrieve_knowledge')
+    expect(tools).toHaveLength(31)
+    expect(tools.map(tool => tool.name)).toEqual(expect.arrayContaining([
+      'request_user_input',
+      'run_sandbox_script',
+      'write_agent_file',
+      'create_note_in_knowledge_base',
+      'create_todo',
+      'create_calendar_event'
+    ]))
   })
 
   it('adds newly built-in skills and removes a legacy retrieval policy without changing custom skills', async () => {

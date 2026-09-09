@@ -3,6 +3,7 @@ import { mount } from '@vue/test-utils'
 import { createPinia, setActivePinia } from 'pinia'
 import { createI18n } from 'vue-i18n'
 import { messages } from '../i18n'
+import { appUpdater } from '../services/appUpdater'
 
 const model = {
   id: 'custom-model',
@@ -31,7 +32,9 @@ import { confirmAppDialog, feedbackState } from '../services/appFeedback'
 
 describe('SettingsView model services', () => {
   beforeEach(() => {
+    vi.mocked(appUpdater.check).mockReset()
     localStorage.clear()
+    feedbackState.toasts.splice(0)
     setActivePinia(createPinia())
     mocks.invoke.mockReset()
     dialogMocks.open.mockReset()
@@ -197,6 +200,55 @@ describe('SettingsView model services', () => {
     await wrapper.get('.settings-fetch-button').trigger('click')
     await vi.waitFor(() => expect(wrapper.get('.settings-model-picker-header').text()).toContain('已选 1 个'))
     expect(wrapper.get('.settings-model-save-button').attributes('disabled')).toBeUndefined()
+  })
+
+  it('renders complete available release notes as safe Markdown separately from the current release', async () => {
+    vi.mocked(appUpdater.check).mockResolvedValueOnce({ supported: true, available: true, version: '9.0.0', body: '# 新版本\n\n> 发布说明\n\n- **修复**显示\n- 第二项\n\n`代码`\n\n最后一段<script>alert(1)</script>' })
+    const wrapper = mount(SettingsView, {
+      global: { plugins: [createPinia(), createI18n({ legacy: false, locale: 'zh-CN', messages })], stubs: { AgentToolsCatalog: true } }
+    })
+    try {
+      await vi.waitFor(() => expect(wrapper.text()).toContain('关于'))
+      await wrapper.findAll('.settings-nav-item').find(button => button.text().includes('关于'))!.trigger('click')
+      await wrapper.get('.settings-update-row button').trigger('click')
+      await vi.waitFor(() => expect(wrapper.find('.settings-update-notes h1').exists()).toBe(true))
+      const notes = wrapper.get('.settings-update-notes')
+      expect(notes.get('h1').text()).toBe('新版本')
+      expect(notes.findAll('li')).toHaveLength(2)
+      expect(notes.get('blockquote').text()).toBe('发布说明')
+      expect(notes.get('strong').text()).toBe('修复')
+      expect(notes.get('code').text()).toBe('代码')
+      expect(notes.text()).toContain('最后一段')
+      expect(notes.find('script').exists()).toBe(false)
+      expect(wrapper.get('.settings-release-notes-body').classes()).toContain('release-notes-markdown')
+    } finally {
+      wrapper.unmount()
+    }
+  })
+
+  it('keeps the model editor open and shows the server error when saving fails', async () => {
+    mocks.invoke.mockImplementation(async (command, args) => {
+      if (command === 'settings_get') return { theme: 'light', language: 'zh-CN', fimEnabled: false }
+      if (command === 'model_list') return [model]
+      if (command === 'model_upsert') throw new Error('保存模型配置失败')
+      return args
+    })
+    const wrapper = mount(SettingsView, {
+      global: {
+        plugins: [createPinia(), createI18n({ legacy: false, locale: 'zh-CN', messages })],
+        stubs: { AgentToolsCatalog: true }
+      }
+    })
+    await vi.waitFor(() => expect(wrapper.text()).toContain('模型服务'))
+    await wrapper.findAll('.settings-nav-item').find(button => button.text().includes('模型服务')).trigger('click')
+    await vi.waitFor(() => expect(wrapper.text()).toContain('公司模型'))
+    await wrapper.get('.model-edit-btn').trigger('click')
+
+    await wrapper.get('.settings-model-save-button').trigger('click')
+
+    await vi.waitFor(() => expect(wrapper.get('.settings-model-error').text()).toContain('保存模型配置失败'))
+    expect(wrapper.find('.settings-model-modal').exists()).toBe(true)
+    expect(feedbackState.toasts.at(-1)).toMatchObject({ message: '保存模型配置失败', tone: 'error' })
   })
 
   it('does not close the model editor when the backdrop is clicked', async () => {

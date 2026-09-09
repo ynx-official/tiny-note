@@ -1,10 +1,11 @@
 import { computed, nextTick, onMounted, onUnmounted, ref, watch, type Component } from 'vue'
-import { Channel } from '@tauri-apps/api/core'
+import { EventChannel } from '../services/eventChannel'
 import { useRoute, useRouter } from 'vue-router'
 import { storeToRefs } from 'pinia'
 import { Brush, Images, Pencil, Sparkles } from 'lucide-vue-next'
 import { useImagesStore } from '../stores/images'
 import { useAppStore } from '../stores/app'
+import { useNotePicker } from './useNotePicker'
 import { useNotesStore } from '../stores/notes'
 import { useTasksStore } from '../stores/tasks'
 import { saveExportBlob } from '../services/exportLocation'
@@ -52,7 +53,8 @@ export function useImageGenerationWorkspace() {
   
   const pickerOpen = ref(false)
   
-  const pickerSearch = ref('')
+  const notePicker = useNotePicker()
+  const pickerSearch = notePicker.query
   
   const pickerAsset = ref<ImagePreview | null>(null)
   
@@ -101,12 +103,9 @@ export function useImageGenerationWorkspace() {
   
   const configuredModels = computed(() => models.value.filter(model => model.apiKeyConfigured))
   
-  const visibleNotes = computed(() => {
-    const query = pickerSearch.value.trim().toLowerCase()
-    return notes.notes.filter(note => !note.deletedAt && (!query || `${note.title} ${note.contentText || ''}`.toLowerCase().includes(query))).slice(0, 80)
-  })
+  const visibleNotes = computed(() => notePicker.page.items)
   
-  const activeTasks = computed(() => tasks.tasks.filter(task => task.kind === 'image_generation' && ['queued', 'running'].includes(task.status)))
+  const activeTasks = computed(() => tasks.tasks.filter(task => task.kind === 'image_generation' && ['queued', 'running', 'finalizing', 'cancelling'].includes(task.status)))
   
   const selectedModel = computed(() => models.value.find(model => model.id === selectedModelId.value) || defaultModel.value)
   
@@ -332,7 +331,7 @@ export function useImageGenerationWorkspace() {
         return
       }
       const requestId = crypto.randomUUID()
-      const channel = new Channel<ImageEvent>()
+      const channel = new EventChannel<ImageEvent>()
       let output = ''
       const optimized = await new Promise<string>((resolve, reject) => {
         const timer = window.setTimeout(() => reject(new Error('提示词优化超时')), 90000)
@@ -501,12 +500,13 @@ export function useImageGenerationWorkspace() {
   
   function markdownLabel(value: string) { return String(value || '').replaceAll('[', '\\[').replaceAll(']', '\\]') }
   
-  function openInsert(asset: ImageAsset, generation: ImageGeneration) {
+  async function openInsert(asset: ImageAsset, generation: ImageGeneration) {
     pickerAsset.value = { asset, generation }
     pickerSearch.value = ''
-    selectedNoteId.value = notes.activeId || notes.notes[0]?.id || ''
+    selectedNoteId.value = ''
     pickerOpen.value = true
     menuGenerationId.value = ''
+    await notePicker.refresh()
   }
   
   async function insertIntoNote() {
@@ -518,8 +518,9 @@ export function useImageGenerationWorkspace() {
     const alt = escapeHtml(generation.prompt.slice(0, 120))
     const imageHtml = `<p><img src="${item.dataUri}" alt="${alt}" /></p>`
     const markdown = `![${markdownLabel(generation.prompt.slice(0, 120))}](${item.dataUri})`
-    const note = notes.notes.find(value => value.id === selectedNoteId.value)
     try {
+      const summary = notePicker.page.items.find(value => value.id === selectedNoteId.value)
+      const note = selectedNoteId.value ? await notes.getNote(selectedNoteId.value, summary?.version) : null
       if (note) {
         note.contentHtml = `${note.contentHtml || '<p></p>'}${imageHtml}`
         note.contentMarkdown = `${note.contentMarkdown || ''}\n\n${markdown}`.trim()
@@ -566,7 +567,7 @@ export function useImageGenerationWorkspace() {
   onUnmounted(() => { window.removeEventListener('tiny-note-task-updated', handleTaskUpdate); window.removeEventListener('keydown', handleImagePageKeydown) })
 
   return {
-    route, router, appStore, images, notes, tasks, models, generations,
+    notePicker, route, router, appStore, images, notes, tasks, models, generations,
     loading, error, defaultModel, prompt, mode, size, count, selectedModelId,
     submitting, loadingAssets, pickerOpen, pickerSearch, pickerAsset, selectedNoteId, menuGenerationId, highlightedGenerationId,
     inputImages, inputFile, maskCanvas, maskTouched, maskBrushSize, drawingMask, optimizing, previousPrompt,
