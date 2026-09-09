@@ -2,6 +2,14 @@
 
 本文件记录 Tiny Note 各版本面向用户的主要变化，版本号遵循 Semantic Versioning。完整的升级说明统一维护在 [`docs/upgrade/`](docs/upgrade/README.md)，Release Notes 从对应版本详情自动生成。
 
+## [0.1.16] - 2026-09-09
+
+### 改进
+
+- 优化笔记本树展开与收起交互，提升层级笔记管理体验。
+
+[0.1.16]: docs/upgrade/tiny-note-v0.1.16/README.md
+
 ## [0.1.15] - 2026-09-09
 
 ### 新增与改进
