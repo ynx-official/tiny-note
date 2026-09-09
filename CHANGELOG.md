@@ -2,6 +2,16 @@
 
 本文件记录 Tiny Note 各版本面向用户的主要变化，版本号遵循 Semantic Versioning。完整的升级说明统一维护在 [`docs/upgrade/`](docs/upgrade/README.md)，Release Notes 从对应版本详情自动生成。
 
+## [0.1.15] - 2026-09-09
+
+### 新增与改进
+
+- 采用 Friday 桌面工作区外壳，统一主窗口布局、交互和工作区体验。
+- 改进 Agent 回复持久化和发布说明布局。
+- 同步托盘与主窗口的认证会话，提升跨入口使用的一致性。
+
+[0.1.15]: docs/upgrade/tiny-note-v0.1.15/README.md
+
 ## [0.1.14] - 2026-09-04
 
 ### 修复
