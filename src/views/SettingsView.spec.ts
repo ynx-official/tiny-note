@@ -220,7 +220,22 @@ describe('SettingsView model services', () => {
       expect(notes.get('code').text()).toBe('代码')
       expect(notes.text()).toContain('最后一段')
       expect(notes.find('script').exists()).toBe(false)
-      expect(wrapper.get('.settings-release-notes-body').classes()).toContain('release-notes-markdown')
+      expect(wrapper.find('.settings-release-notes-body').exists()).toBe(false)
+      // jsdom does not implement native modal dialog methods.
+      const showModal = vi.fn(function (this: HTMLDialogElement) { this.setAttribute('open', '') })
+      Object.defineProperty(HTMLDialogElement.prototype, 'showModal', { configurable: true, value: showModal })
+      const close = vi.fn(function (this: HTMLDialogElement) { this.removeAttribute('open'); this.dispatchEvent(new Event('close')) })
+      Object.defineProperty(HTMLDialogElement.prototype, 'close', { configurable: true, value: close })
+      try {
+        await wrapper.get('[data-testid="current-release-notes"]').trigger('click')
+        expect(showModal).toHaveBeenCalledOnce()
+        expect(wrapper.get('dialog .release-notes-markdown').findAll('h3').length).toBeGreaterThan(0)
+        await wrapper.get('dialog button').trigger('click')
+        expect(wrapper.find('dialog').exists()).toBe(false)
+      } finally {
+        Reflect.deleteProperty(HTMLDialogElement.prototype, 'showModal')
+        Reflect.deleteProperty(HTMLDialogElement.prototype, 'close')
+      }
     } finally {
       wrapper.unmount()
     }
