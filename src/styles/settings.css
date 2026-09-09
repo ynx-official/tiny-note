@@ -221,6 +221,23 @@
 .settings-update-notes { display:-webkit-box; overflow:hidden; max-width:560px; white-space:pre-line; -webkit-box-orient:vertical; -webkit-line-clamp:3; }
 .settings-value { margin-left:auto; color:var(--text-secondary); font-size:12px; }
 .settings-value-icon { margin-left:auto; color:var(--text-tertiary); }
+.settings-version-card { display:flex; align-items:center; gap:12px; padding:14px 16px; border:1px solid var(--border-subtle); border-radius:10px; background:var(--surface-raised); }
+.settings-version-mark { display:grid; place-items:center; width:34px; height:34px; border-radius:9px; background:var(--accent); color:#fff; font-size:11px; font-weight:700; letter-spacing:.04em; }
+.settings-version-copy { display:flex; min-width:0; flex:1; flex-direction:column; gap:3px; }
+.settings-version-copy strong { color:var(--text-primary); font-size:14px; }
+.settings-version-copy span { overflow:hidden; color:var(--text-tertiary); font-size:11px; text-overflow:ellipsis; white-space:nowrap; }
+.settings-version-number { color:var(--text-secondary); font-size:13px; font-variant-numeric:tabular-nums; }
+.settings-version-grid { display:grid; grid-template-columns:repeat(3, 1fr); gap:1px; margin:12px 0 4px; overflow:hidden; border:1px solid var(--border-subtle); border-radius:9px; background:var(--border-subtle); }
+.settings-version-grid > div { display:flex; min-height:58px; flex-direction:column; justify-content:center; gap:5px; padding:10px 12px; background:var(--surface-raised); }
+.settings-version-grid small { color:var(--text-tertiary); font-size:10px; }
+.settings-version-grid strong { display:flex; align-items:center; gap:5px; color:var(--text-secondary); font-size:12px; font-weight:600; }
+.settings-release-notes { margin-top:12px; }
+.settings-release-heading { display:flex; align-items:center; justify-content:space-between; padding-top:14px; }
+.settings-release-date { color:var(--text-tertiary); font-size:11px; font-weight:400; }
+.settings-release-notes-body { color:var(--text-secondary); font-size:12px; line-height:1.7; }
+.settings-release-notes-body h4 { margin:14px 0 5px; color:var(--text-primary); font-size:12px; }
+.settings-release-notes-body p { margin:4px 0; }
+.settings-release-notes-body li { margin:3px 0; }
 @media (max-width:760px) {
   .settings-page { padding:8px; }
   .settings-nav { width:160px; min-width:160px; }
@@ -619,4 +636,3 @@
 .usage-source-tags em { color:var(--text-primary); font-size:11px; font-style:normal; font-variant-numeric:tabular-nums; }
 .spinning { animation:assistant-spin .8s linear infinite; }
 @keyframes assistant-spin { to { transform:rotate(360deg); } }
-

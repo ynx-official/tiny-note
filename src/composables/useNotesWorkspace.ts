@@ -143,15 +143,12 @@ export function useNotesWorkspace() {
     try { await create(); await router.replace({ path: '/notes' }) } finally { creatingFromQuery = false }
   }
   
-  async function initializeWorkspace() {
+  onMounted(async () => {
+    // The notes page can be the first route mounted. Load its own data instead
+    // of relying on another tab (for example LibraryView) to hydrate the store.
     await store.load()
+    await Promise.all([store.loadTemplates(), tagsStore.load()])
     await createFromQuery()
-  }
-
-  onMounted(() => {
-    void initializeWorkspace()
-    void store.loadTemplates()
-    void tagsStore.load()
   })
   
   watch(() => route.query.new, createFromQuery)
