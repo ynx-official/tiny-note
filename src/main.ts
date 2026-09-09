@@ -3,6 +3,7 @@ import { createPinia } from 'pinia'
 import { createI18n } from 'vue-i18n'
 import { messages } from './i18n'
 import { bootstrapMainWindow as runMainWindowBootstrap } from './bootstrap'
+import { initializeDesktopAuth } from './services/apiClient'
 import './styles/friday-main.css'
 import './styles/startup.css'
 
@@ -21,6 +22,7 @@ const i18n = createI18n({
 const pinia = createPinia()
 
 async function bootstrapMainWindow() {
+  await initializeDesktopAuth('main')
   const [appModule, routerModule, appStoreModule, authStoreModule, externalMarkdownModule, reminderEventsModule] = await Promise.all([
     import('./App.vue'),
     import('./router'),

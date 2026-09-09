@@ -9,6 +9,7 @@ import { useTodosStore } from '../stores/todos'
 import { sortTodos } from '../utils/todos'
 import { localDateValue } from '../utils/dateTime'
 import { errorMessage, type Todo } from '../types/domain'
+import { getAuthSnapshot, initializeDesktopAuth, subscribeAuth } from '../services/apiClient'
 
 const store = useTodosStore()
 const { t, locale } = useI18n()
@@ -20,6 +21,9 @@ const quickInput = ref<HTMLInputElement | null>(null)
 const saving = ref(false)
 const actionError = ref('')
 let unlistenTrayOpen: UnlistenFn | undefined
+let unsubscribeAuth: (() => void) | undefined
+let disposed = false
+const authenticated = ref(false)
 
 const selectedList = computed(() => store.listById(selectedListId.value))
 const panelTitle = computed(() => selectedList.value?.name || t('todoInbox'))
@@ -54,16 +58,24 @@ function isOverdue(item: Todo) {
 async function refresh() {
   try {
     actionError.value = ''
+    await initializeDesktopAuth('tray-panel')
+    if (disposed) return
+    authenticated.value = getAuthSnapshot().authenticated
+    if (!authenticated.value) {
+      store.$reset()
+      actionError.value = '请先在主窗口登录'
+      return
+    }
     await store.load()
     if (selectedListId.value && !store.listById(selectedListId.value)) selectedListId.value = ''
   } catch (error) {
-    actionError.value = errorMessage(error, String(error))
+    if (!disposed) actionError.value = errorMessage(error, String(error))
   }
 }
 
 async function quickAdd() {
   const title = quickTitle.value.trim()
-  if (!title || saving.value) return
+  if (!title || saving.value || !authenticated.value) return
   try {
     saving.value = true
     actionError.value = ''
@@ -87,6 +99,7 @@ async function quickAdd() {
 }
 
 async function toggleTodo(item: Todo) {
+  if (!authenticated.value) return
   try {
     actionError.value = ''
     await store.setCompleted(item.id, !item.completedAt)
@@ -118,23 +131,34 @@ onMounted(async () => {
   document.documentElement.classList.add('tray-panel-root')
   document.body.classList.add('tray-panel-body')
   window.addEventListener('keydown', handleKeydown)
-  await refresh()
-  await nextTick()
-  quickInput.value?.focus()
+  unsubscribeAuth = subscribeAuth(() => {
+    authenticated.value = getAuthSnapshot().authenticated
+    store.$reset()
+    selectedListId.value = ''
+    listMenuOpen.value = false
+    quickTitle.value = ''
+    void refresh()
+  })
   if (window.__TAURI_INTERNALS__) {
     unlistenTrayOpen = await listen('tiny-note://tray-open', async () => {
       await refresh()
       await nextTick()
       quickInput.value?.focus()
     })
+    if (disposed) { unlistenTrayOpen(); return }
   }
+  await refresh()
+  await nextTick()
+  if (!disposed) quickInput.value?.focus()
 })
 
 onBeforeUnmount(() => {
+  disposed = true
   document.documentElement.classList.remove('tray-panel-root')
   document.body.classList.remove('tray-panel-body')
   window.removeEventListener('keydown', handleKeydown)
   unlistenTrayOpen?.()
+  unsubscribeAuth?.()
 })
 </script>
 
@@ -159,7 +183,7 @@ onBeforeUnmount(() => {
 
     <form class="tray-quick-add" @submit.prevent="quickAdd">
       <Plus :size="20" />
-      <input ref="quickInput" v-model="quickTitle" :placeholder="t('todoQuickPlaceholder')" :aria-label="t('todoQuickPlaceholder')" />
+      <input ref="quickInput" v-model="quickTitle" :disabled="!authenticated" :placeholder="t('todoQuickPlaceholder')" :aria-label="t('todoQuickPlaceholder')" />
       <LoaderCircle v-if="saving" class="tray-spin" :size="16" />
     </form>
 

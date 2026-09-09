@@ -4,13 +4,10 @@ defineProps<{ page: NotePageState }>()
 defineEmits<{ more: []; retry: [] }>()
 </script>
 <template>
-  <div class="note-page-controls">
+  <div v-if="page.error || page.loading || page.hasMore" class="note-page-controls">
     <p v-if="page.error" role="alert">{{ page.error }} <button type="button" @click="$emit('retry')">重试</button></p>
     <span v-else-if="page.loading" role="status">正在加载笔记…</span>
-    <template v-else>
-      <small v-if="page.total">已显示 {{ page.items.length }} / {{ page.total }}</small>
-      <button v-if="page.hasMore" type="button" @click="$emit('more')">加载更多</button>
-    </template>
+    <button v-else-if="page.hasMore" type="button" @click="$emit('more')">加载更多</button>
   </div>
 </template>
 <style scoped>

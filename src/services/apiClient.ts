@@ -26,11 +26,38 @@ let accessToken = ''
 let authInfo: AuthInfo | null = null
 let authRestoreAttempted = false
 let authRestoration: Promise<boolean> | null = null
+let desktopRole: 'main' | 'tray-panel' | null = null
+let desktopConnection: Promise<void> | null = null
+let sessionRevision = 0
 const authListeners = new Set<() => void>()
 
 function notifyAuth() { for (const listener of authListeners) listener() }
 export function subscribeAuth(listener: () => void) { authListeners.add(listener); return () => authListeners.delete(listener) }
 export function getAuthSnapshot() { return { authenticated: Boolean(accessToken && authInfo), user: authInfo?.user || null, info: authInfo } }
+
+export async function initializeDesktopAuth(role: 'main' | 'tray-panel'): Promise<void> {
+  if (!window.__TAURI_INTERNALS__) return
+  if (desktopConnection) return desktopConnection
+  desktopRole = role
+  desktopConnection = (async () => {
+    const { connectDesktopAuth } = await import('./desktopAuth')
+    await connectDesktopAuth(role, {
+      read: () => ({ token: accessToken, info: authInfo }),
+      apply: session => {
+        if (accessToken === session.token && Boolean(authInfo) === Boolean(session.info)) return
+        sessionRevision += 1
+        accessToken = session.token
+        authInfo = session.info
+        authRestoreAttempted = true
+        notifyAuth()
+      },
+      restore: restoreAuthSession,
+      invalidate: async token => { if (token && token === accessToken) await clearSession() },
+      subscribe: subscribeAuth
+    })
+  })()
+  try { await desktopConnection } catch (error) { desktopConnection = null; throw error }
+}
 
 async function readStoredAccessToken(): Promise<string> {
   if (!window.__TAURI_INTERNALS__) return ''
@@ -51,11 +78,20 @@ async function deleteStoredAccessToken(): Promise<void> {
 }
 
 async function clearSession(): Promise<void> {
+  const previousToken = accessToken
+  sessionRevision += 1
   accessToken = ''
   authInfo = null
   authRestoreAttempted = true
-  await deleteStoredAccessToken()
   notifyAuth()
+  if (desktopRole === 'tray-panel') {
+    const { invalidateMainSession } = await import('./desktopAuth')
+    await invalidateMainSession(previousToken)
+  } else await deleteStoredAccessToken()
+}
+
+function requireCurrentSession(revision: number) {
+  if (revision !== sessionRevision) throw new ApiError('session_changed', '登录状态已变化，请重试', 409)
 }
 
 async function reportCurrentDevice(): Promise<void> {
@@ -73,19 +109,25 @@ async function decodeEnvelope<T>(response: Response): Promise<T> {
 }
 
 async function rawRequest<T>(path: string, init: RequestInit = {}, authenticate = true): Promise<T> {
+  const revision = sessionRevision
   const headers = new Headers(init.headers)
   headers.set('Accept', 'application/json')
   if (init.body && !(init.body instanceof FormData)) headers.set('Content-Type', 'application/json')
   if (authenticate && accessToken) headers.set('Authorization', `Bearer ${accessToken}`)
   const response = await fetch(`${API_BASE_URL}${path}`, { ...init, headers })
+  if (authenticate) requireCurrentSession(revision)
   if (response.status === 401 && authenticate) await clearSession()
-  return decodeEnvelope<T>(response)
+  const result = await decodeEnvelope<T>(response)
+  if (authenticate) requireCurrentSession(revision)
+  return result
 }
 
 export async function apiFetch(path: string, init: RequestInit = {}): Promise<Response> {
+  const revision = sessionRevision
   const headers = new Headers(init.headers)
   if (accessToken) headers.set('Authorization', `Bearer ${accessToken}`)
   const response = await fetch(`${API_BASE_URL}${path}`, { ...init, headers })
+  requireCurrentSession(revision)
   if (response.status === 401) await clearSession()
   if (!response.ok) {
     let details: unknown
@@ -133,6 +175,7 @@ export async function login(username: string, password: string, remember: boolea
     body: JSON.stringify({ username, password })
   }, false)
   accessToken = token.accessToken || token.token
+  sessionRevision += 1
   authRestoreAttempted = true
   const remembered = remember ? await persistAccessToken(accessToken) : false
   if (!remember) await deleteStoredAccessToken()

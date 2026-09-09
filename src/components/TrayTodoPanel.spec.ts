@@ -1,9 +1,16 @@
-import { beforeEach, describe, expect, it } from 'vitest'
+import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { flushPromises, mount } from '@vue/test-utils'
 import { createPinia } from 'pinia'
 import { createI18n } from 'vue-i18n'
 import { messages } from '../i18n'
 import TrayTodoPanel from './TrayTodoPanel.vue'
+
+const auth = vi.hoisted(() => ({ authenticated: true, listener: null as (() => void) | null, initialize: vi.fn() }))
+vi.mock('../services/apiClient', () => ({
+  initializeDesktopAuth: auth.initialize,
+  getAuthSnapshot: () => ({ authenticated: auth.authenticated }),
+  subscribeAuth: (listener: () => void) => { auth.listener = listener; return () => { auth.listener = null } }
+}))
 
 function seed(todos = [], todoLists = []) {
   localStorage.setItem('tiny-note-browser-state', JSON.stringify({
@@ -24,11 +31,48 @@ function setup() {
 }
 
 describe('TrayTodoPanel', () => {
-  beforeEach(() => {
+  beforeEach(async () => {
+    await vi.dynamicImportSettled()
+    auth.authenticated = true
+    auth.listener = null
+    auth.initialize.mockReset().mockResolvedValue(undefined)
     localStorage.clear()
     document.body.innerHTML = ''
     document.documentElement.classList.remove('tray-panel-root')
     delete window.__TAURI_INTERNALS__
+  })
+
+  it('waits for window authentication before loading private todos', async () => {
+    seed([{ id: 'private', title: '私有待办' }])
+    let ready!: () => void
+    auth.initialize.mockImplementation(() => new Promise<void>(resolve => { ready = resolve }))
+    const wrapper = setup()
+    await flushPromises()
+    expect(wrapper.text()).not.toContain('私有待办')
+    ready()
+    await flushPromises()
+    expect(wrapper.text()).toContain('私有待办')
+    wrapper.unmount()
+  })
+
+  it('requires login and clears private todos when the main session ends', async () => {
+    auth.authenticated = false
+    seed([{ id: 'private', title: '私有待办' }])
+    const wrapper = setup()
+    await flushPromises()
+    expect(wrapper.text()).toContain('请先在主窗口登录')
+    expect(wrapper.text()).not.toContain('私有待办')
+    expect(wrapper.get('input').attributes('disabled')).toBeDefined()
+    auth.authenticated = true
+    auth.listener?.()
+    await flushPromises()
+    expect(wrapper.text()).toContain('私有待办')
+    auth.authenticated = false
+    auth.listener?.()
+    await flushPromises()
+    expect(wrapper.text()).not.toContain('私有待办')
+    wrapper.unmount()
+    expect(auth.listener).toBeNull()
   })
 
   it('loads active and completed todos and toggles their state', async () => {
