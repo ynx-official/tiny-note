@@ -34,6 +34,12 @@ export interface EditProposal { id: string; noteId: string; before?: string; aft
 export interface ExternalMarkdownSource { id: string; path: string; title: string; updatedAt?: string; available?: boolean; fileName?: string }
 export interface ExternalMarkdownFile { path: string; fileName: string; content?: string; changed?: boolean; error?: string }
 export interface ExternalMarkdownSelection { selected: boolean; files: ExternalMarkdownFile[] }
+export interface MarkdownNotebookScanFile { relativePath: string; contentMarkdown: string; size: number }
+export interface MarkdownNotebookScanError { relativePath: string; message: string }
+export interface MarkdownNotebookScan { selected: boolean; rootName: string; files: MarkdownNotebookScanFile[]; notebookPaths: string[]; ignoredDirectoryCount: number; errors: MarkdownNotebookScanError[] }
+export interface MarkdownNotebookImportFile { relativePath: string; contentHtml: string; contentText: string; contentMarkdown: string }
+export interface MarkdownNotebookImportRequest { rootName: string; files: MarkdownNotebookImportFile[] }
+export interface MarkdownNotebookImportResult { rootNotebookId: string; rootNotebookName: string; notebookCount: number; noteCount: number; firstNoteId: string; renamed: Record<string, string> }
 export interface ExportWriteResult { path: string; fileName: string }
 export interface UpdateInfo { available: boolean; version?: string; notes?: string; body?: string; date?: string; assetName?: string }
 export interface MemoryFile { fileName: string; nameKey: string; description: string; content: string; size: number; updatedAt: string | null }

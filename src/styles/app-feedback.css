@@ -1,0 +1,40 @@
+.app-feedback-overlay {
+  position: fixed;
+  z-index: 5000;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  padding: 24px;
+  background: rgba(15, 23, 42, .4);
+  backdrop-filter: blur(2px);
+  -webkit-app-region: no-drag;
+}
+
+.app-feedback-dialog {
+  width: min(420px, calc(100vw - 48px));
+  overflow: hidden;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  color: var(--text-primary, var(--text));
+  background: var(--surface);
+  box-shadow: 0 16px 48px -8px rgba(15, 15, 15, .24);
+}
+
+.app-feedback-content { display: flex; align-items: flex-start; gap: 13px; padding: 22px 22px 19px; }
+.app-feedback-content > div { min-width: 0; display: flex; flex-direction: column; gap: 7px; }
+.app-feedback-content strong { font-size: 16px; font-weight: 600; line-height: 1.35; }
+.app-feedback-content p { margin: 0; color: var(--text-secondary, var(--muted)); font-size: 13px; line-height: 1.55; }
+.app-feedback-dialog-icon { width: 36px; height: 36px; display: grid; place-items: center; flex: 0 0 36px; border-radius: 50%; color: #0075de; background: color-mix(in srgb, #0075de 11%, transparent); }
+.app-feedback-dialog.is-danger .app-feedback-dialog-icon { color: #e03131; background: color-mix(in srgb, #e03131 11%, transparent); }
+.app-feedback-actions { min-height: 62px; display: flex; align-items: center; justify-content: flex-end; gap: 9px; padding: 0 22px; border-top: 1px solid var(--line); background: var(--surface-2); }
+.app-feedback-actions button, .app-prompt-footer .app-feedback-secondary, .app-prompt-footer .app-feedback-primary { min-width: 72px; min-height: 36px; padding: 8px 14px; border-radius: 8px; font-size: 13px; font-weight: 550; }
+.app-feedback-secondary { border: 1px solid var(--line); color: var(--text-primary, var(--text)); background: var(--surface); }
+.app-feedback-secondary:hover { background: var(--bg-hover, var(--surface-2)); }
+.app-feedback-primary { color: #fff; background: #5645d4; }
+.app-feedback-primary:hover { background: #4534b3; }
+.app-feedback-dialog.is-danger .app-feedback-primary { background: #e03131; }
+.app-feedback-dialog.is-danger .app-feedback-primary:hover { background: #bd2525; }
+.app-feedback-fade-enter-active, .app-feedback-fade-leave-active { transition: opacity .18s ease; }
+.app-feedback-fade-enter-active .app-feedback-dialog, .app-feedback-fade-leave-active .app-feedback-dialog { transition: transform .18s ease, opacity .18s ease; }
+.app-feedback-fade-enter-from, .app-feedback-fade-leave-to { opacity: 0; }
+.app-feedback-fade-enter-from .app-feedback-dialog, .app-feedback-fade-leave-to .app-feedback-dialog { opacity: 0; transform: translateY(8px) scale(.98); }

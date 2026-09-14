@@ -91,6 +91,7 @@ export async function remoteInvoke<K extends CommandName>(command: K, args: Comm
     case 'note_page': result = await apiRequest(`/notes/page${query(input)}`); break
     case 'note_get': result = await apiRequest(`/notes/${encodeURIComponent(input.id)}`); break
     case 'note_create': result = await apiRequest('/notes', { method: 'POST', body: input.input }); break
+    case 'note_import_markdown': result = await apiRequest('/notes/import-markdown', { method: 'POST', body: input }); break
     case 'note_update': result = await apiRequest(`/notes/${encodeURIComponent(input.id)}`, { method: 'PUT', body: input.input }); break
     case 'note_copy': result = await apiRequest(`/notes/${encodeURIComponent(input.id)}/copy`, { method: 'POST' }); break
     case 'note_delete': result = await apiRequest(`/notes/${encodeURIComponent(input.id)}${query({ version: input.version })}`, { method: 'DELETE' }); break

@@ -7,7 +7,7 @@ import { saveExternalDocument } from '../services/externalDocument'
 import { markdownToEditorHtml, sanitizeEditorHtml, textFromEditorHtml } from '../utils/noteMarkdown'
 import { requestConfirmation, showToast } from '../services/appFeedback'
 import { requireResourceVersion } from '../services/resourceVersion'
-import { errorMessage, type ExternalMarkdownSource, type JsonValue, type Note, type NoteSummary, type Notebook, type NoteTemplate } from '../types/domain'
+import { errorMessage, type ExternalMarkdownSource, type JsonValue, type MarkdownNotebookImportRequest, type Note, type NoteSummary, type Notebook, type NoteTemplate } from '../types/domain'
 
 interface CreateNoteContent { title?: string; contentHtml?: string; contentText?: string; contentMarkdown?: string; notebookId?: string | null; knowledgeBaseId?: string | null; pinned?: boolean }
 interface ExternalMarkdownInput { path: string; title: string; contentHtml: string; contentText: string; contentMarkdown: string }
@@ -153,7 +153,7 @@ export const useNotesStore = defineStore('notes', {
       await this.loadCatalog()
       return note
     },
-    async importText(file: File) {
+      async importText(file: File) {
       const text = await file.text()
       const title = file.name.replace(/\.[^.]+$/, '') || '导入笔记'
       const extension = file.name.split('.').pop()?.toLowerCase()
@@ -163,7 +163,12 @@ export const useNotesStore = defineStore('notes', {
       const contentMarkdown = isHtmlNote ? '' : text
       const contentText = extension === 'md' || extension === 'markdown' || isHtmlNote ? textFromEditorHtml(html) : text
       return this.createFromContent({ title, contentHtml: html, contentText, contentMarkdown, notebookId: this.selectedNotebook === 'all' ? null : this.selectedNotebook })
-    },
+      },
+      async importMarkdownNotebook(request: MarkdownNotebookImportRequest) {
+        const result = await invoke('note_import_markdown', request)
+        await this.load()
+        return result
+      },
     async openExternalMarkdown(input: ExternalMarkdownInput) {
       const current = this.notes.find(note => note.external && note.externalPath === input.path)
       if (current && noteHasUnsavedChanges(current)) {

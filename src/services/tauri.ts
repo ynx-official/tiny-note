@@ -2,7 +2,7 @@ import { invoke as tauriInvoke } from '@tauri-apps/api/core'
 import type { CommandArgs, CommandName, CommandResult, NoCommandArgs } from './commandMap'
 
 const platformCommands = new Set<CommandName>([
-  'external_markdown_pick_files', 'external_markdown_pick_folder', 'external_markdown_remove',
+  'external_markdown_pick_files', 'external_markdown_pick_folder', 'markdown_notebook_pick_folder', 'external_markdown_remove',
   'app_take_pending_markdown_files', 'external_markdown_list', 'external_markdown_read', 'external_markdown_clear',
   'export_write_file', 'export_open_file', 'export_reveal_file', 'app_update_check', 'app_update_download', 'tray_open_main'
 ])

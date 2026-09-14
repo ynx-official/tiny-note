@@ -14,6 +14,12 @@ JSON DTO 使用 camelCase。业务接口返回 `{ code, msg, data }`，前端转
 
 `external_markdown_write` 仅接受已绑定标识、正文和期望指纹；校验规范路径与磁盘内容后原子替换，保留 BOM 和文件权限。源文件变化、丢失或路径替换时拒绝覆盖。`external_markdown_list/clear` 只维护本机历史。相同 ID 再次打开会刷新编辑器正文。普通列表、标签、引用选择和云端备份排除外部文档；显式“导入到笔记”创建独立云端副本。AI、修订和组织操作须先导入。
 
+## Markdown 笔记本导入
+
+`markdown_notebook_pick_folder` 是桌面平台命令，只读扫描用户选择的目录，返回 Markdown 相对路径、正文、有效笔记本路径、忽略目录数和读取错误；不跟随符号链接，不建立外部来源绑定。整棵子树没有 Markdown 的目录不进入清单，父目录只要后代存在 Markdown 就保留。
+
+`note_import_markdown` / `POST /notes/import-markdown` 接收根目录名及已转换的三种正文表示。服务端重新校验路径、扩展名和容量，在一个事务内创建全新的笔记本树与笔记并统一重建链接；任一步骤失败整批回滚。同名根笔记本追加递增后缀，不覆盖或合并已有数据。详细设计见 [Markdown 笔记本导入](markdown-notebook-import.md)。
+
 ## 知识库文件
 
 路径统一使用 `knowledgeBaseId + relativePath`，服务端拒绝路径越界并验证知识库与对象归属。写入和 URL 导入上限为 20 MB。

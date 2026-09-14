@@ -5,6 +5,7 @@ import { messages } from './i18n'
 import { bootstrapMainWindow as runMainWindowBootstrap } from './bootstrap'
 import { initializeDesktopAuth } from './services/apiClient'
 import './styles/friday-main.css'
+import './styles/app-feedback.css'
 import './styles/startup.css'
 
 const cachedLanguage = localStorage.getItem('tiny-note-language') || 'zh-CN'

@@ -24,6 +24,174 @@ pub struct ExternalMarkdownSelectionDto {
     files: Vec<PendingMarkdownFileDto>,
 }
 
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct MarkdownNotebookFileDto {
+    relative_path: String,
+    content_markdown: String,
+    size: u64,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct MarkdownNotebookScanErrorDto {
+    relative_path: String,
+    message: String,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct MarkdownNotebookSelectionDto {
+    selected: bool,
+    root_name: String,
+    files: Vec<MarkdownNotebookFileDto>,
+    notebook_paths: Vec<String>,
+    ignored_directory_count: usize,
+    errors: Vec<MarkdownNotebookScanErrorDto>,
+}
+
+const MAX_MARKDOWN_IMPORT_FILES: usize = 1_000;
+const MAX_MARKDOWN_IMPORT_TOTAL_BYTES: u64 = 50 * 1024 * 1024;
+
+fn relative_path_string(root: &Path, path: &Path) -> Option<String> {
+    let relative = path.strip_prefix(root).ok()?;
+    let parts = relative
+        .components()
+        .map(|part| match part {
+            Component::Normal(value) => value.to_str().map(str::to_owned),
+            _ => None,
+        })
+        .collect::<Option<Vec<_>>>()?;
+    (!parts.is_empty()).then(|| parts.join("/"))
+}
+
+fn scan_markdown_notebook_folder(root: &Path) -> Result<MarkdownNotebookSelectionDto, AppError> {
+    let root = fs::canonicalize(root).map_err(AppError::fs)?;
+    let root_name = root
+        .file_name()
+        .and_then(|value| value.to_str())
+        .unwrap_or("Markdown 笔记本")
+        .to_owned();
+    let mut folders = vec![root.clone()];
+    let mut directory_count = 0usize;
+    let mut candidates = Vec::new();
+    let mut errors = Vec::new();
+
+    while let Some(folder) = folders.pop() {
+        let entries = match fs::read_dir(&folder) {
+            Ok(entries) => entries,
+            Err(error) => {
+                errors.push(MarkdownNotebookScanErrorDto {
+                    relative_path: relative_path_string(&root, &folder).unwrap_or_default(),
+                    message: error.to_string(),
+                });
+                continue;
+            }
+        };
+        for entry in entries.flatten() {
+            let path = entry.path();
+            let Ok(kind) = entry.file_type() else {
+                continue;
+            };
+            if kind.is_symlink() {
+                continue;
+            }
+            if kind.is_dir() {
+                directory_count += 1;
+                folders.push(path);
+            } else if kind.is_file() && is_markdown_path(&path) {
+                candidates.push(path);
+            }
+        }
+    }
+    candidates.sort();
+
+    let mut files = Vec::new();
+    let mut notebook_paths = HashSet::new();
+    let mut total_bytes = 0u64;
+    for path in candidates {
+        let relative_path = match relative_path_string(&root, &path) {
+            Some(value) => value,
+            None => continue,
+        };
+        let size = fs::metadata(&path).map_err(AppError::fs)?.len();
+        if size > MAX_EXTERNAL_MARKDOWN_BYTES {
+            errors.push(MarkdownNotebookScanErrorDto {
+                relative_path,
+                message: "Markdown 文件超过 10 MiB".into(),
+            });
+            continue;
+        }
+        match fs::read_to_string(&path) {
+            Ok(content_markdown) => {
+                total_bytes += size;
+                let components = relative_path.split('/').collect::<Vec<_>>();
+                for depth in 1..components.len() {
+                    notebook_paths.insert(components[..depth].join("/"));
+                }
+                files.push(MarkdownNotebookFileDto {
+                    relative_path,
+                    content_markdown,
+                    size,
+                });
+            }
+            Err(error) => errors.push(MarkdownNotebookScanErrorDto {
+                relative_path,
+                message: error.to_string(),
+            }),
+        }
+    }
+    if files.len() > MAX_MARKDOWN_IMPORT_FILES {
+        errors.push(MarkdownNotebookScanErrorDto {
+            relative_path: String::new(),
+            message: format!("Markdown 文件超过 {} 篇", MAX_MARKDOWN_IMPORT_FILES),
+        });
+    }
+    if total_bytes > MAX_MARKDOWN_IMPORT_TOTAL_BYTES {
+        errors.push(MarkdownNotebookScanErrorDto {
+            relative_path: String::new(),
+            message: "Markdown 正文总量超过 50 MiB".into(),
+        });
+    }
+    let mut notebook_paths = notebook_paths.into_iter().collect::<Vec<_>>();
+    notebook_paths.sort_by(|left, right| {
+        left.matches('/')
+            .count()
+            .cmp(&right.matches('/').count())
+            .then(left.cmp(right))
+    });
+    Ok(MarkdownNotebookSelectionDto {
+        selected: true,
+        root_name,
+        ignored_directory_count: directory_count.saturating_sub(notebook_paths.len()),
+        files,
+        notebook_paths,
+        errors,
+    })
+}
+
+#[tauri::command]
+fn markdown_notebook_pick_folder(
+    app: tauri::AppHandle,
+) -> Result<MarkdownNotebookSelectionDto, AppError> {
+    let Some(folder) = app
+        .dialog()
+        .file()
+        .set_title("导入 Markdown 笔记本")
+        .blocking_pick_folder()
+    else {
+        return Ok(MarkdownNotebookSelectionDto {
+            selected: false,
+            root_name: String::new(),
+            files: Vec::new(),
+            notebook_paths: Vec::new(),
+            ignored_directory_count: 0,
+            errors: Vec::new(),
+        });
+    };
+    scan_markdown_notebook_folder(&folder.into_path().map_err(AppError::fs)?)
+}
+
 fn markdown_paths_in_folder(root: &Path) -> Vec<PathBuf> {
     let mut paths = Vec::new();
     let mut folders = vec![root.to_path_buf()];
@@ -1094,6 +1262,7 @@ pub fn run() {
             external_markdown_clear,
             external_markdown_pick_files,
             external_markdown_pick_folder,
+            markdown_notebook_pick_folder,
             external_markdown_remove,
             export_write_file,
             export_open_file,
@@ -1145,6 +1314,34 @@ mod tests {
         assert_eq!(files.len(), 2);
         assert!(files.iter().all(|file| file.content.is_some()));
         assert_eq!(pending.0.lock().unwrap().authorized.len(), 2);
+    }
+
+    #[test]
+    fn markdown_notebook_scan_preserves_ancestors_and_prunes_attachment_only_subtrees() {
+        let directory = tempfile::tempdir().unwrap();
+        fs::create_dir_all(directory.path().join("archive/2025")).unwrap();
+        fs::create_dir_all(directory.path().join("attachments/nested")).unwrap();
+        fs::write(directory.path().join("README.md"), "# Readme").unwrap();
+        fs::write(
+            directory.path().join("archive/2025/summary.MARKDOWN"),
+            "# Summary",
+        )
+        .unwrap();
+        fs::write(directory.path().join("attachments/cover.png"), "image").unwrap();
+        fs::write(
+            directory.path().join("attachments/nested/manual.pdf"),
+            "pdf",
+        )
+        .unwrap();
+
+        let scan = scan_markdown_notebook_folder(directory.path()).unwrap();
+
+        assert_eq!(scan.files.len(), 2);
+        assert_eq!(scan.files[0].relative_path, "README.md");
+        assert_eq!(scan.files[1].relative_path, "archive/2025/summary.MARKDOWN");
+        assert_eq!(scan.notebook_paths, vec!["archive", "archive/2025"]);
+        assert_eq!(scan.ignored_directory_count, 2);
+        assert!(scan.errors.is_empty());
     }
 
     #[test]

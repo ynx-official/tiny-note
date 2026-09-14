@@ -14,6 +14,8 @@ import { noteSummary } from '../services/noteCache'
 import { registerNoteEditorFlush } from '../services/noteEditorFlush'
 import type { NotePageState } from '../services/notePage'
 import { compareNotebooks } from '../utils/notebooks'
+import { buildMarkdownNotebookImportRequest } from '../services/markdownNotebookImport'
+import type { MarkdownNotebookScan } from '../types/domain'
 
 export function useNotesWorkspace() {
   interface NotebookTreeNode extends Notebook { children: NotebookTreeNode[]; notes: NoteSummary[]; page?: NotePageState; totalNoteCount: number }
@@ -102,6 +104,9 @@ export function useNotesWorkspace() {
   const externalSourceMenu = ref<{ source: ExternalMarkdownSource; x: number; y: number } | null>(null)
 
   const externalPickerBusy = ref(false)
+  const markdownImportScan = ref<MarkdownNotebookScan | null>(null)
+  const markdownImportBusy = ref(false)
+  const markdownImportAvailable = Boolean(window.__TAURI_INTERNALS__)
   
   const list = computed(() => showDeleted.value ? store.trashPage.items : store.listed)
   
@@ -327,6 +332,49 @@ export function useNotesWorkspace() {
 
   function pickExternalFolder() {
     return pickExternalMarkdown('external_markdown_pick_folder', '无法打开文件夹中的 Markdown 文件')
+  }
+
+  async function pickMarkdownNotebook() {
+    newNoteMenu.value = false
+    if (!markdownImportAvailable || markdownImportBusy.value || !await flushCurrent()) return
+    markdownImportBusy.value = true
+    try {
+      const scan = await invoke('markdown_notebook_pick_folder')
+      if (!scan.selected) return
+      if (!scan.files.length && !scan.errors.length) {
+        showToast('所选文件夹没有 Markdown 文件', { tone: 'info' })
+        return
+      }
+      markdownImportScan.value = scan
+    } catch (error) {
+      showToast(errorMessage(error, '无法扫描 Markdown 文件夹'), { tone: 'error' })
+    } finally {
+      markdownImportBusy.value = false
+    }
+  }
+
+  function cancelMarkdownNotebookImport() {
+    if (!markdownImportBusy.value) markdownImportScan.value = null
+  }
+
+  async function confirmMarkdownNotebookImport() {
+    const scan = markdownImportScan.value
+    if (!scan || scan.errors.length || markdownImportBusy.value) return
+    markdownImportBusy.value = true
+    try {
+      const result = await store.importMarkdownNotebook(buildMarkdownNotebookImportRequest(scan))
+      markdownImportScan.value = null
+      expandedNotebookIds.value = new Set(expandedNotebookIds.value).add(result.rootNotebookId)
+      store.selectedNotebook = result.rootNotebookId
+      store.selectedTreeNode = { type: 'notebook', id: result.rootNotebookId }
+      showDeleted.value = false
+      if (result.firstNoteId) await selectNote({ id: result.firstNoteId })
+      showToast(`已导入 ${result.noteCount} 篇笔记到“${result.rootNotebookName}”`, { tone: 'success' })
+    } catch (error) {
+      showToast(errorMessage(error, 'Markdown 笔记本导入失败'), { tone: 'error' })
+    } finally {
+      markdownImportBusy.value = false
+    }
   }
 
   async function removeExternalSource() {
@@ -734,9 +782,9 @@ export function useNotesWorkspace() {
     query, sidebarCollapsed, sidebarWidth, isResizing, onResizeStart, newNoteMenu, folderItemMenu, folderItemMenuStyle,
     importInput, noteEditorRef, tocVisible, contextMenu, contextMoveOpen, contextMenuRef, contextMoveAnchorRef, contextMoveSubmenuRef,
     contextMoveStyle, contextKnowledgeOpen, contextTagsOpen, contextTagIds, contextKnowledgeAnchorRef, contextKnowledgeSubmenuRef, contextKnowledgeStyle, contextMoveTimer,
-    contextKnowledgeTimer, expandedNotebookIds, externalSourcesOpen, externalAreaMenu, externalSourceMenu, externalPickerBusy, list, contextNote, notebookTree, knowledgeGroups, creatingFromQuery,
+    contextKnowledgeTimer, expandedNotebookIds, externalSourcesOpen, externalAreaMenu, externalSourceMenu, externalPickerBusy, markdownImportScan, markdownImportBusy, markdownImportAvailable, list, contextNote, notebookTree, knowledgeGroups, creatingFromQuery,
     createFromQuery, openRoutedNote, clearReviewedProposal, create, createFromTemplate, togglePinned, remove, importExternalNote,
-    toggleExternalSources, openExternalSource, openExternalAreaMenu, openExternalSourceMenu, pickExternalFiles, pickExternalFolder, removeExternalSource, clearExternalSources, importFiles, toggleNewNoteMenu, closeMenus, selectFolder, selectAllNotes,
+    toggleExternalSources, openExternalSource, openExternalAreaMenu, openExternalSourceMenu, pickExternalFiles, pickExternalFolder, removeExternalSource, clearExternalSources, pickMarkdownNotebook, cancelMarkdownNotebookImport, confirmMarkdownNotebookImport, importFiles, toggleNewNoteMenu, closeMenus, selectFolder, selectAllNotes,
     selectNote, toggleNotebook, createRootNotebook, openFolderItemMenu, renameNotebook, deleteNotebook, createChildNotebook, moveNotebookByPrompt,
     dropTreeNode, closeContextMenu, openContextMenu, toggleContextTag, createContextTag, duplicateContextNote, showMoveSubmenu, hideMoveSubmenu,
     cancelHideMoveSubmenu, showKnowledgeSubmenu, hideKnowledgeSubmenu, cancelHideKnowledgeSubmenu, positionKnowledgeSubmenu, addContextNoteToKnowledge, createKnowledgeBaseForContext, positionMoveSubmenu,

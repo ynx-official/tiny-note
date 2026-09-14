@@ -6,7 +6,7 @@
 
 关联文档：[测试计划](04-quality/test-plan.md)
 
-`src/services/commandMap.ts` 是桌面端契约的唯一权威清单。当前共 132 个命令，由 `npm run check:contracts` 强制每个命令只能归属于以下一类：
+`src/services/commandMap.ts` 是桌面端契约的唯一权威清单。当前共 134 个命令，由 `npm run check:contracts` 强制每个命令只能归属于以下一类：
 
 认证在命令映射之外直接使用 REST：应用未登录时仍进入 Friday 桌面外壳和首页；`POST /auth/login` 只发送 `username`、`password`，取得访问令牌后再调用需认证的 `POST /auth/device` 上报随机安装 ID 与应用/系统摘要。设备上报不包含硬件指纹，失败不阻断登录；401 会清理安全凭据和用户作用域的前端状态，并由左上角狗狗头像账号面板重新登录。
 

@@ -3,6 +3,7 @@ import type {
   ChatConversation, ChatMessage, ChatThread, EditProposal, ExportWriteResult,
   ExternalMarkdownFile, ExternalMarkdownSelection, ExternalMarkdownSource, ImageAsset, ImageGeneration,
   JsonValue, KnowledgeBase, LibraryEntry, LibraryPreview, McpServer, MemoryFile,
+  MarkdownNotebookImportRequest, MarkdownNotebookImportResult, MarkdownNotebookScan,
   ModelOption, ModelProfile, ModelTestResult, Note, Notebook, NoteLink,
   NoteTemplate, NotePage, NotePageFilter, Reminder, Tag, Todo, TodoList, UpdateInfo, UsageStats
 } from '../types/domain'
@@ -50,6 +51,7 @@ export interface CommandMap {
   note_page: Command<NotePageFilter, NotePage>
   note_get: Command<IdArgs, Note | null>
   note_create: Command<{ input: Partial<Note> }, Note>
+  note_import_markdown: Command<MarkdownNotebookImportRequest, MarkdownNotebookImportResult>
   note_update: Command<IdArgs & { input: Versioned<Partial<Note>> }, Note>
   note_copy: Command<IdArgs, Note>
   note_delete: Command<VersionedIdArgs>
@@ -89,6 +91,7 @@ export interface CommandMap {
   external_markdown_read: Command<IdArgs, ExternalMarkdownFile>
   external_markdown_pick_files: NoArgs<ExternalMarkdownSelection>
   external_markdown_pick_folder: NoArgs<ExternalMarkdownSelection>
+  markdown_notebook_pick_folder: NoArgs<MarkdownNotebookScan>
   external_markdown_remove: Command<IdArgs>
   external_markdown_clear: NoArgs<number>
   app_take_pending_markdown_files: NoArgs<ExternalMarkdownFile[]>

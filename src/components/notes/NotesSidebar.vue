@@ -1,12 +1,13 @@
 <script setup lang="ts">
-import { ArrowDownAZ, BookOpen, Download, FileClock, FilePlus2, FolderInput, FolderOpen, FolderPlus, Pin, Plus, Search as SearchIcon, Trash2 } from 'lucide-vue-next'
+import { ArrowDownAZ, BookOpen, Download, FileClock, FilePlus2, FolderInput, FolderOpen, FolderPlus, FolderTree, Pin, Plus, Search as SearchIcon, Trash2 } from 'lucide-vue-next'
 import NotePageControls from './NotePageControls.vue'
 import NotebookTreeItem from '../NotebookTreeItem.vue'
+import MarkdownNotebookImportDialog from './MarkdownNotebookImportDialog.vue'
 import type { NotesWorkspace } from '../../composables/useNotesWorkspace'
 
 const props = defineProps<{ workspace: NotesWorkspace }>()
 const workspace = props.workspace
-const { externalAreaMenu, externalSourceMenu, externalPickerBusy, openExternalAreaMenu, openExternalSourceMenu, pickExternalFiles, pickExternalFolder, removeExternalSource, openTrash, t, store, library, route, showDeleted, searchMode, query, sidebarCollapsed, sidebarWidth, isResizing, onResizeStart, newNoteMenu, folderItemMenu, folderItemMenuStyle, importInput, expandedNotebookIds, externalSourcesOpen, notebookTree, list, create, createFromTemplate, importFiles, createRootNotebook, toggleNewNoteMenu, selectAllNotes, selectFolder, selectNote, toggleNotebook, toggleExternalSources, clearExternalSources, openExternalSource, openFolderItemMenu, closeMenus, closeContextMenu, restoreContextNote, deleteContextNote, renameNotebook, deleteNotebook, createChildNotebook, moveNotebookByPrompt, dropTreeNode, openContextMenu } = workspace
+const { externalAreaMenu, externalSourceMenu, externalPickerBusy, markdownImportScan, markdownImportBusy, markdownImportAvailable, openExternalAreaMenu, openExternalSourceMenu, pickExternalFiles, pickExternalFolder, pickMarkdownNotebook, cancelMarkdownNotebookImport, confirmMarkdownNotebookImport, removeExternalSource, openTrash, t, store, library, route, showDeleted, searchMode, query, sidebarCollapsed, sidebarWidth, isResizing, onResizeStart, newNoteMenu, folderItemMenu, folderItemMenuStyle, importInput, expandedNotebookIds, externalSourcesOpen, notebookTree, list, create, createFromTemplate, importFiles, createRootNotebook, toggleNewNoteMenu, selectAllNotes, selectFolder, selectNote, toggleNotebook, toggleExternalSources, clearExternalSources, openExternalSource, openFolderItemMenu, closeMenus, closeContextMenu, restoreContextNote, deleteContextNote, renameNotebook, deleteNotebook, createChildNotebook, moveNotebookByPrompt, dropTreeNode, openContextMenu } = workspace
 </script>
 
 <template>
@@ -24,6 +25,7 @@ const { externalAreaMenu, externalSourceMenu, externalPickerBusy, openExternalAr
                 <button class="dropdown-item" @click="create(); newNoteMenu = false"><Plus :size="14" />{{ t('newNote') }}</button>
                 <button v-for="template in store.templates" :key="template.id" class="dropdown-item" @click="createFromTemplate(template.id)"><Plus :size="14" />{{ template.name }}</button>
                 <button class="dropdown-item" @click="importInput?.click(); newNoteMenu = false"><Download :size="14" />{{ t('importFiles') }}</button>
+                <button v-if="markdownImportAvailable" class="dropdown-item" @click="pickMarkdownNotebook"><FolderTree :size="14" />导入 Markdown 笔记本</button>
               </div>
               <input ref="importInput" type="file" multiple hidden accept=".md,.markdown,.txt" @change="importFiles" />
             </div>
@@ -94,4 +96,5 @@ const { externalAreaMenu, externalSourceMenu, externalPickerBusy, openExternalAr
       </div>
     </aside>
     <div v-if="!sidebarCollapsed" class="sidebar-resize-handle" @mousedown="onResizeStart"></div>
+    <MarkdownNotebookImportDialog v-if="markdownImportScan" :scan="markdownImportScan" :busy="markdownImportBusy" @cancel="cancelMarkdownNotebookImport" @confirm="confirmMarkdownNotebookImport" />
 </template>

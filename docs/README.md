@@ -11,6 +11,7 @@
 - [架构概览](03-architecture/overview.md)
 - [数据模型](03-architecture/data-model.md)
 - [命令契约](03-architecture/api-contracts.md)
+- [Markdown 笔记本导入设计](03-architecture/markdown-notebook-import.md)
 - [服务端权威 AI 与后台任务架构](03-architecture/server-authoritative-ai-tasks.md)
 - [威胁模型](03-architecture/threat-model.md)
 - [测试计划](04-quality/test-plan.md)
