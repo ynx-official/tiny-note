@@ -67,6 +67,8 @@ export function useImageGenerationWorkspace() {
   const inputImages = ref<InputImage[]>([])
   
   const inputFile = ref<HTMLInputElement | null>(null)
+  const inputLoading = ref(false)
+  let inputRevision = 0
   
   const maskCanvas = ref<HTMLCanvasElement | null>(null)
   
@@ -178,6 +180,7 @@ export function useImageGenerationWorkspace() {
   
   async function setMode(value: ImageMode) {
     if (mode.value === value) return
+    inputRevision += 1
     mode.value = value
     maskTouched.value = false
     if (value === 'generate') inputImages.value = []
@@ -189,34 +192,61 @@ export function useImageGenerationWorkspace() {
     if (value === 'inpaint') initializeMask()
   }
   
-  function openInputPicker() { inputFile.value?.click() }
+  function openInputPicker() { if (!inputLoading.value) inputFile.value?.click() }
   
   async function handleInputFiles(event: Event) {
     const input = event.target as HTMLInputElement
-    const allowed = new Set(['image/png', 'image/jpeg', 'image/webp'])
     const files = [...(input.files || [])]
     input.value = ''
+    await addInputFiles(files)
+  }
+
+  function handleInputPaste(event: ClipboardEvent) {
+    if (mode.value === 'generate' || event.defaultPrevented) return
+    const clipboard = event.clipboardData
+    const items = Array.from(clipboard?.items || [])
+    const files = items.filter(item => item.kind === 'file' && item.type.startsWith('image/'))
+      .map(item => item.getAsFile()).filter((file): file is File => file !== null)
+    if (!files.length) files.push(...Array.from(clipboard?.files || []).filter(file => file.type.startsWith('image/')))
+    // Only consume actual images; normal prompt text and copied image URLs
+    // retain the browser's normal paste behavior.
+    if (!files.length) return
+    event.preventDefault()
+    void addInputFiles(files)
+  }
+
+  async function addInputFiles(files: File[]) {
+    if (mode.value === 'generate' || inputLoading.value) return
+    const allowed = new Set(['image/png', 'image/jpeg', 'image/webp'])
     if (!files.length) return
     if (files.some(file => !allowed.has(file.type))) return showToast('仅支持 PNG、JPEG 或 WebP 图片', { tone: 'error' })
     if (files.some(file => file.size > 20 * 1024 * 1024)) return showToast('单张图片不能超过 20 MB', { tone: 'error' })
     const selected = mode.value === 'reference' ? files.slice(0, Math.max(0, 4 - inputImages.value.length)) : files.slice(0, 1)
     if (!selected.length) return showToast('参考图最多添加 4 张', { tone: 'error' })
+    const revision = inputRevision
+    const inputMode = mode.value
+    inputLoading.value = true
     try {
       let next = await Promise.all(selected.map(readFile))
-      if (mode.value === 'inpaint' && next[0]) next = [await normalizeToPng(next[0])]
-      inputImages.value = mode.value === 'reference' ? [...inputImages.value, ...next].slice(0, 4) : next
-      const totalBytes = inputImages.value.reduce((sum, image) => sum + Number(image.byteSize || 0), 0)
+      if (inputMode === 'inpaint' && next[0]) next = [await normalizeToPng(next[0])]
+      // A mode switch or removal invalidates an in-flight file read.
+      if (revision !== inputRevision) return
+      const updated = inputMode === 'reference' ? [...inputImages.value, ...next].slice(0, 4) : next
+      const totalBytes = updated.reduce((sum, image) => sum + Number(image.byteSize || 0), 0)
       if (totalBytes > 50 * 1024 * 1024) {
-        inputImages.value = mode.value === 'reference' ? inputImages.value.slice(0, -next.length) : []
         return showToast('上传图片总大小不能超过 50 MB', { tone: 'error' })
       }
+      inputImages.value = updated
       maskTouched.value = false
       await nextTick()
       if (mode.value === 'inpaint') initializeMask()
-    } catch (error) { showToast(errorMessage(error, '图片读取失败'), { tone: 'error' }) }
+    } catch (error) {
+      if (revision === inputRevision) showToast(errorMessage(error, '图片读取失败'), { tone: 'error' })
+    } finally { inputLoading.value = false }
   }
   
   function removeInputImage(id: string) {
+    inputRevision += 1
     inputImages.value = inputImages.value.filter(image => image.id !== id)
     maskTouched.value = false
     nextTick(() => { if (mode.value === 'inpaint') initializeMask() })
@@ -382,7 +412,7 @@ export function useImageGenerationWorkspace() {
   
   async function submit() {
     const value = prompt.value.trim()
-    if (!value || submitting.value || optimizing.value) return
+    if (!value || submitting.value || optimizing.value || inputLoading.value) return
     if (mode.value === 'reference' && !inputImages.value.length) return showToast('请先添加至少 1 张参考图', { tone: 'error' })
     if (['edit', 'inpaint'].includes(mode.value) && inputImages.value.length !== 1) return showToast('请先选择需要编辑的原图', { tone: 'error' })
     if (mode.value === 'inpaint' && !maskTouched.value) return showToast('请在原图上涂出需要重绘的区域', { tone: 'error' })
@@ -564,13 +594,13 @@ export function useImageGenerationWorkspace() {
   
   onMounted(async () => { window.addEventListener('tiny-note-task-updated', handleTaskUpdate); window.addEventListener('keydown', handleImagePageKeydown); await refresh() })
   
-  onUnmounted(() => { window.removeEventListener('tiny-note-task-updated', handleTaskUpdate); window.removeEventListener('keydown', handleImagePageKeydown) })
+  onUnmounted(() => { inputRevision += 1; window.removeEventListener('tiny-note-task-updated', handleTaskUpdate); window.removeEventListener('keydown', handleImagePageKeydown) })
 
   return {
     notePicker, route, router, appStore, images, notes, tasks, models, generations,
     loading, error, defaultModel, prompt, mode, size, count, selectedModelId,
     submitting, loadingAssets, pickerOpen, pickerSearch, pickerAsset, selectedNoteId, menuGenerationId, highlightedGenerationId,
-    inputImages, inputFile, maskCanvas, maskTouched, maskBrushSize, drawingMask, optimizing, previousPrompt,
+    inputImages, inputFile, inputLoading, handleInputPaste, maskCanvas, maskTouched, maskBrushSize, drawingMask, optimizing, previousPrompt,
     historyPickerOpen, historyPickerLoading, previewItem, savingAssetIds, modeOptions, sizeOptions, configuredModels, visibleNotes,
     activeTasks, selectedModel, currentMode, promptPlaceholder, requiredImageCountText, reusableHistoryAssets, setDefaultModel, generationAssetUrl,
     openImagePreview, closeImagePreview, loadBrowserImage, readFile, normalizeToPng, setMode, openInputPicker, handleInputFiles,

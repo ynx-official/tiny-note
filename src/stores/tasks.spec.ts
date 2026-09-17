@@ -73,6 +73,15 @@ describe('background task store', () => {
     expect(store.attentionCount).toBe(1)
   })
 
+  it('keeps retry reasons and schedule from server status events', async () => {
+    const store = useTasksStore()
+    store.tasks = [{ id: 'retry-events', kind: 'image_generation', status: 'running' }]
+    await store.handleEvent('retry-events', { type: 'status', status: 'queued', retryScheduled: true, scheduledAt: '2026-09-17T10:00:05Z', attemptCount: 1, maxAttempts: 3, errorCode: 'provider_retry_scheduled', errorMessage: '连接模型服务超时' })
+    expect(store.tasks[0]).toMatchObject({ status: 'queued', retryScheduled: true, attemptCount: 1, maxAttempts: 3, scheduledAt: '2026-09-17T10:00:05Z', errorMessage: '连接模型服务超时' })
+    await store.handleEvent('retry-events', { type: 'status', status: 'running' })
+    expect(store.tasks[0].retryScheduled).toBe(false)
+  })
+
   it('clears finished records immediately and reports the result', async () => {
     invoke.mockImplementation(async command => {
       if (command === 'background_task_clear_finished') return 2

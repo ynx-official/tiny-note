@@ -1,13 +1,14 @@
 <script setup lang="ts">
 import { AlertCircle, Brush, Check, Clipboard, Copy, Download, ImagePlus, Images, LoaderCircle, MoreHorizontal, Pencil, RefreshCw, Trash2 } from 'lucide-vue-next'
 import type { ImageGenerationWorkspace } from '../../composables/useImageGenerationWorkspace'
+import { taskProgress } from '../../utils/taskProgress'
 
 const { workspace } = defineProps<{ workspace: ImageGenerationWorkspace }>()
 const { activeTasks, router, loading, error, refresh, generations, generationClass, generationAssetUrl, openImagePreview, useAssetAsInput, openInsert, isSavingAsset, imageSaveTitle, saveImage, generationModeLabel, copyPrompt, regenerate, menuGenerationId, removeGeneration } = workspace
 </script>
 
 <template>
-  <div v-if="activeTasks.length" class="image-running-strip"><LoaderCircle class="spinning" :size="16" /><span>正在生成 {{ activeTasks.length }} 个任务，切换页面也不会中断。</span><button type="button" @click="router.push('/tasks')">查看任务中心</button></div>
+  <div v-if="activeTasks.length" class="image-running-strip"><LoaderCircle class="spinning" :size="16" /><span>{{ activeTasks.length === 1 ? `生图任务：${taskProgress(activeTasks[0]).label}` : `${activeTasks.length} 个生图任务处理中` }}，可在任务中心查看进度和失败原因。</span><button type="button" @click="router.push('/tasks')">查看任务中心</button></div>
   <div v-if="loading" class="image-state"><LoaderCircle class="spinning" :size="20" />正在读取生图历史…</div>
   <div v-else-if="error" class="image-state is-error"><AlertCircle :size="20" />{{ error }}<button type="button" @click="refresh">重试</button></div>
   <section v-else class="image-history-section">

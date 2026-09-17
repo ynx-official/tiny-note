@@ -5,6 +5,7 @@ import { storeToRefs } from 'pinia'
 import { AlertCircle, CheckCircle2, CircleStop, Clock3, FileText, ImagePlus, LoaderCircle, RefreshCw, Sparkles, Trash2 } from 'lucide-vue-next'
 import { useTasksStore } from '../stores/tasks'
 import { formatTaskDuration } from '../utils/taskDuration'
+import { taskProgress } from '../utils/taskProgress'
 import type { BackgroundTask, JsonValue } from '../types/domain'
 
 const router = useRouter()
@@ -15,6 +16,16 @@ const expanded = ref('')
 const retrying = ref<string[]>([])
 const now = ref(Date.now())
 let durationTimer: number | undefined
+let refreshTimer: number | undefined
+const refreshing = ref(false)
+const refreshError = ref('')
+async function refreshTasks() {
+  if (refreshing.value) return
+  refreshing.value = true
+  try { await store.refresh(); refreshError.value = '' }
+  catch { refreshError.value = '状态刷新失败，当前显示上次结果，请检查连接后刷新。' }
+  finally { refreshing.value = false }
+}
 
 const filters: Array<[string, string]> = [
   ['all', '全部'], ['active', '进行中'], ['attention', '待处理'], ['succeeded', '已完成'], ['failed', '失败']
@@ -37,7 +48,6 @@ const counts = computed(() => Object.fromEntries(filters.map(([key]) => [key, ta
 const kindMeta: Record<string, [string, Component]> = {
   conversation_summary: ['总结为笔记', Sparkles], note_ai: ['笔记 AI', FileText], image_generation: ['生图', ImagePlus]
 }
-const statusLabels: Record<string, string> = { queued: '排队中', running: '执行中', finalizing: '正在保存结果', cancelling: '正在取消', awaiting_approval: '等待确认', awaiting_input: '等待回答', succeeded: '已完成', failed: '失败', cancelled: '已取消', interrupted: '已中断' }
 const statusIcons: Record<string, Component> = { queued: Clock3, running: LoaderCircle, finalizing: LoaderCircle, cancelling: LoaderCircle, awaiting_approval: Clock3, awaiting_input: Clock3, succeeded: CheckCircle2, failed: AlertCircle, cancelled: CircleStop, interrupted: AlertCircle }
 function formatTime(value: string | null) { if (!value) return ''; return new Intl.DateTimeFormat('zh-CN', { month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' }).format(new Date(value)) }
 function executionTime(task: BackgroundTask) { return formatTaskDuration(task, now.value) }
@@ -63,21 +73,25 @@ async function quickRetry(task: BackgroundTask) {
 }
 onMounted(async () => {
   durationTimer = window.setInterval(() => { now.value = Date.now() }, 1000)
+  refreshTimer = window.setInterval(() => { if (store.runningCount) void refreshTasks() }, 5000)
+  const initialized = store.initialized
   await store.initialize()
+  if (initialized) await refreshTasks()
   store.markResultsSeen()
 })
-onUnmounted(() => { if (durationTimer !== undefined) window.clearInterval(durationTimer) })
+onUnmounted(() => { if (durationTimer !== undefined) window.clearInterval(durationTimer); if (refreshTimer !== undefined) window.clearInterval(refreshTimer) })
 </script>
 
 <template>
   <section class="tasks-page">
     <header class="tasks-header">
       <div><h1>任务中心</h1><p>后台 AI 操作会在这里继续执行，切换页面不会中断。</p></div>
-      <button class="tasks-clear" type="button" title="立即清理所有已结束的任务记录" @click="store.clearFinished"><Trash2 :size="14" />清理记录</button>
+      <div class="tasks-header-actions"><button class="tasks-clear" type="button" :disabled="refreshing" @click="refreshTasks"><RefreshCw :size="14" :class="{ spin: refreshing }" />刷新状态</button><button class="tasks-clear" type="button" title="立即清理所有已结束的任务记录" @click="store.clearFinished"><Trash2 :size="14" />清理记录</button></div>
     </header>
     <nav class="tasks-filters" aria-label="任务筛选">
       <button v-for="([key, label]) in filters" :key="key" type="button" :class="{ active: filter === key }" @click="filter = key"><span>{{ label }}</span><small>{{ counts[key] }}</small></button>
     </nav>
+    <p v-if="refreshError" class="tasks-refresh-error" role="status">{{ refreshError }}</p>
     <div v-if="loading" class="tasks-state"><LoaderCircle class="spin" :size="20" />正在读取任务…</div>
     <div v-else-if="error" class="tasks-state is-error"><AlertCircle :size="20" />{{ error }}<button type="button" @click="store.initialize({ force: true })">重试</button></div>
     <div v-else-if="!visibleTasks.length" class="tasks-empty"><CheckCircle2 :size="28" /><strong>这里暂时没有任务</strong><span>发起“总结为笔记”、笔记 AI 或生图后，可以在这里查看进度和结果。</span></div>
@@ -87,7 +101,7 @@ onUnmounted(() => { if (durationTimer !== undefined) window.clearInterval(durati
           <span class="task-kind-icon"><component :is="kindMeta[task.kind]?.[1] || Clock3" :size="17" /></span>
           <span class="task-copy"><strong>{{ task.title }}</strong><small>{{ kindMeta[task.kind]?.[0] || task.kind }} · {{ formatTime(task.createdAt) }}</small></span>
           <span class="task-state">
-            <span class="task-status"><component :is="statusIcons[task.status] || Clock3" :class="{ spin: ['running','finalizing','cancelling'].includes(task.status) }" :size="14" />{{ statusLabels[task.status] || task.status }}</span>
+            <span class="task-status"><component :is="statusIcons[task.status] || Clock3" :class="{ spin: ['running','finalizing','cancelling'].includes(task.status) }" :size="14" />{{ taskProgress(task, now).label }}</span>
             <span class="task-duration"><Clock3 :size="12" />{{ executionTime(task) }}</span>
           </span>
         </button>
@@ -97,8 +111,8 @@ onUnmounted(() => { if (durationTimer !== undefined) window.clearInterval(durati
           <button v-else-if="['failed','cancelled','interrupted'].includes(task.status)" class="task-quick-retry" type="button" :disabled="retrying.includes(task.id)" @click="quickRetry(task)"><LoaderCircle v-if="retrying.includes(task.id)" class="spin" :size="14" /><RefreshCw v-else :size="14" />{{ retrying.includes(task.id) ? '重试中' : '快速重试' }}</button>
           <button v-if="task.status === 'succeeded'" type="button" @click="openResult(task)">打开结果</button>
         </div>
+        <p v-if="taskProgress(task, now).detail" class="task-progress-detail" :class="{ 'is-error': task.status === 'failed' }">{{ taskProgress(task, now).detail }}</p>
         <div v-if="expanded === task.id" class="task-detail">
-          <p v-if="task.errorMessage" class="task-error"><AlertCircle :size="14" />{{ task.errorMessage }}</p>
           <pre v-if="task.output">{{ task.output }}</pre>
         </div>
       </article>

@@ -8,7 +8,7 @@ import type { CommandArgs } from '../services/commandMap'
 
 interface TaskNotice { id: string; taskId: string | null; message: string; tone: FeedbackTone; createdAt: number }
 interface TasksState { tasks: BackgroundTask[]; initialized: boolean; loading: boolean; error: string; notices: TaskNotice[]; readTaskIds: string[] }
-interface TaskStreamEvent { type?: string; status?: string; text?: string; sources?: JsonValue[]; proposal?: EditProposal }
+interface TaskStreamEvent { type?: string; status?: string; text?: string; sources?: JsonValue[]; proposal?: EditProposal; retryScheduled?: boolean; scheduledAt?: string; attemptCount?: number; maxAttempts?: number; errorCode?: string; errorMessage?: string }
 interface FlightOptions { sourceElement?: Element | null; preparedFlight?: (() => void) | null }
 
 const streams = new Map<string, EventChannel<TaskStreamEvent>>()
@@ -111,7 +111,7 @@ export const useTasksStore = defineStore('tasks', {
       } else if (event.type === 'started') {
         this.upsert({ ...task, status: 'running', output: '' })
       } else if (event.type === 'status' && event.status) {
-        this.upsert({ ...task, status: event.status })
+        this.upsert({ ...task, status: event.status, retryScheduled: event.status === 'queued' && Boolean(event.retryScheduled), scheduledAt: event.scheduledAt ?? task.scheduledAt, attemptCount: event.attemptCount ?? task.attemptCount, maxAttempts: event.maxAttempts ?? task.maxAttempts, errorCode: event.errorCode ?? task.errorCode, errorMessage: event.errorMessage ?? task.errorMessage })
       } else if (event.type === 'sources') {
         this.upsert({ ...task, publicMeta: { ...(task.publicMeta || {}), sources: event.sources || [] } })
       } else if (event.type === 'editProposal') {

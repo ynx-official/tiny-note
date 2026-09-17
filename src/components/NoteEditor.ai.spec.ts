@@ -2,11 +2,72 @@ import { flushPromises } from '@vue/test-utils'
 import { EditorContent } from '@tiptap/vue-3'
 import { describe, expect, it, vi } from 'vitest'
 import MarkdownSourceEditor from './MarkdownSourceEditor.vue'
+import NoteAssistantSidebar from './NoteAssistantSidebar.vue'
 import { mountEditor, note, noteEditorTestMocks } from './NoteEditor.testHarness'
 
 const { tauriMocks } = noteEditorTestMocks()
 
 describe('NoteEditor AI writing', () => {
+  it.each([
+    ['polish', '<h1>标题</h1><p>第一段<strong>重点</strong></p><p>第二段</p>'],
+    ['custom', '<h1>标题</h1><ul><li><p>第一项</p></li><li><p>第二项</p></li></ul>'],
+    ['table polish', '<h1>标题</h1><table><tbody><tr><td><p>第一格</p></td><td><p>第二格</p></td></tr></tbody></table>'],
+    ['assistant', '<h1>标题</h1><p>第一行<br>第二行</p><p>下一段</p>']
+  ])('sends %s selections using the saved document text format', async (entry, html) => {
+    window.__TAURI_INTERNALS__ = {}
+    localStorage.setItem('tiny-note-context-consent:default', 'granted')
+    let persisted = note()
+    tauriMocks.invoke.mockImplementation(async (command, args) => {
+      if (command === 'settings_get') return { theme: 'system', language: 'zh-CN', fimEnabled: false }
+      if (['model_list', 'knowledge_base_list', 'background_task_list'].includes(command)) return []
+      if (command === 'note_update') {
+        persisted = { ...persisted, ...args.input, version: args.input.version + 1 }
+        return persisted
+      }
+      if (command === 'note_ai_task_create') {
+        if (!persisted.contentText.includes(args.selection.text.trim()) && !persisted.contentMarkdown.includes(args.selection.text.trim())) {
+          throw { message: '选区已失效，请重新选择' }
+        }
+        return { id: 'task-selection', kind: 'note_ai', title: 'AI 写作', status: 'queued', payload: {}, output: '', resourceKey: `note:${args.noteId}`, targetNoteId: args.noteId, createdAt: new Date().toISOString() }
+      }
+      return null
+    })
+    const wrapper = await mountEditor()
+    try {
+      const editor = wrapper.getComponent(EditorContent).props('editor')
+      editor.commands.setContent(html)
+      // Select across blocks, starting and ending inside text rather than at document boundaries.
+      let lastTextEnd = 0
+      editor.state.doc.descendants((node, pos) => { if (node.isText) lastTextEnd = pos + node.nodeSize })
+      const range = { from: 2, to: lastTextEnd - 1 }
+      editor.commands.setTextSelection(range)
+      await flushPromises()
+
+      if (entry === 'assistant') {
+        await wrapper.get('button[title="在对话中打开"]').trigger('mousedown')
+        wrapper.getComponent(NoteAssistantSidebar).vm.$emit('send', '润色选中文字')
+      } else if (entry === 'custom') {
+        await wrapper.get('button[title="AI 写作"]').trigger('mousedown')
+        await wrapper.get('.tiny-note-ai-textarea').setValue('润色选中文字')
+        await wrapper.get('.tiny-note-send-btn').trigger('click')
+      } else {
+        await wrapper.get('button[title="润色"]').trigger('mousedown')
+      }
+      await flushPromises()
+
+      const call = tauriMocks.invoke.mock.calls.find(([command]) => command === 'note_ai_task_create')
+      expect(call).toBeDefined()
+      const payload = call![1]
+      expect(payload.baseVersion).toBe(persisted.version)
+      expect(payload.selection).toMatchObject(range)
+      expect(persisted.contentText).toContain(payload.selection.text.trim())
+      expect(wrapper.text()).not.toContain('选区已失效')
+      if (entry === 'assistant') expect(payload.selection.text).toContain('第一行\n第二行')
+    } finally {
+      wrapper.unmount()
+    }
+  })
+
   it('keeps the current non-rich mode for AI replacement and disables insertion', async () => {
     const active = note('note-ai')
     localStorage.setItem('tiny-note-browser-state', JSON.stringify({

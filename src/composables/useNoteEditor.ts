@@ -2,6 +2,7 @@ import { computed, nextTick, onBeforeUnmount, onMounted, ref, toRaw, watch } fro
 import { useEditor } from '@tiptap/vue-3'
 import { TextSelection, type EditorState } from '@tiptap/pm/state'
 import type { Editor } from '@tiptap/core'
+import { getEditorSelectionText } from '../utils/editorSelection'
 import type { Mark, Node as ProseMirrorNode } from '@tiptap/pm/model'
 import type { EditorView } from '@tiptap/pm/view'
 import { protectNoteDraft, trackPersistedNote } from '../services/noteCache'
@@ -328,7 +329,7 @@ export function useNoteEditor(props: Readonly<NoteEditorProps>, emit: NoteEditor
   const canRedo = computed(() => { void editorStateTick.value; return editor.value?.can().redo() ?? false })
   const linkActive = computed(() => { void editorStateTick.value; return editor.value?.isActive('link') ?? false })
   const canEditLink = computed(() => { void editorStateTick.value; const instance = editor.value; return !!instance && (!instance.state.selection.empty || instance.isActive('link')) })
-  const selectedText = computed(() => { void editorStateTick.value; const instance = editor.value; if (!instance || instance.state.selection.empty) return ''; const { from, to } = instance.state.selection; return instance.state.doc.textBetween(from, to, '\n').trim() })
+  const selectedText = computed(() => { void editorStateTick.value; const instance = editor.value; if (!instance || instance.state.selection.empty) return ''; return getEditorSelectionText(instance, instance.state.selection).trim() })
   function shouldShowBubbleMenu({ state }: { state: EditorState }) { return richMode.value && !aiOutputOpen.value && !state.selection.empty && state.doc.textBetween(state.selection.from, state.selection.to, '\n').trim().length > 0 }
   const textColorPalette = ['#1c1917', '#dc2626', '#ea580c', '#ca8a04', '#16a34a', '#0891b2', '#2563eb', '#7c3aed', '#db2777']
   const highlightPalette = ['#fef08a', '#fed7aa', '#fecaca', '#bbf7d0', '#bae6fd', '#c7d2fe', '#e9d5ff', '#fbcfe8']
@@ -887,7 +888,7 @@ export function useNoteEditor(props: Readonly<NoteEditorProps>, emit: NoteEditor
       aiBusy.value = false
       return
     }
-    const selection = savedSelection ? { ...savedSelection, text: editor.value?.state.doc.textBetween(savedSelection.from, savedSelection.to, '\n') || requestText } : null
+    const selection = savedSelection ? { ...savedSelection, text: editor.value ? getEditorSelectionText(editor.value, savedSelection) : requestText } : null
     try {
       const task = await tasksStore.createNoteAI({ noteId: props.note.id, requestKey: aiRequestId.value, action, mode: action === 'interpret' ? 'chat' : 'edit', instruction, selection, modelProfileId: null, thinkingMode: 'disabled', baseVersion: props.note.version || 1 }, { preparedFlight: taskFlight })
       aiRequestId.value = task.id
@@ -901,7 +902,7 @@ export function useNoteEditor(props: Readonly<NoteEditorProps>, emit: NoteEditor
     const instance = editor.value
     if (!instance || instance.state.selection.empty) return null
     const { from, to } = instance.state.selection
-    const text = instance.state.doc.textBetween(from, to, '\n').trim()
+    const text = getEditorSelectionText(instance, { from, to }).trim()
     return text ? { from, to, text } : null
   }
   function openAssistant(selection: SelectionRange | null = captureAssistantSelection()) {
@@ -1267,7 +1268,7 @@ export function useNoteEditor(props: Readonly<NoteEditorProps>, emit: NoteEditor
     if (aiBusy.value || !aiResultAction.value) return
     const action = aiResultAction.value as AiAction
     let text = selectedText.value
-    if (savedSelection && editor.value) text = editor.value.state.doc.textBetween(savedSelection.from, savedSelection.to, '\n').trim()
+    if (savedSelection && editor.value) text = getEditorSelectionText(editor.value, savedSelection).trim()
     if (aiProposal.value?.status === 'draft' && window.__TAURI_INTERNALS__) {
       const proposalId = aiProposal.value.id
       void import('../services/tauri').then(({ invoke }) => invoke('note_edit_discard', { proposalId })).catch(() => {})

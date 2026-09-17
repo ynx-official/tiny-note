@@ -60,6 +60,7 @@ describe('ImageGenerationView history reuse', () => {
       const modeButton = wrapper.findAll('.image-mode-tabs button').find(button => button.text().includes(label))
       await modeButton.trigger('click')
       expect(wrapper.text()).toContain('从最近生成选择')
+      expect(wrapper.get('.image-upload-empty').text()).toContain('选择本地图片')
     }
 
     const editButton = wrapper.findAll('.image-mode-tabs button').find(button => button.text().includes('图片编辑'))
