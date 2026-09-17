@@ -23,6 +23,8 @@ interface NoteSaveContent {
 }
 
 const noteSaveQueues = new WeakMap<Note, Promise<Note>>()
+const catalogLoads = new WeakMap<object, Promise<void>>()
+const CATALOG_FRESH_MS = 30_000
 
 function noteSaveContent(note: Note): NoteSaveContent {
   return {
@@ -63,6 +65,13 @@ export const useNotesStore = defineStore('notes', {
     selectedNotebook: 'all',
     selectedTreeNode: { type: 'all', id: 'all' },
     loading: false,
+    initialized: false,
+    loadedAt: 0,
+    expandedNotebookIds: new Set<string>(),
+    sidebarScrollTop: 0,
+    sidebarCollapsed: false,
+    showDeleted: false,
+    externalSourcesOpen: false,
     loadError: '',
     saveTimer: null as ReturnType<typeof setTimeout> | null,
     saving: false,
@@ -74,17 +83,29 @@ export const useNotesStore = defineStore('notes', {
     visible: state => state.selectedNotebook === 'all' ? state.catalog.items : state.notebookPages[state.selectedNotebook]?.items || state.catalog.items.filter(note => note.notebookId === state.selectedNotebook)
   },
   actions: {
-    async load() {
+    async load({ force = true }: { force?: boolean } = {}) {
       const scope = this.cacheScope
+      if (!force && this.initialized && !this.loadError && !this.catalog.error && Date.now() - this.loadedAt < CATALOG_FRESH_MS) return
+      const pending = catalogLoads.get(scope)
+      if (!force && pending) return pending
       this.loading = true
       this.loadError = ''
-      try {
-        const [notebooks, sources] = await Promise.all([invoke('notebook_list'), invoke('external_markdown_list'), this.loadCatalog(), invoke('note_purge_expired')])
-        if (this.cacheScope !== scope) return
-        this.notebooks = notebooks
-        this.externalSources = sources
-      } catch (error) { if (this.cacheScope === scope) this.loadError = errorMessage(error, '笔记目录读取失败') }
-      finally { if (this.cacheScope === scope) this.loading = false }
+      // Trash retention is maintenance, not a dependency of reading live notes.
+      void invoke('note_purge_expired').catch(() => {})
+      const request = Promise.resolve().then(async () => {
+        if (this.cacheScope !== scope || catalogLoads.get(scope) !== request) return
+        try {
+          const [notebooks, sources] = await Promise.all([invoke('notebook_list'), invoke('external_markdown_list'), this.loadCatalog()])
+          if (this.cacheScope !== scope || catalogLoads.get(scope) !== request) return
+          this.notebooks = notebooks
+          this.externalSources = sources
+          this.initialized = this.catalog.loaded
+          if (this.initialized && !this.catalog.error) this.loadedAt = Date.now()
+        } catch (error) { if (this.cacheScope === scope && catalogLoads.get(scope) === request) this.loadError = errorMessage(error, '笔记目录读取失败') }
+        finally { if (this.cacheScope === scope && catalogLoads.get(scope) === request) this.loading = false }
+      })
+      catalogLoads.set(scope, request)
+      try { await request } finally { if (catalogLoads.get(scope) === request) catalogLoads.delete(scope) }
     },
     async loadCatalog() {
       const filter = { search: this.search || undefined, pinned: this.pinnedOnly ? true : undefined }
@@ -125,7 +146,9 @@ export const useNotesStore = defineStore('notes', {
       return existing || updated
     },
     async loadTemplates() {
-      this.templates = await invoke('note_template_list') || []
+      const scope = this.cacheScope
+      const templates = await invoke('note_template_list') || []
+      if (this.cacheScope === scope) this.templates = templates
       return this.templates
     },
     async create() {

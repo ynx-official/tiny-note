@@ -52,6 +52,7 @@ const selectedModel = computed(() => chatModels.value.find(model => model.id ===
 const providerIcons: Record<string, string> = { doubao: doubaoIcon, qwen: qwenIcon, zhipu: zhipuIcon, deepseek: deepseekIcon, kimi: kimiIcon, minimax: minimaxIcon, custom: otherIcon }
 const providerAliases: Record<string, string[]> = { doubao: ['doubao', '豆包'], qwen: ['qwen', '千问', '通义'], zhipu: ['zhipu', '智谱'], deepseek: ['deepseek'], kimi: ['kimi', 'moonshot'], minimax: ['minimax'], custom: ['custom', '其他', 'openai'] }
 const modelButtonLabel = computed(() => {
+  if (!workspaceReady.value) return t('loading')
   const mode = thinkingMode.value === 'deep' ? (locale.value === 'en' ? 'Deep' : '深度') : (locale.value === 'en' ? 'Quick' : '快速')
   if (!selectedModel.value) return locale.value === 'en' ? `Local AI · ${mode}` : `本地 AI · ${mode}`
   return `${selectedModel.value.model || selectedModel.value.name} · ${mode}`
@@ -88,6 +89,7 @@ const copy = computed<HomeCopy>(() => locale.value === 'en' ? {
 function open(path: string) { router.push(path) }
 function startNote() { router.push('/notes?new=1') }
 function openChat(value: string | Event = draft.value) {
+  if (!workspaceReady.value) return
   const message = (typeof value === 'string' ? value : draft.value).trim()
   sessionStorage.setItem('tiny-note-chat-pending', JSON.stringify({ message, references: references.value, modelProfileId: selectedModel.value?.id || null, thinkingMode: thinkingMode.value, mode: chatMode.value }))
   router.push({ path: '/chat', query: { from: 'home' } })
@@ -183,25 +185,14 @@ watch(chatModels, value => {
 
 <template>
   <div class="home-page" @click="closeMenus">
-    <div v-if="!workspaceReady" class="home-loader" role="status" aria-live="polite">
-      <div class="home-loader-grid" aria-hidden="true">
-        <span></span>
-        <span></span>
-        <span></span>
-        <span></span>
-        <span></span>
-        <span></span>
-      </div>
-      <span class="home-loader-label">{{ t('loading') }}</span>
-    </div>
-    <div v-else class="home-content">
+    <div class="home-content">
       <section class="home-hero" aria-labelledby="home-title">
         <div class="home-wordmark" aria-label="Tiny Note">
           <div class="home-mark"><NotebookPen :size="66" :stroke-width="1.55" /></div>
           <h1 id="home-title">Tiny Note</h1>
         </div>
         <p class="home-subtitle">{{ copy.subtitle }}</p>
-        <p v-if="!auth.authenticated" class="home-guest-hint">当前未登录 · 点击左上角狗狗头像登录</p>
+        <p class="home-guest-hint" :style="{ visibility: auth.initialized && !auth.authenticated ? 'visible' : 'hidden' }">当前未登录 · 点击左上角狗狗头像登录</p>
       </section>
 
       <section class="home-composer" aria-label="快速开始">
@@ -225,7 +216,7 @@ watch(chatModels, value => {
               </div>
             </div>
             <div class="home-model-anchor" @click.stop>
-              <button ref="modelSelectButton" class="home-select-button" type="button" :class="{ active: modelMenuOpen }" @click="toggleModelMenu"><Globe2 :size="16" /><span>{{ modelButtonLabel }}</span><ChevronDown :size="13" :class="{ expanded: modelMenuOpen }" /></button>
+              <button ref="modelSelectButton" class="home-select-button" type="button" :disabled="!workspaceReady" :class="{ active: modelMenuOpen }" @click="toggleModelMenu"><Globe2 :size="16" /><span>{{ modelButtonLabel }}</span><ChevronDown :size="13" :class="{ expanded: modelMenuOpen }" /></button>
               <div v-if="modelMenuOpen" class="home-model-menu" :class="{ 'is-above': modelMenuPlacement === 'above' }" :style="{ '--home-model-menu-max-height': `${modelMenuMaxHeight}px` }">
                 <div class="home-thinking-row"><span><Sparkles :size="15" />思考模式</span><div class="home-thinking-tabs"><button type="button" :class="{ active: thinkingMode === 'fast' }" @click="thinkingMode = 'fast'"><span>快速</span></button><button type="button" :class="{ active: thinkingMode === 'deep' }" @click="thinkingMode = 'deep'"><span>深度</span></button></div></div>
                 <div class="home-model-divider"></div>
@@ -236,7 +227,7 @@ watch(chatModels, value => {
           </div>
           <div class="home-composer-right">
             <div class="home-reference-anchor" @click.stop>
-              <button class="home-icon-button" type="button" :class="{ active: referenceMenuOpen }" :title="t('referenceFile')" @click="openReferenceMenu"><Paperclip :size="18" /></button>
+              <button class="home-icon-button" type="button" :disabled="!workspaceReady" :class="{ active: referenceMenuOpen }" :title="t('referenceFile')" @click="openReferenceMenu"><Paperclip :size="18" /></button>
               <div v-if="referenceMenuOpen" class="home-reference-menu">
                 <template v-if="!referencePicker">
                   <div class="home-reference-menu-title">{{ t('referenceContent') }}</div>
@@ -277,7 +268,7 @@ watch(chatModels, value => {
                 </template>
               </div>
             </div>
-            <button class="home-send-button" type="button" :class="{ active: draft.trim() }" :title="copy.start" @click="openChat"><Send :size="18" /></button>
+            <button class="home-send-button" type="button" :disabled="!workspaceReady" :class="{ active: draft.trim() }" :title="copy.start" @click="openChat"><Send :size="18" /></button>
           </div>
         </div>
       </section>
@@ -290,7 +281,7 @@ watch(chatModels, value => {
         </button>
       </section>
 
-      <p class="home-disclaimer"><Sparkles :size="13" /> {{ auth.authenticated ? '工作区内容已连接到你的云端账户' : '无需登录即可了解 Tiny Note，使用工作区功能时再登录' }}</p>
+      <p class="home-disclaimer" role="status" aria-live="polite"><Sparkles :size="13" /> {{ !workspaceReady ? '正在连接工作区…' : auth.authenticated ? '工作区内容已连接到你的云端账户' : '无需登录即可了解 Tiny Note，使用工作区功能时再登录' }}</p>
     </div>
   </div>
 </template>

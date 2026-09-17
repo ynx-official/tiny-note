@@ -1,16 +1,18 @@
-import { computed, nextTick, onMounted, onUnmounted, ref, watch } from 'vue'
+import { computed, nextTick, onActivated, onDeactivated, onMounted, onUnmounted, ref, watch } from 'vue'
 import { storeToRefs } from 'pinia'
 import { useRoute, useRouter } from 'vue-router'
 import { EventChannel } from '../services/eventChannel'
 import { marked } from 'marked'
 import DOMPurify from 'dompurify'
-import { invoke } from '../services/tauri'
+import { invoke as invokeCommand } from '../services/tauri'
+import type { CommandArgs, CommandName, CommandResult, NoCommandArgs } from '../services/commandMap'
 import { requestConfirmation } from '../services/appFeedback'
 import { useNotePicker } from './useNotePicker'
 import { useNotesStore } from '../stores/notes'
 import { useLibraryStore } from '../stores/library'
 import { useAppStore } from '../stores/app'
 import { useTasksStore } from '../stores/tasks'
+import { useChatSessionStore } from '../stores/chatSession'
 import { modelProviderLabel } from '../utils/modelProvider'
 import { isConversationSummaryIntent, isNoteEditIntent, parseNoteCommand } from '../utils/noteChatCommands'
 import { sanitizeEditorHtml, textFromEditorHtml } from '../utils/noteMarkdown'
@@ -45,6 +47,30 @@ export function useChatWorkspace() {
   const appStore = useAppStore()
   
   const tasksStore = useTasksStore()
+  const chatSession = useChatSessionStore()
+  const accountVersion = chatSession.cacheVersion
+  let disposed = false
+  let threadGeneration = 0
+  let viewActive = true
+  let ready = false
+  let followTail = true
+  let readingTop = 0
+  const initialQuery = { ...route.query }
+  const titleChannels = new Set<EventChannel<{ type?: string }>>()
+
+  function isCurrent(generation = threadGeneration) {
+    return !disposed && accountVersion === chatSession.cacheVersion && generation === threadGeneration
+  }
+  function assertCurrent(generation: number) {
+    if (!isCurrent(generation)) throw new Error('会话已切换')
+  }
+  async function invoke<K extends CommandName>(command: K, ...parameters: CommandArgs<K> extends NoCommandArgs ? [args?: CommandArgs<K>] : [args: CommandArgs<K>]): Promise<CommandResult<K>> {
+    const generation = threadGeneration
+    assertCurrent(generation)
+    const result = await invokeCommand(command, ...parameters)
+    assertCurrent(generation)
+    return result
+  }
   
   const { models } = storeToRefs(appStore)
   
@@ -59,6 +85,8 @@ export function useChatWorkspace() {
   const thinkingMode = ref('fast')
   
   const busy = ref(false)
+  const initializing = ref(true)
+  const loadingConversationId = ref('')
   
   const streamingText = ref('')
   
@@ -101,6 +129,7 @@ export function useChatWorkspace() {
   const approvalBusy = ref(false)
   
   const approvalError = ref('')
+  const approvalDecisions = ref<Array<{ toolCallId: string; toolName: string; decision: 'approve' | 'reject' }>>([])
   
   
   let responseFinalizing = false
@@ -109,18 +138,25 @@ export function useChatWorkspace() {
 
   let activeResponseChannel: EventChannel<AgentEvent> | null = null
   
-  const fromHome = computed(() => route.query.from === 'home')
+  const fromHome = ref(initialQuery.from === 'home')
   
   const selectedModel = computed(() => models.value.find(model => model.id === selectedModelId.value) || models.value.find(model => model.isDefault) || models.value[0] || null)
   
   const agentApprovalCount = computed(() => agentTools.value.filter(tool => tool.requireApproval).length)
   
-  const isBusy = computed(() => busy.value)
+  const isBusy = computed(() => busy.value || initializing.value || Boolean(loadingConversationId.value))
   
   function scrollToBottom() {
     nextTick(() => {
-      if (messagesRef.value) messagesRef.value.scrollTop = messagesRef.value.scrollHeight
+      if (isCurrent() && viewActive && route.path === '/chat' && followTail && messagesRef.value) messagesRef.value.scrollTop = messagesRef.value.scrollHeight
     })
+  }
+
+  function rememberReadingPosition() {
+    const element = messagesRef.value
+    if (!element || !viewActive) return
+    readingTop = element.scrollTop
+    followTail = element.scrollHeight - element.clientHeight - element.scrollTop < 48
   }
   
   async function ensureConversation() {
@@ -129,13 +165,18 @@ export function useChatWorkspace() {
     conversationId.value = conversation.id
     conversationVersion.value = conversation.version || 0
     conversationTitle.value = conversation.title
-    await router.replace({ path: '/chat', query: { id: conversation.id, ...(fromHome.value ? { from: 'home' } : {}) } })
+    // Creation can finish after the user has opened an article. Update the
+    // return target, but only replace the URL while this chat is still visible.
+    syncSession()
+    if (route.path === '/chat') await router.replace(chatSession.target)
     window.dispatchEvent(new CustomEvent('tiny-note-chat-updated'))
     return conversation.id
   }
   
   async function saveMessage(role: string, content: string, messageReferences: ChatReference[] = [], sources: JsonValue[] = [], proposalId: string | null = null, agentRunId: string | null = null): Promise<ViewMessage> {
+    const generation = threadGeneration
     const id = await ensureConversation()
+    assertCurrent(generation)
     const saved = await invoke('chat_add_message', { conversationId: id, role, content, references: messageReferences, sources, proposalId, agentRunId })
     conversationVersion.value += 1
     window.dispatchEvent(new CustomEvent('tiny-note-chat-updated'))
@@ -145,7 +186,10 @@ export function useChatWorkspace() {
 
   function watchTitleTask(id: string, taskId: string) {
     const channel = new EventChannel<{ type?: string }>()
+    const generation = threadGeneration
+    titleChannels.add(channel)
     channel.onmessage = event => {
+      if (!isCurrent(generation)) return
       if (!['completed', 'error', 'cancelled'].includes(event.type || '')) return
       void invoke('chat_get', { id }).then(thread => {
         if (conversationId.value === id) {
@@ -153,9 +197,9 @@ export function useChatWorkspace() {
           conversationVersion.value = thread.conversation.version || conversationVersion.value
         }
         window.dispatchEvent(new CustomEvent('tiny-note-chat-updated'))
-      })
+      }).catch(() => undefined)
     }
-    void channel.connect(taskId).catch(() => undefined)
+    void channel.connect(taskId).catch(() => undefined).finally(() => titleChannels.delete(channel))
   }
   
   async function pushResponse(content: string) {
@@ -175,14 +219,15 @@ export function useChatWorkspace() {
   }
   
   async function completeResponse() {
-    if (responseFinalizing) return
+    if (responseFinalizing || !isCurrent()) return
+    const generation = threadGeneration
     responseFinalizing = true
     const content = streamingText.value === '正在思考…' ? '模型没有返回内容，请换个问法再试。' : streamingText.value
     streamingText.value = ''
     try {
       await pushResponse(content)
       if (pendingSummary.value && content.trim()) await createNoteFromText(content, `${conversationTitle.value === '新对话' ? '对话总结' : conversationTitle.value} · 总结`)
-    } catch (cause) { error.value = errorMessage(cause, '回复保存失败') } finally { busy.value = false; responseSources.value = []; responseProposal.value = null; pendingSummary.value = false; agentSegments.value = []; currentAgentRunId.value = ''; pendingApproval.value = null; pendingInput.value = null; approvalBusy.value = false; approvalError.value = ''; responseFinalizing = false }
+    } catch (cause) { if (isCurrent(generation)) error.value = errorMessage(cause, '回复保存失败') } finally { if (isCurrent(generation)) { busy.value = false; responseSources.value = []; responseProposal.value = null; pendingSummary.value = false; agentSegments.value = []; currentAgentRunId.value = ''; pendingApproval.value = null; pendingInput.value = null; approvalBusy.value = false; approvalError.value = ''; responseFinalizing = false } }
   }
   
   function mapAgentStep(step: AgentStep): AgentSegment | null {
@@ -256,6 +301,7 @@ export function useChatWorkspace() {
   }
 
   async function settleFailedResponse(message: string) {
+    const generation = threadGeneration
     const detail = String(message || '模型请求失败').trim().slice(0, 1000)
     const notice = currentMode.value === 'agent' ? `Tiny Agent 执行失败：${detail}` : `模型请求失败：${detail}`
     finishStreamingAgentText()
@@ -275,6 +321,7 @@ export function useChatWorkspace() {
     } catch {
       // The visible error remains available even if the fallback write fails.
     }
+    if (!isCurrent(generation)) return
     streamingText.value = ''
     busy.value = false
     pendingSummary.value = false
@@ -323,7 +370,9 @@ export function useChatWorkspace() {
     // explicit reload before the user navigates back to Notes or Library.
     const activeBaseId = library.activeId
     const activePath = library.path
+    const generation = threadGeneration
     await Promise.allSettled([notesStore.load(), library.load()])
+    assertCurrent(generation)
     if (activeBaseId && library.activeId === activeBaseId && activePath) {
       await library.navigate(activePath, false)
     }
@@ -377,9 +426,12 @@ export function useChatWorkspace() {
   }
   
   function createResponseChannel() {
-    activeResponseChannel?.close()
+    activeResponseChannel?.dispose()
     const channel = new EventChannel<AgentEvent>()
+    const generation = threadGeneration
     channel.onmessage = async event => {
+      if (!isCurrent(generation) || activeResponseChannel !== channel) return
+      try {
       if (event.type === 'delta' || event.type === 'textDelta') {
         if (streamingText.value === '正在思考…') streamingText.value = ''
         streamingText.value += event.text || ''
@@ -437,6 +489,9 @@ export function useChatWorkspace() {
         if (currentMode.value === 'agent') await refreshDataAfterAgent()
         await completeResponse()
       }
+      } catch (cause) {
+        if (isCurrent(generation)) error.value = errorMessage(cause, '回复处理失败')
+      }
     }
     activeResponseChannel = channel
     return channel
@@ -445,6 +500,7 @@ export function useChatWorkspace() {
   async function decideApproval(decision: 'approve' | 'reject') {
     const approval = pendingApproval.value
     if (!approval || approvalBusy.value) return
+    const generation = threadGeneration
     error.value = ''
     approvalError.value = ''
     approvalBusy.value = true
@@ -454,35 +510,44 @@ export function useChatWorkspace() {
     if (segment) segment.status = decision === 'approve' ? 'running' : 'rejected'
     try {
       await invoke('agent_resume', { request: { runId: approval.runId, toolCallId: approval.toolCallId, approvalHash: approval.approvalHash, decision, reason: decision === 'reject' ? '用户拒绝执行此操作' : null }, onEvent: channel })
+      approvalDecisions.value.push({ toolCallId: approval.toolCallId, toolName: approval.toolName, decision })
       if (pendingApproval.value?.toolCallId === approval.toolCallId) pendingApproval.value = null
     } catch (cause) {
+      if (!isCurrent(generation)) return
       if (isProcessedApprovalError(cause) && await reconcileProcessedApproval(approval)) return
       approvalError.value = errorMessage(cause, '审批回传失败')
       error.value = approvalError.value
       pendingApproval.value = approval
       if (segment) segment.status = 'awaiting_approval'
-    } finally { approvalBusy.value = false }
+    } finally { if (isCurrent(generation)) approvalBusy.value = false }
   }
   
   async function sendMessage(value: string, messageReferences: ChatReference[] = references.value) {
     const message = String(value || '').trim()
-    if (!message || isBusy.value) return
+    if (!message || isBusy.value || !isCurrent()) return
+    const generation = threadGeneration
+    busy.value = true
+    followTail = true
     references.value = messageReferences || []
     const messageReferenceCopies = references.value.map(item => ({ ...item }))
     let savedUserMessage: ViewMessage
     try {
       savedUserMessage = await saveMessage('user', message, messageReferenceCopies)
     } catch (cause) {
+      if (!isCurrent(generation)) return
       error.value = errorMessage(cause, '消息保存失败')
+      busy.value = false
       return
     }
     messages.value.push(savedUserMessage)
-    draft.value = ''
+    if (draft.value.trim() === message) draft.value = ''
     error.value = ''
     try {
-      if (currentMode.value !== 'agent' && await performNoteCommand(parseNoteCommand(message), messageReferenceCopies)) return
+      if (currentMode.value !== 'agent' && await performNoteCommand(parseNoteCommand(message), messageReferenceCopies)) { busy.value = false; return }
     } catch (cause) {
+      if (!isCurrent(generation)) return
       error.value = errorMessage(cause, '笔记操作失败')
+      busy.value = false
       return
     }
     busy.value = true
@@ -495,10 +560,11 @@ export function useChatWorkspace() {
     currentAgentRunId.value = ''
     pendingSummary.value = isConversationSummaryIntent(message)
     const contextAllowed = await ensureContextConsent()
+    if (!isCurrent(generation)) return
     try {
       if (currentMode.value === 'agent') {
         if (!window.__TAURI_INTERNALS__) {
-          window.setTimeout(async () => { streamingText.value = `这是浏览器预览回复：${message}`; await completeResponse() }, 500)
+          window.setTimeout(async () => { if (isCurrent(generation)) { streamingText.value = `这是浏览器预览回复：${message}`; await completeResponse() } }, 500)
           return
         }
         const channel = createResponseChannel()
@@ -507,13 +573,14 @@ export function useChatWorkspace() {
         const targetNotes = messageReferenceCopies.filter(item => item.type === 'note')
         const editMode = targetNotes.length === 1 && isNoteEditIntent(message)
         if (!window.__TAURI_INTERNALS__) {
-          window.setTimeout(async () => { streamingText.value = `这是浏览器预览回复：${message}`; await completeResponse() }, 500)
+          window.setTimeout(async () => { if (isCurrent(generation)) { streamingText.value = `这是浏览器预览回复：${message}`; await completeResponse() } }, 500)
           return
         }
         const channel = createResponseChannel()
         await invoke('note_ai_stream', { request: { requestId: requestId.value, action: 'custom', mode: editMode ? 'edit' : 'chat', text: message, instruction: message, references: contextAllowed ? messageReferenceCopies : [], targetNoteId: targetNotes.length === 1 ? targetNotes[0].noteId : null, modelProfileId: selectedModel.value?.id || null, thinkingMode: thinkingMode.value, source: 'chat', conversationId: conversationId.value, messageId: savedUserMessage.id }, onEvent: channel })
       }
     } catch (cause) {
+      if (!isCurrent(generation)) return
       const message = errorMessage(cause, '模型请求失败')
       error.value = message
       await settleFailedResponse(message)
@@ -572,7 +639,13 @@ export function useChatWorkspace() {
   
   function newChat() {
     if (isBusy.value) return
-    activeResponseChannel?.close()
+    resetConversation()
+    if (route.path === '/chat') void router.replace({ path: '/chat', query: fromHome.value ? { from: 'home' } : {} })
+  }
+
+  function resetConversation() {
+    threadGeneration += 1
+    activeResponseChannel?.dispose()
     activeResponseChannel = null
     messages.value = []
     references.value = []
@@ -587,7 +660,18 @@ export function useChatWorkspace() {
     currentAgentRunId.value = ''
     pendingApproval.value = null
     pendingInput.value = null
-    router.replace({ path: '/chat', query: fromHome.value ? { from: 'home' } : {} })
+    approvalDecisions.value = []
+    approvalBusy.value = false
+    approvalError.value = ''
+    responseFinalizing = false
+    responseSources.value = []
+    responseProposal.value = null
+    pendingSummary.value = false
+    savedNote.value = null
+    requestId.value = ''
+    busy.value = false
+    followTail = true
+    readingTop = 0
   }
   
   async function toggleReferenceMenu() {
@@ -638,10 +722,10 @@ export function useChatWorkspace() {
   }
   
   async function loadConversation(id: string, force = false) {
-    if (!id || (!force && id === conversationId.value)) return
-    activeResponseChannel?.close()
-    activeResponseChannel = null
-    busy.value = false
+    if (!isCurrent() || !id || (!force && (id === conversationId.value || id === loadingConversationId.value))) return
+    resetConversation()
+    const generation = threadGeneration
+    loadingConversationId.value = id
     streamingText.value = ''
     try {
       const thread = await invoke('chat_get', { id })
@@ -658,6 +742,7 @@ export function useChatWorkspace() {
           message.agentSegments = (run.steps || []).map(mapAgentStep).filter((segment): segment is AgentSegment => Boolean(segment))
         } catch {}
       }))
+      assertCurrent(generation)
       if (currentMode.value === 'agent') {
         try {
           const pendingRun = await invoke('agent_get_pending_run', { conversationId: conversationId.value })
@@ -673,55 +758,110 @@ export function useChatWorkspace() {
           }
         } catch {}
       }
+      assertCurrent(generation)
       const storedReferences = messages.value.filter(item => item.role === 'user').at(-1)?.references || []
       references.value = (storedReferences as JsonValue[]).filter((item: JsonValue): item is ChatReference & JsonValue => Boolean(item && typeof item === 'object' && !Array.isArray(item) && typeof item.key === 'string' && (item.type === 'note' || item.type === 'file') && typeof item.name === 'string'))
       draft.value = ''
       error.value = ''
     } catch (cause) {
+      if (!isCurrent(generation)) return
       error.value = errorMessage(cause, '历史对话读取失败')
       conversationId.value = ''
       conversationVersion.value = 0
       messages.value = []
-    }
+    } finally { if (isCurrent(generation)) loadingConversationId.value = '' }
   }
   
   function handleDeleted(event: Event) { if ((event as CustomEvent<{ id?: string }>).detail?.id === conversationId.value) newChat() }
   
+  function syncSession() {
+    if (!isCurrent()) return
+    chatSession.$patch({ available: true, conversationId: conversationId.value || loadingConversationId.value, fromHome: fromHome.value, title: conversationTitle.value,
+      status: pendingApproval.value ? 'approval' : pendingInput.value ? 'input' : busy.value ? 'running' : error.value ? 'error' : 'idle' })
+  }
+  watch([conversationId, loadingConversationId, conversationTitle, fromHome, busy, pendingApproval, pendingInput, error], syncSession, { immediate: true, flush: 'sync' })
   watch(() => [messages.value.length, streamingText.value, busy.value], scrollToBottom, { flush: 'post' })
-  
-  watch(() => route.query.id, id => { if (id) loadConversation(String(id)); else if (conversationId.value && !isBusy.value) { conversationId.value = ''; conversationVersion.value = 0; conversationTitle.value = '新对话'; messages.value = [] } })
-  
-  onMounted(async () => {
-    await appStore.initialize()
-    await Promise.allSettled([
-      notesStore.notebooks.length ? Promise.resolve() : notesStore.load(),
-      library.bases.length ? Promise.resolve() : library.load(),
-      invoke('agent_list_tools').then(value => { agentTools.value = value || [] })
-    ])
-    window.addEventListener('tiny-note-chat-deleted', handleDeleted)
-    await tasksStore.initialize()
-    if (route.query.id) {
-      selectedModelId.value = models.value.find(model => model.isDefault)?.id || models.value[0]?.id || ''
-      await loadConversation(String(route.query.id))
-      return
-    }
-    let pending: { modelProfileId?: string; thinkingMode?: string; mode?: string; references?: ChatReference[]; message?: string } | null = null
+
+  type PendingMessage = { modelProfileId?: string; thinkingMode?: string; mode?: string; references?: ChatReference[]; message?: string }
+  function takePendingMessage(): PendingMessage | null {
     try {
-      pending = JSON.parse(sessionStorage.getItem('tiny-note-chat-pending') || 'null')
+      const pending = JSON.parse(sessionStorage.getItem('tiny-note-chat-pending') || 'null') as PendingMessage | null
       sessionStorage.removeItem('tiny-note-chat-pending')
-    } catch {}
+      return pending
+    } catch { return null }
+  }
+  const initialPending = initialQuery.id ? null : takePendingMessage()
+
+  async function startPendingMessage(pending: PendingMessage | null) {
     selectedModelId.value = pending?.modelProfileId || models.value.find(model => model.isDefault)?.id || models.value[0]?.id || ''
     thinkingMode.value = pending?.thinkingMode || 'fast'
     currentMode.value = pending?.mode || 'chat'
     references.value = pending?.references || []
     if (pending?.message) await sendMessage(pending.message, references.value)
+  }
+
+  // KeepAlive watchers still run while hidden. Other workspaces' query IDs
+  // must never be interpreted as conversation IDs or clear this draft.
+  watch(() => [route.path, route.query.id], async ([path, id]) => {
+    if (!ready || !isCurrent() || path !== '/chat') return
+    if (id) { await loadConversation(String(id)); return }
+    const pending = takePendingMessage()
+    if (!pending) return
+    if (isBusy.value) {
+      draft.value = pending.message || draft.value
+      error.value = '当前会话仍在进行，补充内容已保留在输入框。'
+      await router.replace(chatSession.target)
+      return
+    }
+    resetConversation()
+    fromHome.value = route.query.from === 'home'
+    await startPendingMessage(pending)
   })
-  
-  onUnmounted(() => {
-    activeResponseChannel?.close()
+
+  onMounted(async () => {
+    const generation = threadGeneration
+    window.addEventListener('tiny-note-chat-deleted', handleDeleted)
+    try {
+      await appStore.initialize()
+      assertCurrent(generation)
+      await Promise.allSettled([
+        notesStore.notebooks.length ? Promise.resolve() : notesStore.load(),
+        library.bases.length ? Promise.resolve() : library.load(),
+        invoke('agent_list_tools').then(value => { agentTools.value = value || [] })
+      ])
+      assertCurrent(generation)
+      await tasksStore.initialize()
+      assertCurrent(generation)
+      ready = true
+      initializing.value = false
+      const id = route.path === '/chat' ? route.query.id : initialQuery.id
+      if (id) {
+        selectedModelId.value = models.value.find(model => model.isDefault)?.id || models.value[0]?.id || ''
+        await loadConversation(String(id))
+      } else await startPendingMessage(initialPending)
+    } catch (cause) {
+      if (isCurrent()) { initializing.value = false; error.value = errorMessage(cause, '会话加载失败') }
+    }
+  })
+
+  onDeactivated(() => { viewActive = false; referenceMenuOpen.value = false })
+  onActivated(() => {
+    viewActive = true
+    nextTick(() => {
+      if (messagesRef.value && isCurrent()) messagesRef.value.scrollTop = followTail ? messagesRef.value.scrollHeight : readingTop
+    })
+  })
+
+  function dispose() {
+    disposed = true
+    activeResponseChannel?.dispose()
     activeResponseChannel = null
+    for (const channel of titleChannels) channel.dispose()
+    titleChannels.clear()
     window.removeEventListener('tiny-note-chat-deleted', handleDeleted)
-  })
+  }
+  watch(() => chatSession.cacheVersion, dispose, { flush: 'sync' })
+  onUnmounted(dispose)
   
   async function selectMode(mode: string) {
     if (isBusy.value || modeSaving.value || mode === currentMode.value) return
@@ -790,7 +930,7 @@ export function useChatWorkspace() {
     createResponseChannel, decideApproval, sendMessage, submit, summarizeConversation, stop, respondInput, goBack,
     newChat, toggleReferenceMenu, addNoteReference, addFileReference, removeReference, reviewProposal, copyMessage, loadConversation,
     handleDeleted, selectMode, toolLabels, toolLabel, jsonStringField, toolEventLabel, toolEventTitle,
-    formatToolDetail, modelProviderLabel, tinyAgentAvatar
+    formatToolDetail, modelProviderLabel, tinyAgentAvatar, rememberReadingPosition, approvalDecisions
   }
 }
 

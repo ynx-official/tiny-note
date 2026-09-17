@@ -1,4 +1,6 @@
 <script setup lang="ts">
+import { onMounted, ref } from 'vue'
+import { useDelayedBusy } from '../../composables/useDelayedBusy'
 import { ArrowDownAZ, BookOpen, Download, FileClock, FilePlus2, FolderInput, FolderOpen, FolderPlus, FolderTree, Pin, Plus, Search as SearchIcon, Trash2 } from 'lucide-vue-next'
 import NotePageControls from './NotePageControls.vue'
 import NotebookTreeItem from '../NotebookTreeItem.vue'
@@ -7,6 +9,9 @@ import type { NotesWorkspace } from '../../composables/useNotesWorkspace'
 
 const props = defineProps<{ workspace: NotesWorkspace }>()
 const workspace = props.workspace
+const treeElement = ref<HTMLElement | null>(null)
+const showCatalogLoading = useDelayedBusy(() => workspace.store.catalog.loading)
+onMounted(() => { if (treeElement.value) treeElement.value.scrollTop = workspace.store.sidebarScrollTop })
 const { externalAreaMenu, externalSourceMenu, externalPickerBusy, markdownImportScan, markdownImportBusy, markdownImportAvailable, openExternalAreaMenu, openExternalSourceMenu, pickExternalFiles, pickExternalFolder, pickMarkdownNotebook, cancelMarkdownNotebookImport, confirmMarkdownNotebookImport, removeExternalSource, openTrash, t, store, library, route, showDeleted, searchMode, query, sidebarCollapsed, sidebarWidth, isResizing, onResizeStart, newNoteMenu, folderItemMenu, folderItemMenuStyle, importInput, expandedNotebookIds, externalSourcesOpen, notebookTree, list, create, createFromTemplate, importFiles, createRootNotebook, toggleNewNoteMenu, selectAllNotes, selectFolder, selectNote, toggleNotebook, toggleExternalSources, clearExternalSources, openExternalSource, openFolderItemMenu, closeMenus, closeContextMenu, restoreContextNote, deleteContextNote, renameNotebook, deleteNotebook, createChildNotebook, moveNotebookByPrompt, dropTreeNode, openContextMenu } = workspace
 </script>
 
@@ -39,12 +44,13 @@ const { externalAreaMenu, externalSourceMenu, externalPickerBusy, markdownImport
           <svg class="search-icon" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
           <input v-model="query" class="search-input" autofocus placeholder="搜索笔记" @keydown.escape="searchMode = false; query = ''" />
         </div>
-        <div class="notebook-tree" role="tree" aria-label="笔记本和笔记" @contextmenu.self.prevent.stop="openExternalAreaMenu">
+        <div ref="treeElement" class="notebook-tree" role="tree" aria-label="笔记本和笔记" :aria-busy="store.catalog.loading" @scroll.passive="store.sidebarScrollTop = treeElement?.scrollTop || 0" @contextmenu.self.prevent.stop="openExternalAreaMenu">
           <button class="tree-row tree-all-row" :class="{ active: store.selectedTreeNode.type === 'all' && !showDeleted }" @click="selectAllNotes">
             <BookOpen :size="16" :stroke-width="1.9" /><span class="tree-label">{{ t('allNotes') }}</span><small>{{ store.catalog.total }}</small>
           </button>
           <p v-if="store.loadError" role="alert">{{ store.loadError }} <button type="button" @click="store.load()">重试</button></p>
-          <NotePageControls v-if="store.catalog.loading || store.catalog.error" :page="store.catalog" @retry="store.loadCatalog()" />
+          <span v-if="showCatalogLoading" class="note-catalog-status" role="status">正在更新目录…</span>
+          <NotePageControls v-if="store.catalog.error" :page="store.catalog" @retry="store.loadCatalog()" />
           <NotebookTreeItem
             v-for="node in notebookTree"
             :key="node.id"
@@ -52,7 +58,7 @@ const { externalAreaMenu, externalSourceMenu, externalPickerBusy, markdownImport
             :expanded="expandedNotebookIds"
             :selected="store.selectedTreeNode"
             @more-notes="id => store.loadNotebook(id, true)"
-            @retry-notes="id => store.loadNotebook(id, Boolean(store.notebookPages[id]?.nextCursor))"
+            @retry-notes="id => store.loadNotebook(id, store.notebookPages[id]?.retryAppend)"
             @toggle="toggleNotebook"
             @select-notebook="selectFolder"
             @select-note="selectNote"
@@ -60,11 +66,11 @@ const { externalAreaMenu, externalSourceMenu, externalPickerBusy, markdownImport
             @note-menu="openContextMenu"
             @drop-node="dropTreeNode"
           />
-          <div v-if="!notebookTree.length" class="note-list-empty">{{ query ? '没有匹配的笔记' : t('emptyNotes') }}</div>
+          <div v-if="!notebookTree.length && store.initialized && !store.catalog.loading && !store.loadError && !store.catalog.error" class="note-list-empty">{{ query ? '没有匹配的笔记' : t('emptyNotes') }}</div>
           <button class="tree-row" :class="{ active: showDeleted }" @click="openTrash"><Trash2 :size="16" /><span class="tree-label">{{ t('recentlyDeleted') }}</span></button>
           <div v-if="showDeleted">
             <button v-for="note in store.trashPage.items" :key="note.id" class="tree-row tree-note-row" @click="selectNote(note)" @contextmenu.prevent="openContextMenu($event, note)"><span class="tree-label">{{ note.title }}</span></button>
-            <NotePageControls :page="store.trashPage" @more="store.loadTrash(true)" @retry="store.loadTrash(Boolean(store.trashPage.nextCursor))" />
+            <NotePageControls :page="store.trashPage" @more="store.loadTrash(true)" @retry="store.loadTrash(store.trashPage.retryAppend)" />
           </div>
           <div class="tree-row tree-external-row" :class="{ active: store.selectedTreeNode.type === 'external' }">
             <button type="button" class="tree-row-main" :aria-expanded="externalSourcesOpen" @click="toggleExternalSources">

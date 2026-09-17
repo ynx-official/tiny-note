@@ -6,6 +6,7 @@ import { getCurrentWindow } from '@tauri-apps/api/window'
 import { AlertCircle, BookOpen, CalendarDays, CheckCircle2, ClipboardList, FileText, ImagePlus, ListTodo, LoaderCircle, Settings, Minus, Square, Copy, X, PanelLeftClose, PanelLeftOpen, Home, Tags, Clock } from 'lucide-vue-next'
 import { useTasksStore } from '../stores/tasks'
 import { useAuthStore } from '../stores/auth'
+import { useChatSessionStore } from '../stores/chatSession'
 import { getActivePinia } from 'pinia'
 import { resetWorkspaceSession } from '../services/workspaceSession'
 import { resolveAvatarSource } from '../utils/avatar'
@@ -17,6 +18,7 @@ const router = useRouter()
 const { t, te } = useI18n()
 const tasksStore = useTasksStore()
 const auth = useAuthStore()
+const chatSession = useChatSessionStore()
 const pinia = getActivePinia()
 const railCollapsed = ref(false)
 const isMaximized = ref(false)
@@ -52,7 +54,7 @@ function showRailTooltip(event: Event, text: string) {
 function hideRailTooltip() { railTooltip.visible = false }
 function navigate(path: string) {
   hideRailTooltip()
-  router.push(path)
+  router.push(path === '/' ? chatSession.target : path)
 }
 function openAvatar() {
   hideRailTooltip()
@@ -144,13 +146,16 @@ watch(() => props.loginRequested, requested => {
 }, { immediate: true })
 watch(() => auth.authenticated, (authenticated, previouslyAuthenticated) => {
   if (!authenticated && previouslyAuthenticated && pinia) void resetWorkspaceSession(pinia)
-})
+}, { flush: 'sync' })
+watch(() => auth.user?.userId, (id, previousId) => {
+  if (id && previousId && id !== previousId && pinia) void resetWorkspaceSession(pinia)
+}, { flush: 'sync' })
 </script>
 <template>
   <div class="window-shell app-container">
     <header class="topbar tauri-drag-region" @mousedown="startWindowDrag">
       <div class="topbar-leading"><button class="sidebar-toggle-btn" :title="railCollapsed ? '展开导航' : '收起导航'" @click="railCollapsed = !railCollapsed"><PanelLeftOpen v-if="railCollapsed" :size="16" :stroke-width="1.8" /><PanelLeftClose v-else :size="16" :stroke-width="1.8" /></button></div>
-      <div class="tab-strip"><button v-for="tab in [{ key: 'home', label: t('appName'), path: '/', icon: Home }, { key: 'notes', label: t('notes'), path: '/notes', icon: FileText }, { key: 'library', label: t('library'), path: '/library', icon: BookOpen }, { key: 'tags', label: t('tags'), path: '/tags', icon: Tags }, { key: 'calendar', label: calendarLabel, path: '/calendar', icon: CalendarDays }, { key: 'todos', label: todosLabel, path: '/todos', icon: ClipboardList }]" :key="tab.key" :class="['tab', { active: active === tab.key }]" @click="navigate(tab.path)"><component :is="tab.icon" :size="14" :stroke-width="1.8" /><span>{{ tab.label }}</span><span v-if="active === tab.key" class="tab-close">×</span></button><button v-if="active === 'settings'" class="tab active" @click="navigate('/settings')"><Settings :size="14" :stroke-width="1.8" /><span>{{ t('settings') }}</span><span class="tab-close">×</span></button><div class="tabs-area-spacer"></div></div>
+      <div class="tab-strip"><button v-for="tab in [{ key: 'home', label: t('appName'), path: '/', icon: Home }, { key: 'notes', label: t('notes'), path: '/notes', icon: FileText }, { key: 'library', label: t('library'), path: '/library', icon: BookOpen }, { key: 'tags', label: t('tags'), path: '/tags', icon: Tags }, { key: 'calendar', label: calendarLabel, path: '/calendar', icon: CalendarDays }, { key: 'todos', label: todosLabel, path: '/todos', icon: ClipboardList }]" :key="tab.key" :class="['tab', { active: active === tab.key }]" @click="navigate(tab.path)"><component :is="tab.icon" :size="14" :stroke-width="1.8" /><span>{{ tab.label }}</span><span v-if="tab.key === 'home' && chatSession.statusLabel" class="chat-tab-status" :class="`is-${chatSession.status}`" role="status"><i aria-hidden="true"></i>{{ chatSession.statusLabel }}</span><span v-if="active === tab.key" class="tab-close">×</span></button><button v-if="active === 'settings'" class="tab active" @click="navigate('/settings')"><Settings :size="14" :stroke-width="1.8" /><span>{{ t('settings') }}</span><span class="tab-close">×</span></button><div class="tabs-area-spacer"></div></div>
       <div class="window-actions"><button aria-label="Minimize" title="Minimize" @click="minimizeWindow"><Minus :size="15" /></button><button :aria-label="isMaximized ? 'Restore' : 'Maximize'" :title="isMaximized ? 'Restore' : 'Maximize'" @click="toggleMaximize"><Copy v-if="isMaximized" :size="13" /><Square v-else :size="13" /></button><button class="close" aria-label="Close" title="Close" @click="closeWindow"><X :size="15" /></button></div>
     </header>
     <div class="app-body main-body">

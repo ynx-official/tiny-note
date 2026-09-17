@@ -16,6 +16,8 @@
 - [威胁模型](03-architecture/threat-model.md)
 - [测试计划](04-quality/test-plan.md)
 - [启动性能与 TypeScript 迁移](04-quality/startup-performance-and-typescript.md)
+- [启动与笔记加载连续性](04-quality/interaction-continuity.md)
+- [会话跨 Tab 连续性](04-quality/chat-navigation-continuity.md)
 - [构建说明](05-operations/build.md)
 - [里程碑](06-delivery/milestones.md)
 - [服务端权威 AI 与后台任务实施计划](06-delivery/server-authoritative-ai-tasks-implementation-plan.md)

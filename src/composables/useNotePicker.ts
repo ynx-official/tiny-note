@@ -8,7 +8,7 @@ export function useNotePicker(filter: () => NotePageFilter = () => ({})) {
   let timer: ReturnType<typeof setTimeout> | undefined
   function refresh() { return loadNotePage(page, { ...filter(), search: query.value.trim() || undefined }) }
   function more() { return loadNotePage(page, page.filter, true) }
-  function retry() { return page.nextCursor ? more() : refresh() }
+  function retry() { return page.retryAppend ? more() : refresh() }
   watch(query, () => { clearTimeout(timer); timer = setTimeout(refresh, 250) })
   onScopeDispose(() => clearTimeout(timer))
   return { page, query, refresh, more, retry }

@@ -82,7 +82,7 @@ onMounted(async () => { await Promise.all([tags.load(), invoke('notebook_list').
         <button v-for="note in tags.notes" :key="note.id" class="tagged-note-row" @click="openNote(note)">
           <FileText :size="17" /><span class="tagged-note-copy"><strong>{{ note.title || t('untitled') }}</strong><small>{{ notebookPath(note.notebookId) }}</small></span><time>{{ new Date(note.updatedAt).toLocaleDateString() }}</time><span v-if="tags.activeTag" class="remove-link" @click.stop="removeNote(note.id)">{{ t('removeFromTag') }}</span>
         </button>
-        <NotePageControls :page="tags.page" @more="tags.loadMoreNotes" @retry="tags.page.items.length ? tags.loadMoreNotes() : tags.loadNotes()" />
+        <NotePageControls :page="tags.page" @more="tags.loadMoreNotes" @retry="tags.page.retryAppend ? tags.loadMoreNotes() : tags.loadNotes()" />
         <div v-if="!tags.notes.length && !tags.page.loading && !tags.page.error" class="tags-empty"><Tag :size="34" /><p>{{ t('noTaggedNotes') }}</p><small>{{ tags.activeTag ? t('batchAddHint') : t('allNotesTagged') }}</small></div>
       </div>
     </section>
@@ -90,7 +90,7 @@ onMounted(async () => { await Promise.all([tags.load(), invoke('notebook_list').
       <section class="tag-picker" role="dialog" aria-modal="true" :aria-label="t('addNotes')">
         <header><div><h2>{{ t('addNotes') }}</h2><small>{{ tags.activeTag?.name }}</small></div><button @click="pickerOpen = false">×</button></header>
         <div class="tags-search"><Search :size="15" /><input v-model="pickerSearch" autofocus :placeholder="t('searchNotes')" /></div>
-        <div class="tag-picker-list"><label v-for="note in availableNotes" :key="note.id"><input type="checkbox" :checked="selectedNoteIds.has(note.id)" @change="toggleSelection(note.id)" /><span><strong>{{ note.title || t('untitled') }}</strong><small>{{ notebookPath(note.notebookId) }}</small></span></label><NotePageControls :page="pickerPage" @more="loadNotePage(pickerPage, pickerPage.filter, true)" @retry="pickerPage.items.length ? loadNotePage(pickerPage, pickerPage.filter, true) : loadPicker()" /><p v-if="!availableNotes.length && !pickerPage.loading && !pickerPage.error">{{ t('noAvailableNotes') }}</p></div>
+        <div class="tag-picker-list"><label v-for="note in availableNotes" :key="note.id"><input type="checkbox" :checked="selectedNoteIds.has(note.id)" @change="toggleSelection(note.id)" /><span><strong>{{ note.title || t('untitled') }}</strong><small>{{ notebookPath(note.notebookId) }}</small></span></label><NotePageControls :page="pickerPage" @more="loadNotePage(pickerPage, pickerPage.filter, true)" @retry="pickerPage.retryAppend ? loadNotePage(pickerPage, pickerPage.filter, true) : loadPicker()" /><p v-if="!availableNotes.length && !pickerPage.loading && !pickerPage.error">{{ t('noAvailableNotes') }}</p></div>
         <footer><button @click="pickerOpen = false">{{ t('cancel') }}</button><button class="primary" :disabled="!selectedNoteIds.size" @click="addSelected">{{ t('add') }} {{ selectedNoteIds.size || '' }}</button></footer>
       </section>
     </div>

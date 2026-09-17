@@ -13,6 +13,27 @@ vi.mock('@tauri-apps/api/core', () => ({ invoke: vi.fn() }))
 describe('remote command optimistic versions', () => {
   beforeEach(() => { apiRequest.mockReset() })
 
+  it('does not fetch a terminal result after a chat subscription is detached', async () => {
+    apiRequest.mockResolvedValue({ id: 'run-1', status: 'running' })
+    const { remoteInvoke } = await import('./remoteCommands')
+    const channel = { connect: vi.fn(async () => []), emit: vi.fn() }
+    await expect(remoteInvoke('note_ai_stream', { request: { requestId: 'run-1' }, onEvent: channel } as never)).resolves.toBe('')
+    expect(apiRequest).toHaveBeenCalledTimes(1)
+  })
+
+  it('does not reopen a disposed chat stream when the create response arrives late', async () => {
+    let complete!: (value: unknown) => void
+    apiRequest.mockImplementation(() => new Promise(resolve => { complete = resolve }))
+    const { remoteInvoke } = await import('./remoteCommands')
+    const channel = { isDisposed: false, connect: vi.fn(async () => []), emit: vi.fn() }
+    const request = remoteInvoke('agent_invoke', { request: { requestId: 'request-1' }, onEvent: channel } as never)
+    channel.isDisposed = true
+    complete({ id: 'run-1', status: 'running' })
+    await request
+    expect(channel.connect).not.toHaveBeenCalled()
+    expect(apiRequest).toHaveBeenCalledTimes(1)
+  })
+
   it('passes bounded catalog filters and opaque cursors to the summary endpoint', async () => {
     const page = { items: [], total: 0, nextCursor: '', hasMore: false }
     apiRequest.mockResolvedValue(page)

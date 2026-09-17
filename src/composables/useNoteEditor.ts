@@ -709,9 +709,12 @@ export function useNoteEditor(props: Readonly<NoteEditorProps>, emit: NoteEditor
     resetTransientEditorState()
     if (props.note?.external) editorMode.value = 'rich'
     resetEditorSession(props.note)
-    const links = id ? (await store.listLinks(id).catch(() => [])) || [] : []
-    if (cancelled) return
-    noteLinks.value = links
+    noteLinks.value = []
+    // Reading position belongs to the body render, not to the links request.
+    // Late metadata must neither move the reader nor overwrite a newer article.
+    if (id) void store.listLinks(id).then(links => {
+      if (!cancelled) noteLinks.value = links || []
+    }).catch(() => {})
     await nextTick()
     if (cancelled) return
     setupSplitObserver()

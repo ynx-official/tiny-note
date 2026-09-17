@@ -217,18 +217,7 @@ body, button, input, select, textarea { font-family: -apple-system, BlinkMacSyst
 /* Note list context menu. It is fixed to the viewport so it remains aligned
 /* Tiny Note welcome page: Friday-inspired composition using Tiny Note's own mark and copy. */
 .home-page { width:100%; height:100%; min-height:0; display:flex; align-items:center; justify-content:center; overflow:auto; background:var(--bg-secondary); }
-.home-loader { display:grid; justify-items:center; gap:14px; color:var(--text-tertiary); }
-.home-loader-grid { --home-loader-color:var(--text-tertiary); --home-loader-size:70px; width:var(--home-loader-size); height:var(--home-loader-size); display:grid; grid-template-columns:repeat(3,1fr); gap:5px; }
-.home-loader-grid span { width:100%; height:100%; background-color:var(--home-loader-color); animation:home-loader-blink .6s alternate infinite linear; }
-.home-loader-grid span:nth-child(1) { animation-delay:0ms; }
-.home-loader-grid span:nth-child(2) { animation-delay:200ms; }
-.home-loader-grid span:nth-child(3) { animation-delay:300ms; }
-.home-loader-grid span:nth-child(4) { animation-delay:400ms; }
-.home-loader-grid span:nth-child(5) { animation-delay:500ms; }
-.home-loader-grid span:nth-child(6) { animation-delay:600ms; }
-.home-loader-label { font-size:12px; line-height:1.4; }
-@keyframes home-loader-blink { 0% { opacity:.3; transform:scale(.5) rotate(5deg); } 50% { opacity:1; transform:scale(1); } }
-@media (prefers-reduced-motion:reduce) { .home-loader-grid span { animation:none; opacity:.72; transform:none; } }
+.home-composer button:disabled { opacity:.45; cursor:default; }
 .home-content { width:min(100%, 860px); display:flex; flex-direction:column; align-items:center; gap:34px; padding:52px 28px 38px; }
 .home-hero { display:flex; flex-direction:column; align-items:center; gap:10px; }
 .home-wordmark { display:flex; align-items:center; gap:12px; color:var(--text-primary); }
@@ -633,6 +622,19 @@ body, button, input, select, textarea { font-family: -apple-system, BlinkMacSyst
 .window-shell.window-shell .rail-item.active { color:var(--text-primary); background:var(--bg-active); }
 .window-shell.window-shell .content-wrap { padding:0; }
 .window-shell.window-shell .content-card { width:100%; height:100%; border:0; border-radius:0; box-shadow:none; }
+.tab-strip .chat-tab-status { display:inline-flex; flex:0 0 auto; align-items:center; gap:4px; color:var(--text-secondary); font-size:10px; font-weight:500; white-space:nowrap; }
+.tab-strip .chat-tab-status i { width:5px; height:5px; flex:0 0 auto; border-radius:50%; background:currentColor; }
+.tab-strip .chat-tab-status.is-approval,.tab-strip .chat-tab-status.is-input { color:#90600c; }
+.tab-strip .chat-tab-status.is-running { color:#26715a; }
+.tab-strip .chat-tab-status.is-error { color:#b42318; }
+[data-theme='dark'] .tab-strip .chat-tab-status.is-approval,[data-theme='dark'] .tab-strip .chat-tab-status.is-input { color:#efbd68; }
+[data-theme='dark'] .tab-strip .chat-tab-status.is-running { color:#80ceb0; }
+[data-theme='dark'] .tab-strip .chat-tab-status.is-error { color:#fda29b; }
+.window-shell.window-shell .tab:has(.chat-tab-status) { min-width:176px; }
+@media (max-width:1150px) {
+  .window-shell.window-shell .tab { min-width:0; flex:1; padding:0 8px; }
+  .window-shell.window-shell .tab:has(.chat-tab-status) { min-width:164px; flex:0 0 auto; }
+}
 .window-shell.window-shell > .topbar,
 .window-shell.window-shell > .app-body,
 .window-shell.window-shell .rail,

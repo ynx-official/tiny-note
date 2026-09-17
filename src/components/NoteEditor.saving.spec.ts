@@ -4,6 +4,30 @@ import MarkdownSourceEditor from './MarkdownSourceEditor.vue'
 import { mountEditor, note } from './NoteEditor.testHarness'
 
 describe('NoteEditor save and synchronization', () => {
+  it('restores reading position before slow links arrive without moving a reader who has scrolled', async () => {
+    const first = note('slow-links-first')
+    const second = note('slow-links-second')
+    const wrapper = await mountEditor(first)
+    wrapper.notesStore.notes.push(second)
+    const scroller = wrapper.get('.editor-render-pane').element as HTMLElement
+    Object.defineProperties(scroller, {
+      scrollHeight: { value: 1200, configurable: true },
+      clientHeight: { value: 400, configurable: true }
+    })
+    localStorage.setItem('tiny-note:reading-position:slow-links-second', '0.5')
+    let finish!: (value: []) => void
+    const links = vi.spyOn(wrapper.notesStore, 'listLinks').mockImplementationOnce(() => new Promise(resolve => { finish = resolve }))
+    await wrapper.setProps({ note: second })
+    await flushPromises()
+    try {
+      expect(scroller.scrollTop).toBe(400)
+      scroller.scrollTop = 600
+      finish([])
+      await flushPromises()
+      expect(scroller.scrollTop).toBe(600)
+    } finally { finish([]); links.mockRestore(); wrapper.unmount() }
+  })
+
   it('flushes an exact Markdown draft before switching notes', async () => {
     const first = note('note-source')
     const second = note('note-next')

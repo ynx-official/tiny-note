@@ -1,4 +1,5 @@
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
+import { storeToRefs } from 'pinia'
 import { useRoute, useRouter } from 'vue-router'
 import { useI18n } from 'vue-i18n'
 import { useNotesStore } from '../stores/notes'
@@ -38,20 +39,19 @@ export function useNotesWorkspace() {
   
   const { t } = useI18n()
   
-  const showDeleted = ref(false)
-  
-  const searchMode = ref(false)
+  const searchMode = ref(Boolean(store.search))
   
   const query = ref(store.search)
   const bodyLoading = ref(false)
   const bodyError = ref('')
+  const initializing = ref(!store.initialized && !store.active)
   let selectionSequence = 0
   let retryNoteId = ''
   let mounted = false
   let disposed = false
   let unregisterEditorFlush = () => {}
   
-  const sidebarCollapsed = ref(false)
+  const { sidebarCollapsed, expandedNotebookIds, showDeleted, externalSourcesOpen } = storeToRefs(store)
   
   const { sidebarWidth, isResizing, onResizeStart } = useWorkspaceSidebar()
   
@@ -95,10 +95,6 @@ export function useNotesWorkspace() {
   
   let contextKnowledgeTimer: number | null = null
   
-  const expandedNotebookIds = ref(new Set<string>())
-  
-  const externalSourcesOpen = ref(false)
-
   const externalAreaMenu = ref<{ x: number; y: number } | null>(null)
 
   const externalSourceMenu = ref<{ source: ExternalMarkdownSource; x: number; y: number } | null>(null)
@@ -171,15 +167,21 @@ export function useNotesWorkspace() {
     unregisterEditorFlush = registerNoteEditorFlush(flushCurrent)
     // The notes page can be the first route mounted. Load its own data instead
     // of relying on another tab (for example LibraryView) to hydrate the store.
-    await store.load()
-    if (disposed) return
-    await Promise.all([store.loadTemplates(), tagsStore.load()])
-    if (disposed) return
-    mounted = true
-    if (route.query.new) await createFromQuery()
-    else if (route.query.note) await openRoutedNote()
-    else if (store.active) await selectNote({ id: store.active.id })
-    else if (store.listed[0]) await selectNote(store.listed[0])
+    const hadCatalog = store.initialized
+    const loading = store.load({ force: false })
+    const scope = store.cacheScope
+    // Templates and tag metadata are optional for reading an article. Do not
+    // load the unrelated tag workspace or hold the editor behind these requests.
+    void store.loadTemplates().catch(() => {})
+    void invoke('tag_list').then(tags => { if (store.cacheScope === scope) tagsStore.tags = tags || [] }).catch(() => {})
+    try {
+      if (!hadCatalog) await loading
+      if (disposed || store.cacheScope !== scope) return
+      mounted = true
+      if (route.query.new) await createFromQuery()
+      else if (route.query.note) await openRoutedNote()
+      else if (!showDeleted.value && !store.active && store.listed[0]) await selectNote(store.listed[0])
+    } finally { initializing.value = false }
   })
   
   watch(() => route.query.new, createFromQuery)
@@ -480,7 +482,7 @@ export function useNotesWorkspace() {
       store.activeId = note.id
       showDeleted.value = Boolean(note.deletedAt)
       store.selectedTreeNode = { type: note.external ? 'external-note' : 'note', id: note.id }
-      if (!note.deletedAt) await revealNote(note)
+      if (!note.deletedAt) void revealNote(note)
     } catch (error) {
       if (sequence === selectionSequence) bodyError.value = errorMessage(error, '笔记读取失败，请重试')
     } finally { if (sequence === selectionSequence) bodyLoading.value = false }
@@ -778,7 +780,7 @@ export function useNotesWorkspace() {
   })
 
   return {
-    bodyLoading, bodyError, retryNote, openTrash, store, library, tagsStore, route, router, t, showDeleted, searchMode,
+    initializing, bodyLoading, bodyError, retryNote, openTrash, store, library, tagsStore, route, router, t, showDeleted, searchMode,
     query, sidebarCollapsed, sidebarWidth, isResizing, onResizeStart, newNoteMenu, folderItemMenu, folderItemMenuStyle,
     importInput, noteEditorRef, tocVisible, contextMenu, contextMoveOpen, contextMenuRef, contextMoveAnchorRef, contextMoveSubmenuRef,
     contextMoveStyle, contextKnowledgeOpen, contextTagsOpen, contextTagIds, contextKnowledgeAnchorRef, contextKnowledgeSubmenuRef, contextKnowledgeStyle, contextMoveTimer,

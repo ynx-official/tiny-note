@@ -16,7 +16,11 @@ function query(values: Record<string, unknown>): string {
 async function runAI(request: Record<string, unknown>, channel: EventChannel<unknown>, kind: string): Promise<string> {
   const requestId = String(request.requestId || crypto.randomUUID())
   await apiRequest<BackgroundTask>('/ai/runs', { method: 'POST', body: { ...request, requestId, kind } })
-  await channel.connect(requestId)
+  if (channel.isDisposed) return ''
+  const terminal = await channel.connect(requestId)
+  // Detaching a view/account is not an AI failure and must not perform a
+  // result read using a possibly replaced login session.
+  if (channel.isDisposed || !terminal.length) return ''
   const task = await apiRequest<BackgroundTask | null>(`/tasks/${encodeURIComponent(requestId)}`)
   if (!task) throw new ApiError('task_not_found', 'AI 任务不存在', 404)
   if (task.status !== 'succeeded') throw new ApiError(task.errorCode || 'ai_request_failed', task.errorMessage || 'AI 任务执行失败', 500, task)
@@ -25,13 +29,16 @@ async function runAI(request: Record<string, unknown>, channel: EventChannel<unk
 
 async function runAgent(request: Record<string, unknown>, channel: EventChannel<unknown>): Promise<AgentRun> {
   const run = await apiRequest<AgentRun>('/agent/runs', { method: 'POST', body: request })
-  await channel.connect(run.id)
+  if (channel.isDisposed) return run
+  const terminal = await channel.connect(run.id)
+  if (channel.isDisposed || !terminal.length) return run
   const completed = await apiRequest<AgentRun | null>(`/agent/runs/${encodeURIComponent(run.id)}`)
   if (!completed) throw new ApiError('agent_run_not_found', 'Agent 运行不存在', 404)
   return completed
 }
 
 function reconnectAgentStream(channel: EventChannel<unknown>, runId: string): void {
+  if (channel.isDisposed) return
   void channel.connect(runId).catch(cause => {
     channel.emit({
       type: 'error',
@@ -42,17 +49,11 @@ function reconnectAgentStream(channel: EventChannel<unknown>, runId: string): vo
 }
 
 async function readRemoteImageAsset(assetId: string): Promise<ImageAsset> {
-  const asset = await apiRequest<ImageAsset & { downloadUrl: string }>(`/image-assets/${encodeURIComponent(assetId)}`)
-  const response = await fetch(asset.downloadUrl)
-  if (!response.ok) throw new ApiError('image_download_failed', '图片内容下载失败', response.status)
-  const blob = await response.blob()
-  const dataUri = await new Promise<string>((resolve, reject) => {
-    const reader = new FileReader()
-    reader.onload = () => resolve(String(reader.result || ''))
-    reader.onerror = () => reject(reader.error || new Error('图片内容读取失败'))
-    reader.readAsDataURL(blob)
-  })
-  return { ...asset, dataUri }
+  // Read through the authenticated API so previews and exports do not depend
+  // on bucket CORS rules or the lifetime of a signed object URL.
+  const asset = await apiRequest<ImageAsset | null>(`/image-assets/${encodeURIComponent(assetId)}`)
+  if (!asset?.dataUri) throw new ApiError('image_content_unavailable', '图片内容不可用，请稍后重试', 502)
+  return asset
 }
 
 function bytesToBase64(bytes: number[]): string {

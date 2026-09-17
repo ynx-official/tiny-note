@@ -8,12 +8,19 @@ export interface NotePageState {
   nextCursor: string
   notebookCounts: Record<string, number>
   loading: boolean
+  loaded: boolean
+  retryAppend: boolean
   error: string
   filter: NotePageFilter
 }
 const sequences = new WeakMap<NotePageState, number>()
 export function createNotePageState(): NotePageState {
-  return { items: [], total: 0, hasMore: false, nextCursor: '', notebookCounts: {}, loading: false, error: '', filter: {} }
+  return { items: [], total: 0, hasMore: false, nextCursor: '', notebookCounts: {}, loading: false, loaded: false, retryAppend: false, error: '', filter: {} }
+}
+function filterKey(filter: NotePageFilter): string {
+  return JSON.stringify(Object.entries({ ...filter, limit: filter.limit || 80 })
+    .filter(([key, value]) => key !== 'cursor' && value !== undefined)
+    .sort(([left], [right]) => left.localeCompare(right)))
 }
 export async function loadNotePage(state: NotePageState, filter: NotePageFilter = state.filter, append = false): Promise<boolean> {
   if (append && (state.loading || !state.hasMore)) return false
@@ -21,13 +28,20 @@ export async function loadNotePage(state: NotePageState, filter: NotePageFilter 
   sequences.set(state, sequence)
   const request = { ...filter, limit: filter.limit || 80, cursor: append ? state.nextCursor : undefined }
   if (!append) {
+    const sameFilter = filterKey(state.filter) === filterKey(filter)
     state.filter = { ...filter, cursor: undefined }
-    state.items = []
-    state.total = 0
-    state.hasMore = false
-    state.nextCursor = ''
-    state.notebookCounts = {}
+    // Keep the last successful view during revalidation, but never mislabel
+    // results from another notebook, account-owned page or search filter.
+    if (!sameFilter) {
+      state.items = []
+      state.total = 0
+      state.hasMore = false
+      state.nextCursor = ''
+      state.notebookCounts = {}
+      state.loaded = false
+    }
   }
+  state.retryAppend = append
   state.loading = true
   state.error = ''
   try {
@@ -39,6 +53,7 @@ export async function loadNotePage(state: NotePageState, filter: NotePageFilter 
     state.hasMore = page.hasMore
     state.nextCursor = page.nextCursor
     if (page.notebookCounts) state.notebookCounts = page.notebookCounts
+    state.loaded = true
     return true
   } catch (cause) {
     if (sequences.get(state) === sequence) state.error = errorMessage(cause, '笔记列表读取失败')

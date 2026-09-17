@@ -7,6 +7,49 @@ const item = (id: string) => ({ id, title: id, excerpt: 'summary' }) as NoteSumm
 const page = (ids: string[], cursor = ''): NotePage => ({ items: ids.map(item), total: 3, hasMore: Boolean(cursor), nextCursor: cursor })
 beforeEach(() => { vi.mocked(invoke).mockReset() })
 
+it('keeps rows, totals and cursors visible while refreshing the same filter', async () => {
+  const state = createNotePageState()
+  vi.mocked(invoke).mockResolvedValueOnce({ ...page(['old'], 'next'), notebookCounts: { book: 3 } })
+  await loadNotePage(state, { notebookId: 'book' })
+  let resolve!: (value: NotePage) => void
+  vi.mocked(invoke).mockReturnValueOnce(new Promise(done => { resolve = done }))
+  const refresh = loadNotePage(state, { notebookId: 'book', search: undefined })
+  expect(state.items.map(note => note.id)).toEqual(['old'])
+  expect(state.total).toBe(3)
+  expect(state.notebookCounts).toEqual({ book: 3 })
+  expect(state.nextCursor).toBe('next')
+  resolve(page(['new']))
+  await refresh
+  expect(state.items.map(note => note.id)).toEqual(['new'])
+})
+
+it('keeps a failed refresh visible and retries the first page, not its old next cursor', async () => {
+  const state = createNotePageState()
+  vi.mocked(invoke).mockResolvedValueOnce(page(['old'], 'next'))
+  await loadNotePage(state, { notebookId: 'book' })
+  vi.mocked(invoke).mockRejectedValueOnce(new Error('offline'))
+  await loadNotePage(state)
+  expect(state.items.map(note => note.id)).toEqual(['old'])
+  expect(state.retryAppend).toBe(false)
+  vi.mocked(invoke).mockResolvedValueOnce(page(['new']))
+  await loadNotePage(state, state.filter, state.retryAppend)
+  expect(invoke).toHaveBeenLastCalledWith('note_page', { notebookId: 'book', limit: 80, cursor: undefined })
+})
+
+it('never presents the previous filter results as the new filter', async () => {
+  const state = createNotePageState()
+  vi.mocked(invoke).mockResolvedValueOnce(page(['old']))
+  await loadNotePage(state, { notebookId: 'old' })
+  let resolve!: (value: NotePage) => void
+  vi.mocked(invoke).mockReturnValueOnce(new Promise(done => { resolve = done }))
+  const refresh = loadNotePage(state, { notebookId: 'new' })
+  expect(state.items).toEqual([])
+  expect(state.loaded).toBe(false)
+  resolve(page(['new']))
+  await refresh
+  expect(state.loaded).toBe(true)
+})
+
 it('ignores stale pages after a filter change', async () => {
   const state = createNotePageState()
   let resolve!: (value: NotePage) => void

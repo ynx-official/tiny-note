@@ -79,23 +79,17 @@ export const useAppStore = defineStore('app', {
       if (this.initialized && !force) return
       if (initialization && !force) return initialization
       initialization = (async () => {
-        const [settingsResult, modelsResult] = await Promise.allSettled([
-          invoke('settings_get'),
-          invoke('model_list')
+        await Promise.all([
+          invoke('settings_get').then(settings => {
+            this.settings = { ...DEFAULT_SETTINGS, ...settings }
+            this.settingsError = null
+            applyTheme(this.settings.theme)
+          }, error => { this.settingsError = error }),
+          invoke('model_list').then(models => {
+            this.models = models || []
+            this.modelsError = null
+          }, error => { this.modelsError = error })
         ])
-        if (settingsResult.status === 'fulfilled') {
-          this.settings = { ...DEFAULT_SETTINGS, ...settingsResult.value }
-          this.settingsError = null
-        } else {
-          this.settingsError = settingsResult.reason
-        }
-        applyTheme(this.settings.theme)
-        if (modelsResult.status === 'fulfilled') {
-          this.models = modelsResult.value || []
-          this.modelsError = null
-        } else {
-          this.modelsError = modelsResult.reason
-        }
         this.initialized = true
       })()
       try {

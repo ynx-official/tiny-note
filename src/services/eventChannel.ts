@@ -16,8 +16,18 @@ export class EventChannel<T = Record<string, unknown>> {
   private controller: AbortController | null = null
   private cursor = 0
   private runId = ''
+  private disposed = false
 
-  emit(event: T): void { this.onmessage?.(event) }
+  get isDisposed(): boolean { return this.disposed }
+
+  emit(event: T): void { if (!this.disposed) this.onmessage?.(event) }
+
+  /** Permanently release an account/conversation-owned subscription. */
+  dispose(): void {
+    this.disposed = true
+    this.onmessage = null
+    this.close()
+  }
 
   close(): void {
     this.controller?.abort()
@@ -25,6 +35,7 @@ export class EventChannel<T = Record<string, unknown>> {
   }
 
   async connect(runId: string): Promise<StreamEvent[]> {
+    if (this.disposed) return []
     this.close()
     if (this.runId !== runId) this.cursor = 0
     this.runId = runId

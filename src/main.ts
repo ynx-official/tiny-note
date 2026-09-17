@@ -9,10 +9,7 @@ import './styles/app-feedback.css'
 import './styles/startup.css'
 
 const cachedLanguage = localStorage.getItem('tiny-note-language') || 'zh-CN'
-const cachedTheme = localStorage.getItem('tiny-note-theme')
-if (cachedTheme === 'dark' || cachedTheme === 'light') {
-  document.documentElement.dataset.theme = cachedTheme
-}
+// index.html resolves the theme before styles or the first body paint.
 
 const i18n = createI18n({
   legacy: false,
@@ -37,11 +34,6 @@ async function bootstrapMainWindow() {
 
   const appStore = appStoreModule.useAppStore(pinia)
   const authStore = authStoreModule.useAuthStore(pinia)
-  const bootShell = document.querySelector<HTMLElement>('.boot-shell')
-  if (bootShell) {
-    bootShell.classList.add('is-ready')
-    await new Promise(resolve => window.setTimeout(resolve, 360))
-  }
   void runMainWindowBootstrap({
     mountShell: () => app.mount('#app'),
     hydrate: async () => {

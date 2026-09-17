@@ -62,7 +62,7 @@ describe('HomeView startup data', () => {
     })
   })
 
-  it('shows the home loader until startup data is ready', async () => {
+  it('keeps the composer and draft in place while startup data loads', async () => {
     let resolveSettings: (value: unknown) => void = () => {}
     let resolveModels: (value: unknown) => void = () => {}
     mocks.invoke.mockImplementation((command: string) => {
@@ -78,16 +78,22 @@ describe('HomeView startup data', () => {
     })
     await flushPromises()
 
-    expect(wrapper.get('.home-loader').attributes('role')).toBe('status')
-    expect(wrapper.findAll('.home-loader-grid span')).toHaveLength(6)
-    expect(wrapper.find('.home-content').exists()).toBe(false)
+    expect(wrapper.find('.home-loader').exists()).toBe(false)
+    const composer = wrapper.get('.home-content').element
+    await wrapper.get('textarea').setValue('启动期间写下的想法')
+    expect(wrapper.get('.home-send-button').attributes('disabled')).toBeDefined()
+    await wrapper.get('textarea').trigger('keydown', { key: 'Enter' })
+    expect(mocks.push).not.toHaveBeenCalled()
 
     resolveSettings({ theme: 'system', language: 'zh-CN', fimEnabled: false, exportDirectory: '' })
     resolveModels([])
     await flushPromises()
 
     expect(wrapper.find('.home-loader').exists()).toBe(false)
-    expect(wrapper.get('.home-content').exists()).toBe(true)
+    expect(wrapper.get('.home-content').element).toBe(composer)
+    expect(wrapper.get('textarea').element.value).toBe('启动期间写下的想法')
+    expect(wrapper.get('.home-send-button').attributes('disabled')).toBeUndefined()
+    wrapper.unmount()
   })
 
   it('keeps notes and library data off the startup path until a reference picker is opened', async () => {

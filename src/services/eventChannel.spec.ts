@@ -19,6 +19,18 @@ function streamResponse(chunks: string[]) {
 describe('EventChannel', () => {
   beforeEach(() => apiFetch.mockReset())
 
+  it('cannot reconnect or deliver late events after its owning chat is disposed', async () => {
+    const { EventChannel } = await import('./eventChannel')
+    const channel = new EventChannel()
+    const received = vi.fn()
+    channel.onmessage = received
+    channel.dispose()
+    channel.emit({ type: 'completed' })
+    expect(await channel.connect('old-run')).toEqual([])
+    expect(received).not.toHaveBeenCalled()
+    expect(apiFetch).not.toHaveBeenCalled()
+  })
+
   it('parses fragmented SSE frames and forwards the transport-neutral payload', async () => {
     apiFetch.mockResolvedValue(streamResponse([
       'id: 1\nevent: delta\ndata: {"eventId":1,"runId":"run-1","sequence":1,"type":"delta","pay',

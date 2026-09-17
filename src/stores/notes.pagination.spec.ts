@@ -9,6 +9,18 @@ vi.mock('../services/tauri', () => ({ invoke: vi.fn() }))
 const fullNote = (): Note => ({ id: 'one', title: 'one', notebookId: 'book', knowledgeBaseId: null, contentHtml: '<p>Full body</p>', contentText: 'Full body', contentMarkdown: 'Full body', version: 1, pinned: false, deletedAt: null, createdAt: '', updatedAt: '' })
 beforeEach(() => { setActivePinia(createPinia()); vi.mocked(invoke).mockReset() })
 
+it('does not start a queued catalog load after the account scope resets', async () => {
+  vi.mocked(invoke).mockImplementation(async command => command === 'note_page'
+    ? { items: [noteSummary(fullNote())], total: 1, hasMore: false, nextCursor: '' }
+    : [])
+  const store = useNotesStore()
+  const loading = store.load({ force: false })
+  store.$reset()
+  await loading
+  expect(vi.mocked(invoke).mock.calls.map(([command]) => command)).not.toContain('note_page')
+  expect(store.catalog.items).toEqual([])
+})
+
 it('loads summaries and notebook totals without fetching any full bodies', async () => {
   vi.mocked(invoke).mockImplementation(async command => {
     if (command === 'note_page') return { items: [noteSummary(fullNote())], total: 10000, notebookCounts: { book: 10000 }, hasMore: true, nextCursor: 'next' }

@@ -6,11 +6,15 @@ import { useI18n } from 'vue-i18n'
 import AppShell from './components/AppShell.vue'
 import AppPromptDialog from './components/AppPromptDialog.vue'
 import AppFeedbackHost from './components/AppFeedbackHost.vue'
+import { useChatSessionStore } from './stores/chatSession'
+import { useAuthStore } from './stores/auth'
 const AppUpdateDialog = defineAsyncComponent(() => import('./components/AppUpdateDialog.vue'))
 const AppExportLocationDialog = defineAsyncComponent(() => import('./components/AppExportLocationDialog.vue'))
 const AppExportSuccessDialog = defineAsyncComponent(() => import('./components/AppExportSuccessDialog.vue'))
 
 const route = useRoute(); const router = useRouter(); const { locale } = useI18n()
+const chatSession = useChatSessionStore()
+const auth = useAuthStore()
 const active = computed(() => route.path === '/' || route.path.startsWith('/home') || route.path.startsWith('/chat') ? 'home' : route.path.startsWith('/library') ? 'library' : route.path.startsWith('/tags') ? 'tags' : route.path.startsWith('/calendar') ? 'calendar' : route.path.startsWith('/todos') ? 'todos' : route.path.startsWith('/images') ? 'images' : route.path.startsWith('/tasks') ? 'tasks' : route.path.startsWith('/settings') ? 'settings' : 'notes')
 const loginRequested = computed(() => route.query.login === '1')
 const loginRedirect = computed(() => typeof route.query.redirect === 'string' && route.query.redirect.startsWith('/') ? route.query.redirect : '')
@@ -30,7 +34,11 @@ onBeforeUnmount(() => unlistenNavigate?.())
 watch(locale, value => localStorage.setItem('tiny-note-language', value))
 </script>
 <template>
-  <AppShell :active="active" :login-requested="loginRequested" :login-redirect="loginRedirect"><router-view /></AppShell>
+  <AppShell :active="active" :login-requested="loginRequested" :login-redirect="loginRedirect">
+    <router-view v-slot="{ Component }">
+      <KeepAlive :key="chatSession.cacheVersion" include="ChatView"><component :is="Component" v-if="route.path !== '/chat' || auth.authenticated" /></KeepAlive>
+    </router-view>
+  </AppShell>
   <AppPromptDialog />
   <AppFeedbackHost />
   <template v-if="deferredHostsReady"><AppUpdateDialog /><AppExportLocationDialog /><AppExportSuccessDialog /></template>

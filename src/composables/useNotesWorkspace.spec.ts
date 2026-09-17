@@ -12,15 +12,76 @@ vi.mock('vue-router', () => ({ useRoute: () => mocks.route, useRouter: () => ({ 
 vi.mock('vue-i18n', () => ({ useI18n: () => ({ t: (key: string) => key }) }))
 const note = (id: string): Note => ({ id, title: id, notebookId: null, knowledgeBaseId: null, contentHtml: `<p>${id}</p>`, contentText: id, contentMarkdown: id, pinned: false, version: 1, deletedAt: null, createdAt: '', updatedAt: '' })
 
-async function workspace() {
+async function workspace(pinia = createPinia()) {
   let result!: NotesWorkspace
-  const wrapper = mount(defineComponent({ setup() { result = useNotesWorkspace(); return () => h('div') } }), { global: { plugins: [createPinia()] } })
+  const wrapper = mount(defineComponent({ setup() { result = useNotesWorkspace(); return () => h('div') } }), { global: { plugins: [pinia] } })
   await flushPromises()
   return { workspace: result, wrapper }
 }
 beforeEach(() => {
   mocks.route.query = {}
   mocks.invoke.mockReset().mockImplementation(async command => command === 'note_page' ? { items: [], total: 0, hasMore: false, nextCursor: '' } : [])
+})
+
+it('opens the initial article without waiting for templates, tags or expired-trash maintenance', async () => {
+  const pending: Array<() => void> = []
+  mocks.invoke.mockImplementation(command => {
+    if (command === 'note_template_list' || command === 'tag_list' || command === 'note_purge_expired') return new Promise(resolve => pending.push(() => resolve([])))
+    if (command === 'note_page') return Promise.resolve({ items: [{ id: 'first', version: 1 }], total: 1, hasMore: false, nextCursor: '' })
+    if (command === 'note_get') return Promise.resolve(note('first'))
+    return Promise.resolve([])
+  })
+  const { workspace: work, wrapper } = await workspace()
+  try { expect(work.store.activeId).toBe('first') }
+  finally { pending.forEach(resolve => resolve()); await flushPromises(); wrapper.unmount() }
+})
+
+it('keeps the trash view read-only after leaving and returning', async () => {
+  const pinia = createPinia()
+  const first = await workspace(pinia)
+  first.workspace.showDeleted.value = true
+  first.wrapper.unmount()
+  const second = await workspace(pinia)
+  expect(second.workspace.showDeleted.value).toBe(true)
+  second.wrapper.unmount()
+})
+
+it('restores expanded folders and sidebar position on return without refreshing a fresh catalog', async () => {
+  const pinia = createPinia()
+  const first = await workspace(pinia)
+  await first.workspace.toggleNotebook('book')
+  first.workspace.store.sidebarScrollTop = 120
+  await flushPromises()
+  first.wrapper.unmount()
+  mocks.invoke.mockClear()
+  const second = await workspace(pinia)
+  try {
+    expect(second.workspace.expandedNotebookIds.value.has('book')).toBe(true)
+    expect(second.workspace.store.sidebarScrollTop).toBe(120)
+    expect(mocks.invoke.mock.calls.map(([command]) => command)).not.toContain('notebook_list')
+    second.workspace.store.$reset()
+    expect(second.workspace.expandedNotebookIds.value.size).toBe(0)
+    expect(second.workspace.store.sidebarScrollTop).toBe(0)
+  } finally { second.wrapper.unmount() }
+})
+
+it('ends body loading before the containing folder page arrives', async () => {
+  const { workspace: work, wrapper } = await workspace()
+  work.store.notebooks = [{ id: 'book', name: 'Book', parentId: null, description: '', createdAt: '', updatedAt: '' }]
+  let finish!: (value: unknown) => void
+  mocks.invoke.mockImplementation(command => command === 'note_get'
+    ? Promise.resolve({ ...note('next'), notebookId: 'book' })
+    : new Promise(resolve => { finish = resolve }))
+  const selection = work.selectNote({ id: 'next' })
+  await flushPromises()
+  try {
+    expect(work.store.activeId).toBe('next')
+    expect(work.bodyLoading.value).toBe(false)
+  } finally {
+    finish({ items: [], total: 0, hasMore: false, nextCursor: '' })
+    await selection
+    wrapper.unmount()
+  }
 })
 
 it('keeps the current editor when its draft cannot be saved, and does not fetch the next body', async () => {

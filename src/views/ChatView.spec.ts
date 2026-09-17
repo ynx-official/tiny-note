@@ -3,9 +3,9 @@ import { createPinia } from 'pinia'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import ChatView from './ChatView.vue'
 
-const testState = vi.hoisted(() => ({ invoke: vi.fn(), route: { query: {} }, router: { push: vi.fn(), replace: vi.fn() }, tasks: [], channels: [] }))
+const testState = vi.hoisted(() => ({ invoke: vi.fn(), route: { path: '/chat', query: {} }, router: { push: vi.fn(), replace: vi.fn() }, tasks: [], channels: [] }))
 vi.mock('@tauri-apps/api/core', () => ({ Channel: class { onmessage = () => {} } }))
-vi.mock('../services/eventChannel', () => ({ EventChannel: class { onmessage = () => {}; connect = vi.fn(() => new Promise(() => {})); close = vi.fn(); constructor() { testState.channels.push(this) } } }))
+vi.mock('../services/eventChannel', () => ({ EventChannel: class { onmessage = () => {}; connect = vi.fn(() => new Promise(() => {})); close = vi.fn(); dispose() { this.close() }; constructor() { testState.channels.push(this) } } }))
 vi.mock('../services/tauri', () => ({ invoke: testState.invoke }))
 vi.mock('vue-router', () => ({ useRoute: () => testState.route, useRouter: () => testState.router }))
 
@@ -82,10 +82,10 @@ describe('ChatView background tasks', () => {
     await channel.onmessage({ type: 'toolCall', runId: 'run-1', toolCallId: 'tool-1', toolName: 'create_note', arguments: { title: '第一篇' } })
     await channel.onmessage({ type: 'approvalRequired', runId: 'run-1', toolCallId: 'tool-1', toolName: 'create_note', arguments: { title: '第一篇' }, approvalHash: 'hash-1' })
     await flushPromises()
-    expect(window.document.querySelector('.agent-approval-dialog')?.textContent).toContain('第一篇')
+    expect(window.document.querySelector('.chat-page-messages .agent-approval-card')?.textContent).toContain('第一篇')
 
     ;(window.document.querySelector('.agent-approval-actions .is-approve') as HTMLButtonElement).click(); await flushPromises()
-    expect(window.document.querySelector('.agent-approval-dialog')).toBeNull()
+    expect(window.document.querySelector('.chat-page-messages .agent-approval-card')).toBeNull()
     expect(testState.invoke).toHaveBeenCalledWith('agent_resume', expect.objectContaining({ onEvent: channel }))
 
     await channel.onmessage({ type: 'toolCall', runId: 'run-1', toolCallId: 'tool-2', toolName: 'delete_note', arguments: { id: 'note-2' } })
@@ -145,7 +145,7 @@ describe('ChatView background tasks', () => {
 
     ;(window.document.querySelector('.agent-approval-actions .is-approve') as HTMLButtonElement).click(); await flushPromises()
 
-    expect(window.document.querySelector('.agent-approval-dialog')).toBeNull()
+    expect(window.document.querySelector('.chat-page-messages .agent-approval-card')).toBeNull()
     expect(wrapper.find('.chat-page-error').exists()).toBe(false)
     expect(wrapper.get('[data-agent-event="tool"]').classes()).toContain('status-completed')
     wrapper.unmount()

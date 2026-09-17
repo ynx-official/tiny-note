@@ -134,8 +134,8 @@ const { lowlight, store, library, appStore, tasksStore, t, locale, aiBusy, aiTex
         <button type="button" class="external-note-import" @click="importExternalSource">导入到笔记</button>
       </div>
     </div>
-    <div v-if="noteLinks.length" class="note-metadata">
-      <div class="note-links" aria-label="关联笔记"><span>关联笔记</span><button v-for="link in noteLinks" :key="link.sourceNoteId + '-' + link.targetNoteId" type="button" @click="store.activeId = link.sourceNoteId === note.id ? link.targetNoteId : link.sourceNoteId">{{ link.targetTitle }}</button></div>
+    <div class="note-links-slot">
+      <div v-if="noteLinks.length" class="note-metadata note-links" aria-label="关联笔记"><span>关联笔记</span><button v-for="link in noteLinks" :key="link.sourceNoteId + '-' + link.targetNoteId" type="button" @click="store.activeId = link.sourceNoteId === note.id ? link.targetNoteId : link.sourceNoteId">{{ link.targetTitle }}</button></div>
     </div>
     <button class="toc-btn" :class="{ 'is-open': tocVisible }" title="目录" aria-label="目录" @click="emit('toggle-toc')"><span class="toc-char">目</span><span class="toc-char">录</span></button>
     <div ref="splitWorkspace" class="editor-workspace" :class="[`mode-${editorMode}`, { 'is-previewing': splitMode, 'is-vertical': splitVertical }]">
