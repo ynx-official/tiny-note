@@ -1,9 +1,10 @@
 # Tiny Note 版本详情
 
-当前代码版本为 [`tiny-note-v0.1.16`](tiny-note-v0.1.16/README.md)。
+当前代码版本为 [`tiny-note-v0.1.17`](tiny-note-v0.1.17/README.md)。
 
 | 版本 | 发布日期 | 摘要 |
 | --- | --- | --- |
+| [tiny-note-v0.1.17](tiny-note-v0.1.17/README.md) | 2026-09-18 | 新增笔记本文件夹导入和图片交互预览，并改进任务与聊天会话体验。 |
 | [tiny-note-v0.1.16](tiny-note-v0.1.16/README.md) | 2026-09-09 | 优化笔记本树展开与收起交互。 |
 | [tiny-note-v0.1.15](tiny-note-v0.1.15/README.md) | 2026-09-09 | 采用 Friday 桌面外壳，并改进 Agent 回复持久化和认证会话同步。 |
 | [tiny-note-v0.1.14](tiny-note-v0.1.14/README.md) | 2026-09-04 | 修复跨平台安装包发布流程，并重新发布完整安装包和更新清单。 |
