@@ -635,7 +635,10 @@ export function useChatWorkspace() {
     }
   }
   
-  function goBack() { router.push('/') }
+  async function goBack() {
+    const failure = await router.push('/')
+    if (!failure && route.path === '/' && isCurrent()) chatSession.available = false
+  }
   
   function newChat() {
     if (isBusy.value) return
@@ -776,7 +779,8 @@ export function useChatWorkspace() {
   
   function syncSession() {
     if (!isCurrent()) return
-    chatSession.$patch({ available: true, conversationId: conversationId.value || loadingConversationId.value, fromHome: fromHome.value, title: conversationTitle.value,
+    // Background updates must not restore an entry dismissed by the Back button.
+    chatSession.$patch({ available: chatSession.available || route.path === '/chat', conversationId: conversationId.value || loadingConversationId.value, fromHome: fromHome.value, title: conversationTitle.value,
       status: pendingApproval.value ? 'approval' : pendingInput.value ? 'input' : busy.value ? 'running' : error.value ? 'error' : 'idle' })
   }
   watch([conversationId, loadingConversationId, conversationTitle, fromHome, busy, pendingApproval, pendingInput, error], syncSession, { immediate: true, flush: 'sync' })
@@ -847,6 +851,7 @@ export function useChatWorkspace() {
   onDeactivated(() => { viewActive = false; referenceMenuOpen.value = false })
   onActivated(() => {
     viewActive = true
+    syncSession()
     nextTick(() => {
       if (messagesRef.value && isCurrent()) messagesRef.value.scrollTop = followTail ? messagesRef.value.scrollHeight : readingTop
     })

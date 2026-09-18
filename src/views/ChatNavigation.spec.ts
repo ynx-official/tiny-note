@@ -63,6 +63,69 @@ beforeEach(() => {
 afterEach(() => { disposers.splice(0).forEach(dispose => dispose()); delete window.__TAURI_INTERNALS__; document.body.innerHTML = '' })
 
 describe('chat navigation continuity', () => {
+  it('returns the Tiny Note tab to home after explicitly going back, until a conversation is opened again', async () => {
+    const { wrapper, router, clickTab } = await openWorkspace('/chat?id=conversation-1&from=home')
+    await wrapper.get('.chat-page-back').trigger('click'); await flushPromises()
+    expect(router.currentRoute.value.path).toBe('/')
+    await clickTab('文章')
+    await clickTab('Tiny Note')
+    expect(router.currentRoute.value.path).toBe('/')
+    expect(wrapper.find('.chat-page').exists()).toBe(false)
+
+    await router.push('/chat?id=conversation-1&from=home'); await flushPromises()
+    await clickTab('文章')
+    await clickTab('Tiny Note')
+    expect(router.currentRoute.value.fullPath).toBe('/chat?id=conversation-1&from=home')
+    expect(wrapper.text()).toContain('请查看项目周报。')
+  })
+
+  it('does not restore the dismissed return entry or badge when a background reply arrives', async () => {
+    const { wrapper, router, clickTab, homeTab } = await openWorkspace('/chat?id=conversation-1&from=home')
+    await wrapper.get('textarea').setValue('整理一下周报')
+    await wrapper.get('form').trigger('submit'); await flushPromises()
+    const channel = backend.channels.at(-1)!
+    expect(homeTab().text()).toContain('生成中')
+    await wrapper.get('.chat-page-back').trigger('click'); await flushPromises()
+    expect(homeTab().find('[role="status"]').exists()).toBe(false)
+    expect(channel.close).not.toHaveBeenCalled()
+    await clickTab('文章')
+    await channel.onmessage({ type: 'textDelta', text: '返回首页后完成的回复' })
+    await channel.onmessage({ type: 'completed' }); await flushPromises()
+    expect(router.currentRoute.value.path).toBe('/notes')
+    expect(homeTab().find('[role="status"]').exists()).toBe(false)
+    await clickTab('Tiny Note')
+    expect(router.currentRoute.value.path).toBe('/')
+    await router.push('/chat?id=conversation-1&from=home'); await flushPromises()
+    expect(wrapper.text()).toContain('返回首页后完成的回复')
+  })
+
+  it('keeps the return entry dismissed when conversation creation finishes after explicitly going back', async () => {
+    let finishCreate!: (value: unknown) => void
+    const base = backend.invoke.getMockImplementation()!
+    backend.invoke.mockImplementation((command, args) => command === 'chat_create' ? new Promise(resolve => { finishCreate = resolve }) : base(command, args))
+    const { wrapper, router, clickTab, homeTab } = await openWorkspace('/chat?from=home')
+    await wrapper.get('textarea').setValue('新会话内容')
+    await wrapper.get('form').trigger('submit'); await flushPromises()
+    await wrapper.get('.chat-page-back').trigger('click'); await flushPromises()
+    finishCreate({ id: 'created-chat', title: '新对话', mode: 'chat' }); await flushPromises()
+    expect(router.currentRoute.value.path).toBe('/')
+    expect(homeTab().find('[role="status"]').exists()).toBe(false)
+    await clickTab('文章')
+    await clickTab('Tiny Note')
+    expect(router.currentRoute.value.path).toBe('/')
+  })
+
+  it('keeps the return entry when navigation back is prevented', async () => {
+    const { wrapper, router, clickTab } = await openWorkspace('/chat?id=conversation-1&from=home')
+    const removeGuard = router.beforeEach(to => to.path === '/' ? false : undefined)
+    await wrapper.get('.chat-page-back').trigger('click'); await flushPromises()
+    expect(router.currentRoute.value.path).toBe('/chat')
+    removeGuard()
+    await clickTab('文章')
+    await clickTab('Tiny Note')
+    expect(router.currentRoute.value.fullPath).toBe('/chat?id=conversation-1&from=home')
+  })
+
   it('preserves an idle conversation, draft and reading position across every top tab', async () => {
     const { wrapper, router, clickTab } = await openWorkspace()
     await wrapper.get('textarea').setValue('我再核对一下原文…')

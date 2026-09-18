@@ -12,7 +12,7 @@ export const useChatSessionStore = defineStore('chatSession', () => {
   const fromHome = ref(false)
   const title = ref('新对话')
   const status = ref<ChatSessionStatus>('idle')
-  const statusLabel = computed(() => ({ idle: '', running: '生成中', approval: '待确认', input: '待回答', error: '出错了' })[status.value])
+  const statusLabel = computed(() => available.value ? ({ idle: '', running: '生成中', approval: '待确认', input: '待回答', error: '出错了' })[status.value] : '')
   const target = computed(() => available.value
     ? { path: '/chat', query: { ...(conversationId.value ? { id: conversationId.value } : {}), ...(fromHome.value ? { from: 'home' } : {}) } }
     : { path: '/' })
