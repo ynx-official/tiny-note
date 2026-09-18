@@ -9,6 +9,10 @@
 
 JSON DTO 使用 camelCase。业务接口返回 `{ code, msg, data }`，前端转换为 `ApiError(code, message, status, details)`。401 清理登录凭据和用户状态；409 表示乐观锁或提案版本冲突。文件内容接口返回原始字节，不包装 JSON。
 
+## 后台任务重试状态
+
+2026-09-17 修正图片任务持续显示排队的问题。`BackgroundTask` 增加兼容性字段 `attemptCount`、`maxAttempts`、`retryScheduled`，沿用 `scheduledAt`。自动重试的 `status` SSE 同步这些字段和脱敏后的 `errorCode/errorMessage`。`queued` 仍为协议状态，界面分别显示首次等待执行、等待重试和超过计划时间 30 秒的重试延迟；延迟不等同于失败。任务中心每 5 秒刷新活动任务，保留刷新失败前的结果并提示连接异常。额度用尽错误显示中文原因。后端恢复查询仅排序任务 ID，再读取含图片的私有输入，避免 MySQL 排序内存不足。无数据库迁移。
+
 ## 外部 Markdown
 
 `app_take_pending_markdown_files` 和 `external_markdown_read` 读取系统授权路径，始终返回磁盘正文并建立单次打开授权。`note_open_external_markdown` 生成 `external:` 标识，再调用本机 `external_markdown_bind` 校验授权、内容和绑定，返回内容指纹。前端用它构造独立编辑视图，不创建云端笔记。
