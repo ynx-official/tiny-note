@@ -1,7 +1,15 @@
 # 构建、发布与在线升级（Review）
 
-最后更新：2026-08-25
+最后更新：2026-09-18
 关联配置：`.github/workflows/ci.yml`、`.github/workflows/release.yml`、`src-tauri/tauri.conf.json`
+
+## 生产 API 联调
+
+`make prod` 启动 Tauri 开发窗口和 production 模式的 Vite，页面来源仍是 `http://127.0.0.1:1420`，请求目标为 `https://go.mrsunshine.cn/prod-api`。它与打包安装后的 Tauri Origin 不同。
+
+后端 `tiny-blog-go` 的 `manifest/config/config.prod.yaml` 明确允许 `http://127.0.0.1:1420`、`http://localhost:1420` 以及现有 Tauri Origin。部署更新后的配置并重启 Go 服务后生效；配置打包在 Docker 镜像中时须重建镜像和容器，重启旧镜像不会应用本地仓库变更。前端无需修改 API 地址或重新打包。
+
+如果登录出现 CORS 错误，检查 `/prod-api/auth/login` 的 OPTIONS 请求：预期返回 `204` 和与页面 Origin 完全一致的 `Access-Control-Allow-Origin`。`403` 且缺少该响应头时，核对线上配置是否更新。额外 Origin 可通过后端 `CORS_ALLOWED_ORIGINS` 追加（逗号分隔，保留已有值）；不要把它写到前端 `.env.production`。部署与完整验证步骤以服务端 `docs/Tiny Note部署与安全.md` 为准。
 
 ## 产物矩阵
 

@@ -27,6 +27,8 @@ make prod
 
 `make dev` 使用 `http://localhost:8081`，`make prod` 使用 `https://go.mrsunshine.cn/prod-api`。执行 `make build`、`npm run build` 或 `npm run tauri:build` 时默认使用生产接口。
 
+`make prod` 仍通过本地 `http://127.0.0.1:1420` 加载页面，因此生产后端必须允许该 CORS Origin。后端生产配置已补充这两个调试地址（`127.0.0.1:1420`、`localhost:1420`）；需部署新配置并重启服务才会生效，详见 [生产 API 联调说明](docs/05-operations/build.md#生产-api-联调)。
+
 仅预览前端时，`npm run dev` 默认使用本机接口；如需连接生产接口，运行 `npm run dev -- --mode production`。
 
 浏览器模式也调用远程后端；`browserBackend` 只在单元测试模式作为可注入的内存适配器。
