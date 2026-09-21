@@ -1,6 +1,6 @@
 [package]
 name = "tiny-note"
-version = "0.1.17"
+version = "0.1.18"
 description = "Tiny Note connected desktop client"
 authors = ["Tiny Note"]
 edition = "2021"
