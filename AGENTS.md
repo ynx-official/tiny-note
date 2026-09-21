@@ -14,6 +14,7 @@
 - Style ID: `notion`
 - Style reference: `C:/Users/Administrator/.codex/skills/awesome-design-md/references/design-md/notion/DESIGN.md`
 - Product visual override: Friday 的桌面外壳、三栏布局、标签栏、间距和交互优先；Notion 规范只补充 Friday 未定义的状态、可访问性和响应式细节。
+- Approved refinement: 按产品方确认的笔记布局效果图，顶部展示已打开的工作区，编辑工具栏保持单行，目录采用分组和底部辅助入口，正文与代码块统一阅读排版；具体规范见 `docs/02-design/design-system.md`。
 
 ## Friday 前端迁移边界
 

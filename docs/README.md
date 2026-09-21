@@ -8,6 +8,7 @@
 - [文章编辑体验需求](01-requirements/editor-modes.md)
 - [验收标准](01-requirements/acceptance/mvp.md)
 - [设计系统](02-design/design-system.md)
+- [笔记工作区布局验证](04-quality/note-workspace-layout.md)
 - [架构概览](03-architecture/overview.md)
 - [数据模型](03-architecture/data-model.md)
 - [命令契约](03-architecture/api-contracts.md)

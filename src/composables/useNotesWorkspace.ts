@@ -53,7 +53,7 @@ export function useNotesWorkspace() {
   
   const { sidebarCollapsed, expandedNotebookIds, showDeleted, externalSourcesOpen } = storeToRefs(store)
   
-  const { sidebarWidth, isResizing, onResizeStart } = useWorkspaceSidebar()
+  const { sidebarWidth, isResizing, onResizeStart } = useWorkspaceSidebar({ defaultWidth: 272, minWidth: 240, maxWidth: 400, storageKey: 'tiny-note-notes-sidebar-width-v1' })
   
   const newNoteMenu = ref(false)
   
@@ -180,7 +180,7 @@ export function useNotesWorkspace() {
       mounted = true
       if (route.query.new) await createFromQuery()
       else if (route.query.note) await openRoutedNote()
-      else if (!showDeleted.value && !store.active && store.listed[0]) await selectNote(store.listed[0])
+      else if (!hadCatalog && !showDeleted.value && !store.active && store.listed[0]) await selectNote(store.listed[0])
     } finally { initializing.value = false }
   })
   
@@ -464,10 +464,23 @@ export function useNotesWorkspace() {
     toggleNotebook(folder.id)
   }
   
-  function selectAllNotes() {
+  async function selectAllNotes() {
+    const sequence = ++selectionSequence
+    if (!await flushCurrent() || sequence !== selectionSequence) { if (sequence === selectionSequence) bodyLoading.value = false; return }
+    bodyLoading.value = false
+    bodyError.value = ''
+    retryNoteId = ''
+    store.activeId = null
     showDeleted.value = false
     store.selectedNotebook = 'all'
     store.selectedTreeNode = { type: 'all', id: 'all' }
+    query.value = ''
+    store.search = ''
+    store.pinnedOnly = false
+    // Let the filter watcher run, then replace its delayed refresh with this one.
+    await nextTick()
+    clearTimeout(searchTimer)
+    await Promise.all([store.loadCatalog(), router.replace({ path: '/notes' })])
   }
   
   async function selectNote(summary: Pick<NoteSummary, 'id'> & { version?: number }) {

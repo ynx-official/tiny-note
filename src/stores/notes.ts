@@ -110,9 +110,12 @@ export const useNotesStore = defineStore('notes', {
     async loadCatalog() {
       const filter = { search: this.search || undefined, pinned: this.pinnedOnly ? true : undefined }
       await Promise.all([
-        loadNotePage(this.catalog, filter),
+        this.loadCatalogPage(),
         ...Object.keys(this.notebookPages).map(id => loadNotePage(this.notebookPages[id]!, { ...filter, notebookId: id }))
       ])
+    },
+    async loadCatalogPage(append = false) {
+      return loadNotePage(this.catalog, { search: this.search || undefined, pinned: this.pinnedOnly ? true : undefined }, append)
     },
     async loadNotebook(id: string, append = false) {
       if (!this.notebookPages[id]) this.notebookPages[id] = createNotePageState()

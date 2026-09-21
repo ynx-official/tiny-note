@@ -95,6 +95,69 @@ it('keeps the current editor when its draft cannot be saved, and does not fetch 
   wrapper.unmount()
 })
 
+it('returns to all notes with no search, pinned or notebook filters and preserves the view on return', async () => {
+  const pinia = createPinia()
+  const { workspace: work, wrapper } = await workspace(pinia)
+  cacheNoteBody(work.store, note('current')); work.store.activeId = 'current'
+  work.store.selectedNotebook = 'book'
+  work.store.selectedTreeNode = { type: 'note', id: 'current' }
+  work.store.search = 'filtered'
+  work.query.value = 'filtered'
+  work.store.pinnedOnly = true
+  work.showDeleted.value = true
+  work.bodyError.value = 'old error'
+  const save = vi.fn(async () => true)
+  work.noteEditorRef.value = { saveLatestContent: save }
+  mocks.invoke.mockClear()
+  await work.selectAllNotes()
+  expect(save).toHaveBeenCalledOnce()
+  expect(work.store.activeId).toBeNull()
+  expect(work.store.selectedTreeNode).toEqual({ type: 'all', id: 'all' })
+  expect(work.store.selectedNotebook).toBe('all')
+  expect(work.showDeleted.value).toBe(false)
+  expect(work.bodyError.value).toBe('')
+  expect(work.query.value).toBe('')
+  expect(work.store.search).toBe('')
+  expect(work.store.pinnedOnly).toBe(false)
+  expect(mocks.invoke).toHaveBeenCalledWith('note_page', expect.objectContaining({ search: undefined, pinned: undefined, cursor: undefined }))
+  work.store.catalog.items = [note('current')]
+  wrapper.unmount()
+  const returned = await workspace(pinia)
+  expect(returned.workspace.store.activeId).toBeNull()
+  expect(returned.workspace.store.selectedTreeNode.type).toBe('all')
+  returned.wrapper.unmount()
+})
+
+it('stays in the editor when saving fails before opening all notes', async () => {
+  const { workspace: work, wrapper } = await workspace()
+  cacheNoteBody(work.store, note('current')); work.store.activeId = 'current'
+  work.store.selectedTreeNode = { type: 'note', id: 'current' }
+  work.noteEditorRef.value = { saveLatestContent: vi.fn(async () => false) }
+  mocks.invoke.mockClear()
+  await work.selectAllNotes()
+  expect(work.store.activeId).toBe('current')
+  expect(work.store.selectedTreeNode).toEqual({ type: 'note', id: 'current' })
+  expect(mocks.invoke).not.toHaveBeenCalled()
+  wrapper.unmount()
+})
+
+it('does not reopen a pending article after switching to all notes', async () => {
+  const { workspace: work, wrapper } = await workspace()
+  let resolve!: (value: Note) => void
+  mocks.invoke.mockImplementation(command => command === 'note_get'
+    ? new Promise(done => { resolve = done })
+    : Promise.resolve({ items: [], total: 0, hasMore: false, nextCursor: '' }))
+  const pending = work.selectNote({ id: 'slow' })
+  await flushPromises()
+  await work.selectAllNotes()
+  resolve(note('slow'))
+  await pending
+  expect(work.store.activeId).toBeNull()
+  expect(work.store.selectedTreeNode.type).toBe('all')
+  expect(work.bodyLoading.value).toBe(false)
+  wrapper.unmount()
+})
+
 it('keeps the previous body visible during loading and only opens the latest selection', async () => {
   const { workspace: work, wrapper } = await workspace()
   cacheNoteBody(work.store, note('current')); work.store.activeId = 'current'

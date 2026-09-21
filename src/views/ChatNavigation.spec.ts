@@ -38,7 +38,14 @@ async function openWorkspace(path = '/chat?id=conversation-1') {
   await flushPromises()
   const homeTab = () => wrapper.get('.tab-strip .tab')
   const clickTab = async (label: string) => {
-    await wrapper.findAll('.tab-strip .tab').find(tab => tab.text().includes(label))!.trigger('click')
+    let tab = wrapper.findAll('.tab-strip .tab').find(tab => tab.text().includes(label))
+    if (!tab) {
+      await wrapper.get('.tab-plus').trigger('click')
+      await wrapper.findAll('.workspace-tab-picker button').find(item => item.text() === label)!.trigger('click')
+      await flushPromises()
+      tab = wrapper.findAll('.tab-strip .tab').find(tab => tab.text().includes(label))
+    }
+    await tab!.trigger('click')
     await flushPromises()
   }
   return { wrapper, router, pinia, auth, homeTab, clickTab }

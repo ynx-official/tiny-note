@@ -60,6 +60,9 @@ describe('NotesSidebar external sources', () => {
     })
     await flushPromises()
 
+    expect(wrapper.get('.note-sidebar').attributes('style')).toContain('width: 272px')
+    expect(wrapper.get('.notebook-utilities').text()).toContain('最近删除')
+    expect(wrapper.get('.notebook-tree').text()).not.toContain('最近删除')
     await wrapper.get('button[aria-expanded="false"]').trigger('click')
     await wrapper.get('.external-source-tree').trigger('contextmenu')
 

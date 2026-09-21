@@ -641,3 +641,21 @@ body, button, input, select, textarea { font-family: -apple-system, BlinkMacSyst
 .window-shell.window-shell .content-wrap,
 .window-shell.window-shell .content-card { transition:none; overflow-anchor:none; }
 
+/* Tabs represent visited workspaces; the rail remains the complete navigation. */
+.window-shell.window-shell .tab-strip { padding: 5px 0 5px 4px; gap: 6px; }
+.window-shell.window-shell .tab.home-tab { flex: none; min-width: 136px; padding: 0 12px; justify-content: flex-start; font-size: 14px; font-weight: 500; }
+.window-shell.window-shell .workspace-tabs { display: flex; gap: 4px; min-width: 0; overflow-x: auto; scrollbar-width: none; }
+.window-shell.window-shell .workspace-tab { display: flex; align-items: center; flex: 0 0 auto; max-width: 220px; border-radius: 7px; }
+.window-shell.window-shell .workspace-tab.active { background: var(--bg-primary); box-shadow: 0 1px 3px #0000000a; }
+.window-shell.window-shell .workspace-tab .tab { min-width: 90px; max-width: 190px; flex: 1 1 auto; justify-content: flex-start; padding: 0 6px 0 12px; border-radius: 7px; font-weight: 500; box-shadow: none; background: transparent; }
+.window-shell.window-shell .workspace-tab .tab > span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.window-shell.window-shell .workspace-tab .tab > svg { flex: none; }
+.workspace-tab-close { display: grid; place-items: center; width: 24px; height: 24px; flex: none; margin-right: 4px; border-radius: 5px; color: var(--text-secondary); }
+.workspace-tab-close:hover { background: var(--bg-hover); color: var(--text-primary); }
+.workspace-tab-picker-anchor { position: relative; flex: none; -webkit-app-region: no-drag; app-region: no-drag; }
+.workspace-tab-picker-anchor .tab-plus { display: grid; place-items: center; }
+.workspace-tab-picker { position: absolute; top: 36px; right: 0; z-index: 200; min-width: 160px; padding: 5px; border: 1px solid var(--border-color); border-radius: 8px; background: var(--bg-primary); box-shadow: 0 8px 24px #00000018; }
+.workspace-tab-picker button { display: flex; align-items: center; gap: 9px; width: 100%; padding: 8px 10px; border-radius: 5px; color: var(--text-primary); font-size: 13px; text-align: left; }
+.workspace-tab-picker button:hover { background: var(--bg-hover); }
+.window-shell.window-shell .rail.is-collapsed { width: 0; flex-basis: 0; }
+

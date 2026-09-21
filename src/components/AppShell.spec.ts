@@ -10,6 +10,7 @@ vi.mock('@tauri-apps/api/window', () => ({ getCurrentWindow: () => null }))
 import AppShell from './AppShell.vue'
 import { useTasksStore } from '../stores/tasks'
 import { useAuthStore } from '../stores/auth'
+import { useNotesStore } from '../stores/notes'
 
 describe('AppShell task status', () => {
   beforeEach(() => {
@@ -127,15 +128,32 @@ describe('AppShell task status', () => {
     expect(wrapper.get('.rail-avatar-image').attributes('src')).toBe('https://cdn.example/avatar.png')
   })
 
-  it('does not show a create button after the top tabs', () => {
+  it('opens workspaces from the tab picker and closes a tab without deleting its note', async () => {
     const pinia = createPinia()
     const wrapper = mount(AppShell, {
+      props: { active: 'notes' },
       global: {
         plugins: [pinia, createI18n({ legacy: false, locale: 'zh-CN', messages: { 'zh-CN': { notes: '笔记', library: '知识库', tags: '标签', settings: '设置', appName: 'Tiny Note', newNote: '新建笔记' } } })],
         stubs: { AvatarDrawer: true, ChatHistoryDrawer: true }
       }
     })
 
-    expect(wrapper.find('.tab-plus').exists()).toBe(false)
+    const notes = useNotesStore(pinia)
+    notes.activeId = 'layout-note'
+    notes.notes = [{ id: 'layout-note', title: 'Git 常用命令' } as never]
+    await flushPromises()
+    expect(wrapper.get('.workspace-tab .tab').text()).toBe('Git 常用命令')
+    expect(wrapper.findAll('.workspace-tab')).toHaveLength(1)
+    await wrapper.get('.tab-plus').trigger('click')
+    await wrapper.get('.workspace-tab-picker button[data-workspace="library"]').trigger('click')
+    expect(mocks.push).toHaveBeenCalledWith('/library')
+    await wrapper.setProps({ active: 'library' })
+    expect(wrapper.findAll('.workspace-tab')).toHaveLength(2)
+    await wrapper.get('button[aria-label="关闭 Git 常用命令"]').trigger('click')
+    expect(wrapper.findAll('.workspace-tab')).toHaveLength(1)
+    expect(notes.notes[0].title).toBe('Git 常用命令')
+    await wrapper.get('button[aria-label="关闭 知识库"]').trigger('click')
+    expect(mocks.push).toHaveBeenLastCalledWith({ path: '/' })
+    wrapper.unmount()
   })
 })

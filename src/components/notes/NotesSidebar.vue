@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { onMounted, ref } from 'vue'
 import { useDelayedBusy } from '../../composables/useDelayedBusy'
-import { ArrowDownAZ, BookOpen, Download, FileClock, FilePlus2, FolderInput, FolderOpen, FolderPlus, FolderTree, Pin, Plus, Search as SearchIcon, Trash2 } from 'lucide-vue-next'
+import { Ellipsis, PanelLeftClose, BookOpen, Download, FileClock, FilePlus2, FolderInput, FolderOpen, FolderPlus, FolderTree, Pin, Plus, Search as SearchIcon, Trash2 } from 'lucide-vue-next'
 import NotePageControls from './NotePageControls.vue'
 import NotebookTreeItem from '../NotebookTreeItem.vue'
 import MarkdownNotebookImportDialog from './MarkdownNotebookImportDialog.vue'
@@ -19,14 +19,16 @@ const { externalAreaMenu, externalSourceMenu, externalPickerBusy, markdownImport
     <aside class="list-pane note-sidebar" :class="{ collapsed: sidebarCollapsed, 'is-resizing': isResizing }" :style="{ width: sidebarCollapsed ? '0px' : sidebarWidth + 'px' }" @selectstart.prevent>
       <div class="sidebar-inner">
         <div class="sidebar-topbar notebook-tree-toolbar">
-          <button class="topbar-btn" :title="t('noteSidebarCollapse')" @click="sidebarCollapsed = true">
-            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="3" y="3" width="18" height="18" rx="2"/><line x1="9" y1="3" x2="9" y2="21"/></svg>
-          </button>
+          <h1 class="note-sidebar-title">{{ t('notes') }}</h1>
           <div class="topbar-actions">
+            <button class="topbar-btn" :title="t('search')" :aria-pressed="searchMode" @click="searchMode = !searchMode"><SearchIcon :size="17" /></button>
             <div class="new-note-btn-group">
               <button class="new-note-main-btn" :title="t('newNote')" @click="create"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="18" height="18" rx="2"/><line x1="12" y1="8" x2="12" y2="16"/><line x1="8" y1="12" x2="16" y2="12"/></svg></button>
-              <button class="new-note-dropdown-btn" :title="t('noteSidebarMoreOptions')" @click.stop="toggleNewNoteMenu"><svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="6 9 12 15 18 9"/></svg></button>
+              <button class="new-note-dropdown-btn" :title="t('noteSidebarMoreOptions')" @click.stop="toggleNewNoteMenu"><Ellipsis :size="18" /></button>
               <div v-if="newNoteMenu" class="new-note-dropdown-menu">
+                <button class="dropdown-item" @click="createRootNotebook(); newNoteMenu = false"><FolderPlus :size="14" />新建根笔记本</button>
+                <button class="dropdown-item" :aria-pressed="store.pinnedOnly" @click="store.pinnedOnly = !store.pinnedOnly; newNoteMenu = false"><Pin :size="14" />{{ store.pinnedOnly ? '显示全部笔记' : '只看置顶笔记' }}</button>
+                <button class="dropdown-item" @click="sidebarCollapsed = true; newNoteMenu = false"><PanelLeftClose :size="14" />{{ t('noteSidebarCollapse') }}</button>
                 <button class="dropdown-item" @click="create(); newNoteMenu = false"><Plus :size="14" />{{ t('newNote') }}</button>
                 <button v-for="template in store.templates" :key="template.id" class="dropdown-item" @click="createFromTemplate(template.id)"><Plus :size="14" />{{ template.name }}</button>
                 <button class="dropdown-item" @click="importInput?.click(); newNoteMenu = false"><Download :size="14" />{{ t('importFiles') }}</button>
@@ -34,10 +36,6 @@ const { externalAreaMenu, externalSourceMenu, externalPickerBusy, markdownImport
               </div>
               <input ref="importInput" type="file" multiple hidden accept=".md,.markdown,.txt" @change="importFiles" />
             </div>
-            <button class="topbar-btn" title="新建根笔记本" @click="createRootNotebook"><FolderPlus :size="17" /></button>
-            <button class="topbar-btn" title="按名称排序"><ArrowDownAZ :size="17" /></button>
-            <button class="topbar-btn" :class="{ active: store.pinnedOnly }" title="只看置顶笔记" @click="store.pinnedOnly = !store.pinnedOnly"><Pin :size="16" /></button>
-            <button class="topbar-btn" :title="t('search')" @click="searchMode = !searchMode"><SearchIcon :size="17" /></button>
           </div>
         </div>
         <div v-if="searchMode" class="sidebar-search notebook-tree-search">
@@ -51,6 +49,7 @@ const { externalAreaMenu, externalSourceMenu, externalPickerBusy, markdownImport
           <p v-if="store.loadError" role="alert">{{ store.loadError }} <button type="button" @click="store.load()">重试</button></p>
           <span v-if="showCatalogLoading" class="note-catalog-status" role="status">正在更新目录…</span>
           <NotePageControls v-if="store.catalog.error" :page="store.catalog" @retry="store.loadCatalog()" />
+          <div class="notebook-section-label">笔记本<span v-if="store.pinnedOnly">仅置顶</span></div>
           <NotebookTreeItem
             v-for="node in notebookTree"
             :key="node.id"
@@ -67,6 +66,8 @@ const { externalAreaMenu, externalSourceMenu, externalPickerBusy, markdownImport
             @drop-node="dropTreeNode"
           />
           <div v-if="!notebookTree.length && store.initialized && !store.catalog.loading && !store.loadError && !store.catalog.error" class="note-list-empty">{{ query ? '没有匹配的笔记' : t('emptyNotes') }}</div>
+        </div>
+        <div class="notebook-utilities" aria-label="其他笔记来源">
           <button class="tree-row" :class="{ active: showDeleted }" @click="openTrash"><Trash2 :size="16" /><span class="tree-label">{{ t('recentlyDeleted') }}</span></button>
           <div v-if="showDeleted">
             <button v-for="note in store.trashPage.items" :key="note.id" class="tree-row tree-note-row" @click="selectNote(note)" @contextmenu.prevent="openContextMenu($event, note)"><span class="tree-label">{{ note.title }}</span></button>

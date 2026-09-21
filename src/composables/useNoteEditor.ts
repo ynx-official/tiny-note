@@ -370,7 +370,7 @@ export function useNoteEditor(props: Readonly<NoteEditorProps>, emit: NoteEditor
   }
   
   function handleRichEditorUpdate(instance: Editor) {
-    if (!props.note || applyingEditorContent || editorMode.value !== 'rich') return
+    if (!props.note || props.note.markdownSource || applyingEditorContent || editorMode.value !== 'rich') return
     props.note.contentHtml = sanitizeEditorHtml(instance.getHTML())
     props.note.contentText = instance.getText()
     props.note.contentMarkdown = getEditorMarkdown(instance)
@@ -457,6 +457,7 @@ export function useNoteEditor(props: Readonly<NoteEditorProps>, emit: NoteEditor
   }
   
   function resetEditorSession(note: Note | null) {
+    if (note?.markdownSource) editorMode.value = 'markdown'
     clearTimeout(markdownParseTimer)
     modeMenuOpen.value = false
     markdownParseError.value = ''
@@ -479,6 +480,10 @@ export function useNoteEditor(props: Readonly<NoteEditorProps>, emit: NoteEditor
   async function changeEditorMode(mode: EditorMode) {
     if (!editorModes.some(option => option.id === mode)) return
     modeMenuOpen.value = false
+    if (mode === 'rich' && props.note?.markdownSource) {
+      showToast('这篇共享笔记使用 Markdown 源码编辑，以保留公式和扩展语法。')
+      return
+    }
     if (mode === editorMode.value) return
     saveReadingPosition(props.note?.id)
     const valid = await flushLatestContent({ save: true })

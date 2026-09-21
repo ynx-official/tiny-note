@@ -1,0 +1,134 @@
+/* Approved desktop layout: a quiet notebook tree and a single-row editor toolbar.
+   Scope overrides to the note workspace so lazy legacy route styles cannot leak in. */
+.note-page .note-sidebar {
+  --workspace-sidebar-min-width: 240px;
+  --workspace-sidebar-max-width: 400px;
+  max-width: min(400px, 30vw);
+  background: var(--bg-secondary);
+  border-right: 1px solid var(--border-color);
+}
+.note-page .note-sidebar .sidebar-inner { min-width: 0; }
+.note-page .note-sidebar .notebook-tree-toolbar { height: 54px; padding: 8px 16px; border-bottom: 1px solid var(--border-color); }
+.note-page .note-sidebar-title { margin: 0; font-size: 18px; font-weight: 650; letter-spacing: -.02em; }
+.note-page .note-sidebar .topbar-actions { gap: 4px; }
+.note-page .note-sidebar .new-note-btn-group { gap: 4px; border: 0; }
+.note-page .note-sidebar .new-note-main-btn,
+.note-page .note-sidebar .new-note-dropdown-btn,
+.note-page .note-sidebar .topbar-btn { width: 28px; height: 30px; padding: 0; border: 0; border-radius: 6px; }
+.note-page .note-sidebar .new-note-dropdown-menu { top: 47px; right: 12px; }
+.note-page .notebook-tree { padding: 12px 10px; }
+.note-page .tree-all-row { margin-bottom: 16px; }
+.note-page .notebook-section-label { display: flex; align-items: center; justify-content: space-between; padding: 0 10px 8px; color: var(--text-secondary); font-size: 12px; }
+.note-page .notebook-section-label span { font-size: 11px; }
+.note-page .tree-row { height: 36px; gap: 8px; border-radius: 6px; font-size: 14px; }
+.note-page .tree-row > svg { flex: none; }
+.note-page .tree-row small { color: var(--text-secondary); font-size: 12px; font-variant-numeric: tabular-nums; }
+.note-page .tree-note-row.active { background: var(--bg-active); font-weight: 550; }
+.note-page .notebook-utilities { flex: none; max-height: 35%; overflow: auto; margin: 0 12px; padding: 10px 0 12px; border-top: 1px solid var(--border-color); }
+.note-page .notebook-utilities .tree-row { font-size: 13px; }
+
+.note-editor-shell > .editor-panel { container: note-editor / inline-size; }
+.note-editor-shell .friday-editor-toolbar,
+.note-editor-shell .friday-editor-toolbar.with-assistant {
+  position: relative;
+  height: 54px;
+  min-height: 54px;
+  padding: 10px 20px;
+  flex-wrap: nowrap;
+  align-items: center;
+  gap: 10px;
+  border-bottom: 1px solid var(--border-color);
+}
+.note-editor-shell .friday-editor-toolbar .toolbar-left-group,
+.note-editor-shell .friday-editor-toolbar .markdown-toolbar-controls { display: flex; flex-wrap: nowrap; flex: 1 1 auto; width: auto; align-items: center; gap: 3px; order: 0; }
+.note-editor-shell .friday-editor-toolbar .toolbar-right-group { flex: none; width: auto; order: 0; gap: 4px; margin-left: auto; }
+.note-editor-shell .friday-editor-toolbar button { height: 30px; min-width: 30px; padding: 0 6px; font-size: 13px; font-weight: 500; opacity: 1; color: var(--text-secondary); }
+.note-editor-shell .friday-editor-toolbar button:hover,
+.note-editor-shell .friday-editor-toolbar button.pressed,
+.note-editor-shell .friday-editor-toolbar button[aria-pressed='true'] { color: var(--text-primary); background: var(--bg-hover); }
+.note-editor-shell .friday-editor-toolbar button:disabled { opacity: .35; cursor: default; }
+.note-editor-shell .friday-editor-toolbar .toolbar-label { font-size: 13px; font-weight: 500; }
+.note-editor-shell .friday-editor-toolbar .heading-label { min-width: 28px; }
+.note-editor-shell .friday-editor-toolbar .ai-button,
+.note-editor-shell .friday-editor-toolbar .toolbar-toc-trigger { min-width: 0; height: 30px; gap: 6px; padding: 0 9px; border: 1px solid var(--border-color); border-radius: 6px; background: transparent; color: var(--text-primary); }
+.note-editor-shell .friday-editor-toolbar .ai-button:hover { background: var(--bg-hover); }
+.note-editor-shell .format-history,
+.note-editor-shell .format-primary { display: flex; align-items: center; gap: 2px; flex: none; }
+.note-editor-shell .format-overflow-history,
+.note-editor-shell .format-overflow-primary { display: none; }
+.note-editor-shell .format-popover-panel { position: absolute; z-index: 45; top: 36px; right: 0; width: 224px; padding: 8px; border: 1px solid var(--border-color); border-radius: 8px; background: var(--bg-primary); box-shadow: 0 8px 24px #00000014; }
+.note-editor-shell .format-action-row { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; }
+.note-editor-shell .format-action-row > div { width: 100%; padding-bottom: 6px; margin-bottom: 2px; border-bottom: 1px solid var(--border-color); }
+.note-editor-shell .format-popover-panel .editor-color-menu { top: 34px; left: auto; right: 0; }
+.note-editor-shell .toolbar-export-status { position: absolute; top: 60px; right: 16px; z-index: 10; padding: 6px 8px; background: var(--bg-primary); border: 1px solid var(--border-color); border-radius: 6px; }
+.note-editor-shell .note-links-slot { margin: 0 40px; }
+.note-editor-shell .editor-render-pane:not(.split-preview-pane) { padding-top: 24px; }
+.note-editor-shell .split-preview-pane { padding-top: 24px; }
+.note-editor-shell .note-document-context { display: flex; align-items: center; gap: 9px; max-width: 880px; margin: 0 auto 22px; padding: 0 56px; color: var(--text-secondary); font-size: 12px; line-height: 1.5; }
+.note-editor-shell .note-document-context span { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.note-editor-shell .note-document-context span:nth-child(2) { flex: none; }
+.note-editor-shell .editor-content { max-width: 880px; margin: 0 auto; padding: 0 56px 48px; }
+.note-editor-shell .split-preview-pane .editor-content,
+.note-editor-shell .split-preview-pane .note-document-context { padding-inline: 24px; }
+.note-editor-shell .note-prose { max-width: none; padding-top: 0; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Microsoft YaHei', sans-serif; font-size: 15px; line-height: 1.75; overflow-wrap: anywhere; }
+.note-editor-shell .note-prose > h1[data-note-title] { margin: 0 0 28px; font-size: 28px; font-weight: 700; line-height: 1.3; letter-spacing: -.025em; }
+.note-editor-shell .note-prose h1,
+.note-editor-shell .note-prose h2,
+.note-editor-shell .note-prose h3 { margin: 28px 0 10px; line-height: 1.4; font-weight: 650; }
+.note-editor-shell .note-prose h1 { font-size: 22px; }
+.note-editor-shell .note-prose h2 { font-size: 20px; }
+.note-editor-shell .note-prose h3 { font-size: 17px; }
+.note-editor-shell .note-prose p { margin: 8px 0; }
+.note-editor-shell .note-prose .code-block-component { margin: 14px 0 24px; border: 1px solid var(--border-color); border-radius: 7px; background: var(--bg-secondary); }
+.note-editor-shell .note-prose .code-block-header { min-height: 34px; padding: 5px 12px 0; }
+.note-editor-shell .note-prose .language-select { padding-left: 4px; color: var(--text-secondary); background-color: transparent; }
+.note-editor-shell .note-prose .code-block-component .line-numbers { display: none; }
+.note-editor-shell .note-prose .code-block-component pre { padding: 8px 16px 14px !important; background: transparent !important; }
+.note-editor-shell .note-prose .code-block-component pre code { color: var(--text-primary) !important; font-size: 13px !important; line-height: 1.7 !important; }
+.note-editor-shell .note-prose .code-action-btn { color: var(--text-secondary); }
+.note-editor-shell .note-prose .code-action-btn:hover { color: var(--text-primary); background: var(--bg-hover); }
+.note-editor-shell .note-prose .code-action-btn.danger { opacity: 0; }
+.note-editor-shell .note-prose .code-block-component:hover .code-action-btn.danger,
+.note-editor-shell .note-prose .code-block-component:focus-within .code-action-btn.danger { opacity: 1; }
+.note-editor-shell .note-prose .hljs-keyword,
+.note-editor-shell .note-prose .hljs-built_in { color: #0969da; }
+.note-editor-shell .note-prose .hljs-string { color: #227d42; }
+.note-editor-shell .note-prose .hljs-number,
+.note-editor-shell .note-prose .hljs-literal { color: #a45f13; }
+.note-editor-shell .note-prose .hljs-comment { color: var(--text-secondary); }
+[data-theme='dark'] .note-editor-shell .note-prose .hljs-keyword,
+[data-theme='dark'] .note-editor-shell .note-prose .hljs-built_in { color: #79b8ff; }
+[data-theme='dark'] .note-editor-shell .note-prose .hljs-string { color: #85d6a2; }
+[data-theme='dark'] .note-editor-shell .note-prose .hljs-number,
+[data-theme='dark'] .note-editor-shell .note-prose .hljs-literal { color: #e6b47c; }
+.note-editor-shell .note-prose .is-mermaid { background: var(--bg-primary); }
+
+@container note-editor (max-width: 790px) {
+  .note-editor-shell .friday-editor-toolbar { padding-inline: 12px; gap: 5px; }
+  .note-editor-shell .format-primary { display: none; }
+  .note-editor-shell .format-overflow-primary { display: flex; }
+}
+@container note-editor (max-width: 570px) {
+  .note-editor-shell .format-history { display: none; }
+  .note-editor-shell .format-overflow-history { display: flex; }
+  .note-editor-shell .document-action-label { display: none; }
+  .note-editor-shell .note-document-context { padding-inline: 24px; }
+  .note-editor-shell .editor-content { padding-inline: 24px; }
+  .note-editor-shell .friday-editor-toolbar .toolbar-left-group { gap: 1px; }
+  .note-editor-shell .friday-editor-toolbar .ai-button,
+  .note-editor-shell .friday-editor-toolbar .toolbar-toc-trigger { padding: 0 6px; }
+  .note-editor-shell .friday-editor-toolbar .format-popover,
+  .note-editor-shell .friday-editor-toolbar .mode-menu-anchor { position: static; }
+  .note-editor-shell .format-popover-panel,
+  .note-editor-shell .friday-editor-toolbar .editor-mode-menu { top: 48px; left: 8px; right: auto; max-width: calc(100% - 16px); }
+  .note-editor-shell .format-popover-panel .color-menu-anchor { position: static; }
+  .note-editor-shell .format-popover-panel .editor-color-menu { top: calc(100% + 4px); left: 0; right: auto; }
+  .note-editor-shell .insert-submenu-anchor .table-picker-menu { top: 100%; left: 0; right: auto; }
+}
+@container note-editor (max-width: 390px) {
+  .note-editor-shell .friday-editor-toolbar,
+  .note-editor-shell .friday-editor-toolbar.with-assistant { padding-inline: 5px; gap: 2px; }
+  .note-editor-shell .toolbar-left-group > .toolbar-menu-anchor > button .toolbar-label:not(.heading-label),
+  .note-editor-shell .toolbar-left-group > .toolbar-menu-anchor > button .friday-dropdown-chevron { display: none; }
+  .note-editor-shell .friday-editor-toolbar .toolbar-right-group { gap: 1px; }
+}

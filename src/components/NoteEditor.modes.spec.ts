@@ -9,7 +9,8 @@ describe('NoteEditor modes and menus', () => {
     vi.useFakeTimers()
     const wrapper = await mountEditor()
 
-    expect(wrapper.get('.ai-button').text()).toContain('Tiny Note 助理')
+    expect(wrapper.get('.ai-button').text()).toBe('助理')
+    expect(wrapper.get('.ai-button').attributes('aria-label')).toBe('Tiny Note 助理')
     await wrapper.get('.ai-button').trigger('click')
     await flushPromises()
 
@@ -23,7 +24,7 @@ describe('NoteEditor modes and menus', () => {
     expect(wrapper.get('.friday-editor-toolbar').classes()).toContain('with-assistant')
     await vi.advanceTimersByTimeAsync(250)
     await flushPromises()
-    expect(wrapper.get('.ai-button').text()).toContain('Tiny Note 助理')
+    expect(wrapper.get('.ai-button').text()).toBe('助理')
     expect(wrapper.get('.friday-editor-toolbar').classes()).not.toContain('with-assistant')
     wrapper.unmount()
   })
@@ -110,6 +111,7 @@ describe('NoteEditor modes and menus', () => {
     ]
 
     for (const selector of richDropdownTriggers) {
+      if (selector === 'button[title="文字颜色"]') await wrapper.get('button[aria-label="更多格式"]').trigger('click')
       const chevron = wrapper.get(`${selector} .friday-dropdown-chevron`)
       expect(chevron.element.tagName.toLowerCase()).toBe('svg')
       expect(chevron.attributes('width')).toBe('12')

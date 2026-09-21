@@ -1,4 +1,8 @@
 <script setup lang="ts">
+import { computed } from 'vue'
+import '../styles/note-workspace.css'
+import ToolbarPopover from './notes/ToolbarPopover.vue'
+import { Ellipsis, ListTree } from 'lucide-vue-next'
 import { EditorContent } from '@tiptap/vue-3'
 import { BubbleMenu } from '@tiptap/vue-3/menus'
 import MarkdownSourceEditor from './MarkdownSourceEditor.vue'
@@ -19,6 +23,20 @@ const emit = defineEmits<NoteEditorEmit>()
 const workspace = useNoteEditor(props, emit)
 defineExpose({ saveLatestContent: () => workspace.flushLatestContent({ save: true }) })
 const { lowlight, store, library, appStore, tasksStore, t, locale, aiBusy, aiText, aiRequestId, aiAction, aiResultAction, aiProposal, aiSources, aiConsentOpen, assistantOpen, assistantTriggerVisible, assistantBusy, assistantRequestId, assistantStreamingText, assistantMessages, assistantSelection, assistantResponseSources, assistantResponseProposal, aiPanelOpen, aiPanelSelectionText, commandMenuOpen, aiPrompt, aiInputRef, commandMenuDirection, moreOpen, moreTriggerRef, moreMenuRef, insertOpen, tablePickerOpen, textColorOpen, highlightOpen, headingOpen, imageDialogOpen, imageUrl, imageAlt, imageInput, imageFileInput, tableRows, tableCols, fimEnabled, fimSuggestion, editorStateTick, fimTimer, assistantTriggerTimer, savedSelection, pendingAiRequest, pendingAiChange, modeIcons, noteLinks, editorModes, editorMode, modeMenuOpen, modeMenuIndex, modeMenuRef, markdownDraft, markdownParseError, sourceDirty, markdownPasteNotice, markdownPreview, splitRatio, splitVertical, splitWorkspace, sourceEditorRef, previewScroller, pendingSourceDrafts, persistedSignatures, exportingFormat, exportStatusLabel, externalFileName, EXTERNAL_NOTICE_DISMISSED_PREFIX, externalNoticeDismissed, showExternalNoteBanner, applyingEditorContent, markdownParseTimer, markdownPasteTimer, splitResizeObserver, splitDragState, scrollSyncFrame, scrollSyncSource, modeShortcutSwitching, externalNoticeStorageKey, readExternalNoticeDismissed, dismissExternalNoteBanner, currentMode, modeShortcutParts, modeShortcutLabel, richMode, codeMode, splitMode, splitPaneStyle, aiActionLabels, aiErrorMessages, aiEventErrorMessage, aiActionLabel, unknownErrorCode, contextConsentModelId, aiFeedback, aiOutputOpen, aiOriginalText, aiChangePending, AI_CHANGE_HIGHLIGHT, aiCharCount, aiDialogPosition, aiDialogStyle, aiDragState, refreshEditorState, looksLikeMarkdown, isPlainInlineAiReplacement, handleMarkdownPaste, prepareEditorContent, extractNoteTitle, textFromPreparedEditorContent, syncNoteTitle, getEditorMarkdown, editor, canUndo, canRedo, linkActive, canEditLink, selectedText, shouldShowBubbleMenu, textColorPalette, highlightPalette, currentHeadingLabel, canSetNoteTitle, noteContentSignature, scheduleNoteSave, saveDirtyNote, handleRichEditorUpdate, deriveMarkdown, commitMarkdown, queueMarkdownParse, updateMarkdownDraft, flushLatestContent, resetEditorSession, changeEditorMode, handleEditorModeShortcut, toggleModeMenu, focusModeOption, moveModeFocus, handleModeMenuKeydown, focusMoreItem, toggleMoreMenu, handleMoreMenuKeydown, handleDocumentPointerDown, updateSplitOrientation, setupSplitObserver, stopSplitResize, resizeSplitPane, startSplitResize, synchronizeSplitScroll, handlePreviewScroll, toggleMarkdownPreview, viewPastedMarkdown, resetTransientEditorState, handleBackgroundNoteTask, setEditorEditable, loadExternalProposal, toggle, applyMarkdownFormat, setMarkdownHeading, setMarkdownSmallBody, hasNoteContextConsent, cancelAiConsent, confirmAiConsent, runAi, captureAssistantSelection, openAssistant, closeAssistant, toggleAssistant, assistantReferences, pushAssistantResponse, assistantEditIntent, sendAssistantMessage, stopAssistant, copyAssistantMessage, stopAi, exportBodyHtml, prepareExportSnapshot, runArticleExport, exportMarkdown, exportHtml, exportPdf, printNote, restoreSavedSelection, clearAiResultState, syncNoteFromEditor, selectedContentMarks, insertPendingAiContent, stagePendingAiChange, restoreAiChange, persistAiChange, confirmPendingAiChange, applyAiResult, insertAi, replaceWithAi, copyAi, toggleAiFeedback, dismissAiResult, closeAiResult, stopAiDrag, moveAiDialog, startAiDrag, rewriteAi, saveCurrentSelection, closeAiPanel, positionCommandMenu, openAiPanel, toggleCommandMenu, selectAiCommand, sendCustomAi, runSelectedAi, openInConversation, runFim, acceptFim, handleEditorTab, dismissFim, insertCodeBlock, mermaidTemplates, insertMermaidDiagram, closeToolbarMenus, toggleInsertMenu, selectTableCell, insertTable, openImageDialog, normalizeImageUrl, confirmImage, insertLocalImage, setTextColor, setHighlightColor, setHeading, setNoteTitle, setSmallBody, clearRichFormatting, normalizeLinkHref, editLink, saveNoteMetadata, importExternalSource } = workspace
+const notebookPath = computed(() => {
+  if (props.note?.external) return '外部来源'
+  const names: string[] = []
+  const visited = new Set<string>()
+  let id = props.note?.notebookId
+  while (id && !visited.has(id)) {
+    visited.add(id)
+    const notebook = store.notebooks.find(item => item.id === id)
+    if (!notebook) break
+    names.unshift(notebook.name)
+    id = notebook.parentId
+  }
+  return names.join(' / ') || '未分类'
+})
 </script>
 <template>
   <div v-if="note" class="note-editor-shell">
@@ -26,26 +44,10 @@ const { lowlight, store, library, appStore, tasksStore, t, locale, aiBusy, aiTex
     <div class="toolbar friday-editor-toolbar" :class="{ 'with-assistant': !assistantTriggerVisible }">
       <div key="toolbar-format-controls" class="toolbar-left-group">
         <template v-if="richMode">
-        <button :title="t('undo')" :disabled="!canUndo" @click="editor?.chain().focus().undo().run()"><Undo2 :size="19" /></button>
+          <div class="format-history">        <button :title="t('undo')" :disabled="!canUndo" @click="editor?.chain().focus().undo().run()"><Undo2 :size="19" /></button>
         <button :title="t('redo')" :disabled="!canRedo" @click="editor?.chain().focus().redo().run()"><Redo2 :size="19" /></button>
-        <button title="清除格式" @click="clearRichFormatting"><Eraser :size="19" /></button>
-        <button title="链接" :class="{ pressed: linkActive }" :disabled="!canEditLink" @click="editLink"><Link2 :size="19" /></button><i></i>
-        <span class="toolbar-menu-anchor"><button title="插入" @click="toggleInsertMenu"><PlusCircle :size="19" /><span class="toolbar-label">插入</span><FridayDropdownChevron /></button><div v-if="insertOpen" class="toolbar-insert-menu insert-command-menu">
-          <div class="insert-submenu-anchor"><button class="insert-menu-item" @click.stop="tablePickerOpen = !tablePickerOpen"><span class="insert-menu-icon">▦</span><span>表格</span><span class="insert-menu-arrow">›</span></button><div v-if="tablePickerOpen" class="table-picker-menu" @click.stop><div class="table-picker-label">{{ tableRows }} × {{ tableCols }}</div><div v-for="row in 10" :key="`table-row-${row}`" class="table-picker-row"><button v-for="col in 10" :key="`table-cell-${row}-${col}`" class="table-picker-cell" :class="{ active: row <= tableRows && col <= tableCols }" @mouseenter="selectTableCell(row, col)" @click="insertTable(row, col)"></button></div></div></div>
-          <button class="insert-menu-item" @click="openImageDialog"><span class="insert-menu-icon">▧</span><span>图片</span></button>
-          <button class="insert-menu-item" @click="insertCodeBlock"><Code2 :size="15" /><span>代码块</span></button>
-          <button class="insert-menu-item insert-mermaid-flowchart" @click="insertMermaidDiagram('flowchart')"><Workflow :size="15" /><span>流程图</span></button>
-          <button class="insert-menu-item insert-mermaid-swimlane" @click="insertMermaidDiagram('swimlane')"><Columns2 :size="15" /><span>泳道图</span></button>
-          <button class="insert-menu-item" @click="editor?.chain().focus().setHorizontalRule().run(); insertOpen = false"><span class="insert-rule-icon">—</span><span>分隔线</span></button>
-          <button class="insert-menu-item" @click="editor?.chain().focus().toggleBlockquote().run(); insertOpen = false"><Quote :size="15" /><span>引用</span></button>
-        </div></span><i></i>
-        <button :class="{ pressed: editor?.isActive('bold') }" @click="toggle('toggleBold')"><Bold :size="19" /></button>
-        <button @click="toggle('toggleItalic')"><Italic :size="19" /></button>
-        <button @click="toggle('toggleUnderline')"><UnderlineIcon :size="19" /></button>
-        <button @click="toggle('toggleStrike')"><Strikethrough :size="19" /></button>
-        <span class="toolbar-menu-anchor color-menu-anchor"><button title="文字颜色" :class="{ pressed: textColorOpen }" @click="closeToolbarMenus(); textColorOpen = !textColorOpen"><PenLine :size="19" /><FridayDropdownChevron /></button><div v-if="textColorOpen" class="editor-color-menu"><strong>文字颜色</strong><button class="color-reset" @click="setTextColor('inherit')">默认颜色</button><div class="editor-color-grid"><button v-for="color in textColorPalette" :key="color" class="editor-color-swatch" :style="{ backgroundColor: color }" :title="color" @click="setTextColor(color)"></button></div></div></span>
-        <span class="toolbar-menu-anchor color-menu-anchor"><button title="背景颜色" :class="{ pressed: highlightOpen }" @click="closeToolbarMenus(); highlightOpen = !highlightOpen"><Highlighter :size="19" /><FridayDropdownChevron /></button><div v-if="highlightOpen" class="editor-color-menu"><strong>背景颜色</strong><button class="color-reset" @click="setHighlightColor('none')">无背景</button><div class="editor-color-grid"><button v-for="color in highlightPalette" :key="color" class="editor-color-swatch" :style="{ backgroundColor: color }" :title="color" @click="setHighlightColor(color)"></button></div></div></span><i></i>
-        <span class="toolbar-menu-anchor heading-menu-anchor">
+</div><i class="format-history"></i>
+                  <span class="toolbar-menu-anchor heading-menu-anchor">
           <button title="标题" :class="{ pressed: headingOpen }" @click="closeToolbarMenus(); headingOpen = !headingOpen"><span class="toolbar-label heading-label">{{ currentHeadingLabel }}</span><FridayDropdownChevron /></button>
           <div v-if="headingOpen" class="editor-heading-menu">
             <button class="heading-preview" :class="{ active: editor?.isActive('noteTitle') }" :disabled="!canSetNoteTitle" @click="setNoteTitle"><span class="note-title-menu-label">标题</span></button>
@@ -55,24 +57,48 @@ const { lowlight, store, library, appStore, tasksStore, t, locale, aiBusy, aiTex
             <button class="heading-preview" :class="{ active: editor?.isActive('paragraph') }" :disabled="editor?.isActive('noteTitle')" @click="setHeading(0)"><span>正文</span></button>
             <button class="heading-preview" :class="{ active: editor?.isActive('smallParagraph') }" :disabled="editor?.isActive('noteTitle')" @click="setSmallBody"><span class="small-body-label">小正</span></button>
           </div>
-        </span><i></i>
-        <button title="项目列表" @click="toggle('toggleBulletList')"><List :size="19" /></button>
+        </span>
+<i class="format-primary"></i>
+          <div class="format-primary">        <button title="粗体" :class="{ pressed: editor?.isActive('bold') }" @click="toggle('toggleBold')"><Bold :size="19" /></button>
+        <button title="斜体" @click="toggle('toggleItalic')"><Italic :size="19" /></button>
+        <button title="下划线" @click="toggle('toggleUnderline')"><UnderlineIcon :size="19" /></button>
+</div><i class="format-primary"></i>
+                  <span class="toolbar-menu-anchor"><button title="插入" @click="toggleInsertMenu"><PlusCircle :size="19" /><span class="toolbar-label">插入</span><FridayDropdownChevron /></button><div v-if="insertOpen" class="toolbar-insert-menu insert-command-menu">
+          <div class="insert-submenu-anchor"><button class="insert-menu-item" @click.stop="tablePickerOpen = !tablePickerOpen"><span class="insert-menu-icon">▦</span><span>表格</span><span class="insert-menu-arrow">›</span></button><div v-if="tablePickerOpen" class="table-picker-menu" @click.stop><div class="table-picker-label">{{ tableRows }} × {{ tableCols }}</div><div v-for="row in 10" :key="`table-row-${row}`" class="table-picker-row"><button v-for="col in 10" :key="`table-cell-${row}-${col}`" class="table-picker-cell" :class="{ active: row <= tableRows && col <= tableCols }" @mouseenter="selectTableCell(row, col)" @click="insertTable(row, col)"></button></div></div></div>
+          <button class="insert-menu-item" @click="openImageDialog"><span class="insert-menu-icon">▧</span><span>图片</span></button>
+          <button class="insert-menu-item" @click="insertCodeBlock"><Code2 :size="15" /><span>代码块</span></button>
+          <button class="insert-menu-item insert-mermaid-flowchart" @click="insertMermaidDiagram('flowchart')"><Workflow :size="15" /><span>流程图</span></button>
+          <button class="insert-menu-item insert-mermaid-swimlane" @click="insertMermaidDiagram('swimlane')"><Columns2 :size="15" /><span>泳道图</span></button>
+          <button class="insert-menu-item" @click="editor?.chain().focus().setHorizontalRule().run(); insertOpen = false"><span class="insert-rule-icon">—</span><span>分隔线</span></button>
+          <button class="insert-menu-item" @click="editor?.chain().focus().toggleBlockquote().run(); insertOpen = false"><Quote :size="15" /><span>引用</span></button>
+        </div></span>
+
+          <ToolbarPopover label="列表" @open="closeToolbarMenus(); modeMenuOpen = false"><template #trigger><List :size="18" /></template><div class="format-action-row">        <button title="项目列表" @click="toggle('toggleBulletList')"><List :size="19" /></button>
         <button title="编号列表" @click="toggle('toggleOrderedList')"><ListOrdered :size="19" /></button>
-        <button title="任务列表" @click="toggle('toggleTaskList')"><ListChecks :size="19" /></button><i></i>
+        <button title="任务列表" @click="toggle('toggleTaskList')"><ListChecks :size="19" /></button>
+</div></ToolbarPopover>
+          <ToolbarPopover label="更多格式" @open="closeToolbarMenus(); modeMenuOpen = false"><template #trigger><Ellipsis :size="18" /></template><div class="format-action-row"><div class="format-overflow-history">        <button :title="t('undo')" :disabled="!canUndo" @click="editor?.chain().focus().undo().run()"><Undo2 :size="19" /></button>
+        <button :title="t('redo')" :disabled="!canRedo" @click="editor?.chain().focus().redo().run()"><Redo2 :size="19" /></button>
+</div><div class="format-overflow-primary">        <button title="粗体" :class="{ pressed: editor?.isActive('bold') }" @click="toggle('toggleBold')"><Bold :size="19" /></button>
+        <button title="斜体" @click="toggle('toggleItalic')"><Italic :size="19" /></button>
+        <button title="下划线" @click="toggle('toggleUnderline')"><UnderlineIcon :size="19" /></button>
+</div>        <button title="清除格式" @click="clearRichFormatting"><Eraser :size="19" /></button>
+        <button title="链接" :class="{ pressed: linkActive }" :disabled="!canEditLink" @click="editLink"><Link2 :size="19" /></button>
+        <button title="删除线" @click="toggle('toggleStrike')"><Strikethrough :size="19" /></button>
+        <span class="toolbar-menu-anchor color-menu-anchor"><button title="文字颜色" :class="{ pressed: textColorOpen }" @click="closeToolbarMenus(); textColorOpen = !textColorOpen"><PenLine :size="19" /><FridayDropdownChevron /></button><div v-if="textColorOpen" class="editor-color-menu"><strong>文字颜色</strong><button class="color-reset" @click="setTextColor('inherit')">默认颜色</button><div class="editor-color-grid"><button v-for="color in textColorPalette" :key="color" class="editor-color-swatch" :style="{ backgroundColor: color }" :title="color" @click="setTextColor(color)"></button></div></div></span>
+        <span class="toolbar-menu-anchor color-menu-anchor"><button title="背景颜色" :class="{ pressed: highlightOpen }" @click="closeToolbarMenus(); highlightOpen = !highlightOpen"><Highlighter :size="19" /><FridayDropdownChevron /></button><div v-if="highlightOpen" class="editor-color-menu"><strong>背景颜色</strong><button class="color-reset" @click="setHighlightColor('none')">无背景</button><div class="editor-color-grid"><button v-for="color in highlightPalette" :key="color" class="editor-color-swatch" :style="{ backgroundColor: color }" :title="color" @click="setHighlightColor(color)"></button></div></div></span>
         <button title="左对齐" @click="editor?.chain().focus().setTextAlign('left').run()"><AlignLeft :size="19" /></button>
         <button title="居中" @click="editor?.chain().focus().setTextAlign('center').run()"><AlignCenter :size="19" /></button>
         <button title="右对齐" @click="editor?.chain().focus().setTextAlign('right').run()"><AlignRight :size="19" /></button>
+</div></ToolbarPopover>
         </template>
         <template v-else>
           <div class="markdown-toolbar-controls" role="toolbar" aria-label="Markdown 格式工具">
-            <button title="撤销" @click="applyMarkdownFormat('undo')"><Undo2 :size="19" /></button>
+            <div class="format-history"><button title="撤销" @click="applyMarkdownFormat('undo')"><Undo2 :size="19" /></button>
             <button title="重做" @click="applyMarkdownFormat('redo')"><Redo2 :size="19" /></button>
-            <button title="链接" @click="applyMarkdownFormat('link')"><Link2 :size="19" /></button><i></i>
-            <button title="粗体" @click="applyMarkdownFormat('bold')"><Bold :size="19" /></button>
+</div>            <div class="format-primary"><button title="粗体" @click="applyMarkdownFormat('bold')"><Bold :size="19" /></button>
             <button title="斜体" @click="applyMarkdownFormat('italic')"><Italic :size="19" /></button>
-            <button title="删除线" @click="applyMarkdownFormat('strike')"><Strikethrough :size="19" /></button>
-            <button title="行内代码" @click="applyMarkdownFormat('code')"><Code2 :size="19" /></button><i></i>
-            <span class="toolbar-menu-anchor heading-menu-anchor">
+</div>            <span class="toolbar-menu-anchor heading-menu-anchor">
               <button title="标题" :class="{ pressed: headingOpen }" @click="closeToolbarMenus(); headingOpen = !headingOpen"><span class="toolbar-label heading-label">标题</span><FridayDropdownChevron /></button>
               <div v-if="headingOpen" class="editor-heading-menu">
                 <button class="heading-preview" @click="setMarkdownHeading(1)"><span class="note-title-menu-label">标题</span></button>
@@ -82,11 +108,20 @@ const { lowlight, store, library, appStore, tasksStore, t, locale, aiBusy, aiTex
                 <button class="heading-preview" @click="setMarkdownHeading(0)"><span>正文</span></button>
                 <button class="heading-preview" @click="setMarkdownSmallBody"><span class="small-body-label">小正</span></button>
               </div>
-            </span><i></i>
-            <button title="项目列表" @click="applyMarkdownFormat('bullet')"><List :size="19" /></button>
+            </span>
+<ToolbarPopover label="列表" @open="closeToolbarMenus(); modeMenuOpen = false"><template #trigger><List :size="18" /></template><div class="format-action-row">            <button title="项目列表" @click="applyMarkdownFormat('bullet')"><List :size="19" /></button>
             <button title="编号列表" @click="applyMarkdownFormat('ordered')"><ListOrdered :size="19" /></button>
             <button title="任务列表" @click="applyMarkdownFormat('task')"><ListChecks :size="19" /></button>
             <button title="引用" @click="applyMarkdownFormat('quote')"><Quote :size="19" /></button>
+</div></ToolbarPopover>
+<ToolbarPopover label="更多格式" @open="closeToolbarMenus(); modeMenuOpen = false"><template #trigger><Ellipsis :size="18" /></template><div class="format-action-row"><div class="format-overflow-history"><button title="撤销" @click="applyMarkdownFormat('undo')"><Undo2 :size="19" /></button>
+            <button title="重做" @click="applyMarkdownFormat('redo')"><Redo2 :size="19" /></button>
+</div><div class="format-overflow-primary"><button title="粗体" @click="applyMarkdownFormat('bold')"><Bold :size="19" /></button>
+            <button title="斜体" @click="applyMarkdownFormat('italic')"><Italic :size="19" /></button>
+</div>            <button title="链接" @click="applyMarkdownFormat('link')"><Link2 :size="19" /></button>
+            <button title="删除线" @click="applyMarkdownFormat('strike')"><Strikethrough :size="19" /></button>
+            <button title="行内代码" @click="applyMarkdownFormat('code')"><Code2 :size="19" /></button>
+</div></ToolbarPopover>
           </div>
         </template>
       </div>
@@ -124,7 +159,8 @@ const { lowlight, store, library, appStore, tasksStore, t, locale, aiBusy, aiTex
             <button type="button" role="menuitem" :disabled="Boolean(exportingFormat)" @click="printNote"><Printer :size="15" /> {{ t('printArticle') }}</button>
           </div>
         </span>
-        <button v-if="assistantTriggerVisible" class="ai-button" @click="toggleAssistant"><Layers :size="17" /> Tiny Note 助理</button>
+        <button class="toolbar-toc-trigger" title="目录" aria-label="目录" :aria-pressed="tocVisible" @click="emit('toggle-toc')"><ListTree :size="17" /><span class="document-action-label">目录</span></button>
+        <button v-if="assistantTriggerVisible" class="ai-button" title="Tiny Note 助理" aria-label="Tiny Note 助理" @click="toggleAssistant"><Layers :size="17" /><span class="document-action-label">助理</span></button>
       </div>
     </div>
     <div v-if="showExternalNoteBanner" class="external-note-banner" role="status" :title="note.externalPath">
@@ -134,16 +170,16 @@ const { lowlight, store, library, appStore, tasksStore, t, locale, aiBusy, aiTex
         <button type="button" class="external-note-import" @click="importExternalSource">导入到笔记</button>
       </div>
     </div>
-    <div class="note-links-slot">
+    <div v-if="noteLinks.length" class="note-links-slot">
       <div v-if="noteLinks.length" class="note-metadata note-links" aria-label="关联笔记"><span>关联笔记</span><button v-for="link in noteLinks" :key="link.sourceNoteId + '-' + link.targetNoteId" type="button" @click="store.activeId = link.sourceNoteId === note.id ? link.targetNoteId : link.sourceNoteId">{{ link.targetTitle }}</button></div>
     </div>
-    <button class="toc-btn" :class="{ 'is-open': tocVisible }" title="目录" aria-label="目录" @click="emit('toggle-toc')"><span class="toc-char">目</span><span class="toc-char">录</span></button>
     <div ref="splitWorkspace" class="editor-workspace" :class="[`mode-${editorMode}`, { 'is-previewing': splitMode, 'is-vertical': splitVertical }]">
       <div v-if="codeMode" class="markdown-source-pane" :class="{ 'split-source-pane': splitMode }" :style="splitMode ? splitPaneStyle : undefined">
         <MarkdownSourceEditor ref="sourceEditorRef" :model-value="markdownDraft" aria-label="Markdown 源码编辑器" @update:model-value="updateMarkdownDraft" @scroll="synchronizeSplitScroll('source', $event)" />
       </div>
       <div v-if="splitMode" class="split-divider" role="separator" :aria-orientation="splitVertical ? 'horizontal' : 'vertical'" aria-label="调整源码与预览比例" aria-valuemin="30" aria-valuemax="70" :aria-valuenow="Math.round(splitRatio)" @pointerdown="startSplitResize"><span></span></div>
       <div v-show="!codeMode || markdownPreview" key="editor-render" ref="previewScroller" class="editor-render-pane" :class="{ 'split-preview-pane': splitMode }" @scroll.passive="handlePreviewScroll">
+        <div class="note-document-context" aria-label="当前笔记位置"><span>{{ notebookPath }}</span><span aria-hidden="true">/</span><span>{{ note.title || '未命名笔记' }}</span></div>
         <EditorContent :editor="editor" class="editor-content" :class="{ 'split-preview-content': splitMode, 'has-pending-ai-change': aiChangePending }" @mousedown="confirmPendingAiChange" @keydown.tab="handleEditorTab" @keydown.esc="dismissFim" />
       </div>
       <div v-if="markdownParseError" class="markdown-parse-error" role="alert">{{ markdownParseError }}</div>

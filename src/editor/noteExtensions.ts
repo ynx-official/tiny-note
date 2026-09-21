@@ -4,7 +4,7 @@ import Link from '@tiptap/extension-link'
 import Highlight from '@tiptap/extension-highlight'
 import TextAlign from '@tiptap/extension-text-align'
 import Placeholder from '@tiptap/extension-placeholder'
-import Image from '@tiptap/extension-image'
+import { SharedImage } from './sharedImage'
 import CodeBlockLowlight from '@tiptap/extension-code-block-lowlight'
 import Paragraph from '@tiptap/extension-paragraph'
 import Heading from '@tiptap/extension-heading'
@@ -264,7 +264,7 @@ export function createNoteExtensions({ lowlight, codeBlockNodeView, placeholder,
     Underline,
     Link.configure({ openOnClick: false }),
     MarkdownHighlight.configure({ multicolor: true }),
-    Image.configure({ allowBase64: true }),
+    SharedImage.configure({ allowBase64: true }),
     MarkdownTable.configure({ resizable: resizableTables }),
     TableRow,
     TableHeader,

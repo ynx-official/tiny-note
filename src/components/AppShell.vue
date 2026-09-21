@@ -3,7 +3,8 @@ import { computed, defineAsyncComponent, onMounted, onUnmounted, reactive, ref, 
 import { useRouter } from 'vue-router'
 import { useI18n } from 'vue-i18n'
 import { getCurrentWindow } from '@tauri-apps/api/window'
-import { AlertCircle, BookOpen, CalendarDays, CheckCircle2, ClipboardList, FileText, ImagePlus, ListTodo, LoaderCircle, Settings, Minus, Square, Copy, X, PanelLeftClose, PanelLeftOpen, Home, Tags, Clock } from 'lucide-vue-next'
+import { AlertCircle, BookOpen, CalendarDays, CheckCircle2, ClipboardList, FileText, ImagePlus, ListTodo, LoaderCircle, Settings, Minus, Square, Copy, X, PanelLeftClose, PanelLeftOpen, Home, Tags, Clock, Plus } from 'lucide-vue-next'
+import { useNotesStore } from '../stores/notes'
 import { useTasksStore } from '../stores/tasks'
 import { useAuthStore } from '../stores/auth'
 import { useChatSessionStore } from '../stores/chatSession'
@@ -17,6 +18,9 @@ const props = withDefaults(defineProps<{ active?: string; loginRequested?: boole
 const router = useRouter()
 const { t, te } = useI18n()
 const tasksStore = useTasksStore()
+const notesStore = useNotesStore()
+const openedWorkspaces = ref<string[]>([])
+const tabPickerOpen = ref(false)
 const auth = useAuthStore()
 const chatSession = useChatSessionStore()
 const pinia = getActivePinia()
@@ -39,6 +43,22 @@ const calendarLabel = computed(() => te('calendar') ? t('calendar') : '日历')
 const avatarSource = computed(() => resolveAvatarSource(auth.user))
 const todosLabel = computed(() => te('todos') ? t('todos') : '待办')
 const nav = computed(() => [{ key: 'notes', label: t('notes'), icon: FileText, path: '/notes' }, { key: 'library', label: t('library'), icon: BookOpen, path: '/library' }, { key: 'tags', label: t('tags'), icon: Tags, path: '/tags' }, { key: 'calendar', label: calendarLabel.value, icon: CalendarDays, path: '/calendar' }, { key: 'todos', label: todosLabel.value, icon: ClipboardList, path: '/todos' }, { key: 'images', label: '生图', icon: ImagePlus, path: '/images' }, { key: 'tasks', label: '任务中心', icon: ListTodo, path: '/tasks' }, { key: 'settings', label: t('settings'), icon: Settings, path: '/settings' }])
+const workspaceTabs = computed(() => openedWorkspaces.value.flatMap(key => {
+  const item = nav.value.find(item => item.key === key)
+  return item ? [{ ...item, label: key === 'notes' ? notesStore.active?.title || item.label : item.label }] : []
+}))
+watch(() => props.active, key => {
+  tabPickerOpen.value = false
+  if (key && key !== 'home' && !openedWorkspaces.value.includes(key)) openedWorkspaces.value.push(key)
+}, { immediate: true })
+function closeWorkspace(key: string) {
+  const index = openedWorkspaces.value.indexOf(key)
+  openedWorkspaces.value = openedWorkspaces.value.filter(item => item !== key)
+  if (props.active === key) {
+    const next = openedWorkspaces.value[Math.max(0, index - 1)]
+    navigate(nav.value.find(item => item.key === next)?.path || '/')
+  }
+}
 function showRailTooltip(event: Event, text: string) {
   const target = event.currentTarget
   if (!(target instanceof HTMLElement)) return
@@ -86,6 +106,7 @@ function openTaskCenter() {
 }
 function openConversation(id: string) { router.push({ path: '/chat', query: { id } }) }
 function closeHistoryOnOutsideClick(event: PointerEvent) {
+  if (event.target instanceof Element && !event.target.closest('.workspace-tab-picker-anchor')) tabPickerOpen.value = false
   if (!historyOpen.value || !(event.target instanceof Element)) return
   if (event.target.closest('.history-drawer, .rail-clock')) return
   historyOpen.value = false
@@ -145,7 +166,7 @@ watch(() => props.loginRequested, requested => {
   avatarOpen.value = true
 }, { immediate: true })
 watch(() => auth.authenticated, (authenticated, previouslyAuthenticated) => {
-  if (!authenticated && previouslyAuthenticated && pinia) void resetWorkspaceSession(pinia)
+  if (!authenticated && previouslyAuthenticated && pinia) { openedWorkspaces.value = []; void resetWorkspaceSession(pinia) }
 }, { flush: 'sync' })
 watch(() => auth.user?.userId, (id, previousId) => {
   if (id && previousId && id !== previousId && pinia) void resetWorkspaceSession(pinia)
@@ -155,7 +176,20 @@ watch(() => auth.user?.userId, (id, previousId) => {
   <div class="window-shell app-container">
     <header class="topbar tauri-drag-region" @mousedown="startWindowDrag">
       <div class="topbar-leading"><button class="sidebar-toggle-btn" :title="railCollapsed ? '展开导航' : '收起导航'" @click="railCollapsed = !railCollapsed"><PanelLeftOpen v-if="railCollapsed" :size="16" :stroke-width="1.8" /><PanelLeftClose v-else :size="16" :stroke-width="1.8" /></button></div>
-      <div class="tab-strip"><button v-for="tab in [{ key: 'home', label: t('appName'), path: '/', icon: Home }, { key: 'notes', label: t('notes'), path: '/notes', icon: FileText }, { key: 'library', label: t('library'), path: '/library', icon: BookOpen }, { key: 'tags', label: t('tags'), path: '/tags', icon: Tags }, { key: 'calendar', label: calendarLabel, path: '/calendar', icon: CalendarDays }, { key: 'todos', label: todosLabel, path: '/todos', icon: ClipboardList }]" :key="tab.key" :class="['tab', { active: active === tab.key }]" @click="navigate(tab.path)"><component :is="tab.icon" :size="14" :stroke-width="1.8" /><span>{{ tab.label }}</span><span v-if="tab.key === 'home' && chatSession.statusLabel" class="chat-tab-status" :class="`is-${chatSession.status}`" role="status"><i aria-hidden="true"></i>{{ chatSession.statusLabel }}</span><span v-if="active === tab.key" class="tab-close">×</span></button><button v-if="active === 'settings'" class="tab active" @click="navigate('/settings')"><Settings :size="14" :stroke-width="1.8" /><span>{{ t('settings') }}</span><span class="tab-close">×</span></button><div class="tabs-area-spacer"></div></div>
+      <div class="tab-strip">
+        <button class="tab home-tab" :class="{ active: active === 'home' }" @click="navigate('/')"><Home :size="16" /><span>{{ t('appName') }}</span><span v-if="chatSession.statusLabel" class="chat-tab-status" :class="`is-${chatSession.status}`" role="status"><i aria-hidden="true"></i>{{ chatSession.statusLabel }}</span></button>
+        <div class="workspace-tabs" aria-label="已打开的工作区">
+          <div v-for="tab in workspaceTabs" :key="tab.key" class="workspace-tab" :class="{ active: active === tab.key }">
+            <button class="tab" :class="{ active: active === tab.key }" :title="tab.label" :aria-current="active === tab.key ? 'page' : undefined" @click="navigate(tab.path)"><component :is="tab.icon" :size="15" /><span>{{ tab.label }}</span></button>
+            <button class="workspace-tab-close" :aria-label="`关闭 ${tab.label}`" @click="closeWorkspace(tab.key)"><X :size="13" /></button>
+          </div>
+        </div>
+        <span class="workspace-tab-picker-anchor" @keydown.esc.stop="tabPickerOpen = false">
+          <button class="tab-plus" title="打开工作区" aria-label="打开工作区" :aria-expanded="tabPickerOpen" @click="tabPickerOpen = !tabPickerOpen"><Plus :size="18" /></button>
+          <div v-if="tabPickerOpen" class="workspace-tab-picker" aria-label="选择工作区"><button v-for="item in nav" :key="item.key" :data-workspace="item.key" @click="tabPickerOpen = false; navigate(item.path)"><component :is="item.icon" :size="16" />{{ item.label }}</button></div>
+        </span>
+        <div class="tabs-area-spacer"></div>
+      </div>
       <div class="window-actions"><button aria-label="Minimize" title="Minimize" @click="minimizeWindow"><Minus :size="15" /></button><button :aria-label="isMaximized ? 'Restore' : 'Maximize'" :title="isMaximized ? 'Restore' : 'Maximize'" @click="toggleMaximize"><Copy v-if="isMaximized" :size="13" /><Square v-else :size="13" /></button><button class="close" aria-label="Close" title="Close" @click="closeWindow"><X :size="15" /></button></div>
     </header>
     <div class="app-body main-body">

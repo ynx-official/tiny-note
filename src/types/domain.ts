@@ -1,7 +1,7 @@
 export type JsonPrimitive = string | number | boolean | null
 export type JsonValue = JsonPrimitive | JsonValue[] | { [key: string]: JsonValue }
 
-export interface Note { id: string; notebookId: string | null; knowledgeBaseId: string | null; title: string; contentHtml: string; contentText: string; contentMarkdown: string; pinned: boolean; version?: number; deletedAt: string | null; createdAt: string; updatedAt: string; external?: boolean; externalPath?: string; externalFingerprint?: string }
+export interface Note { id: string; notebookId: string | null; knowledgeBaseId: string | null; title: string; contentHtml: string; contentText: string; contentMarkdown: string; markdownSource?: boolean; pinned: boolean; version?: number; deletedAt: string | null; createdAt: string; updatedAt: string; external?: boolean; externalPath?: string; externalFingerprint?: string }
 export interface Notebook { id: string; parentId: string | null; name: string; description: string; version?: number; createdAt: string; updatedAt: string }
 export type NoteSummary = Pick<Note, 'id' | 'notebookId' | 'knowledgeBaseId' | 'title' | 'pinned' | 'version' | 'deletedAt' | 'createdAt' | 'updatedAt'> & { excerpt: string }
 export interface NotePageFilter { search?: string; deleted?: boolean; pinned?: boolean; notebookId?: string; knowledgeBaseId?: string; tagId?: string; excludeTagId?: string; untagged?: boolean; cursor?: string; limit?: number }
