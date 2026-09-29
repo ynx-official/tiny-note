@@ -1,11 +1,41 @@
 import { beforeEach, expect, it, vi } from 'vitest'
-import { createNotePageState, loadNotePage } from './notePage'
+import { createNotePageState, loadNotePage, revalidateNotePage } from './notePage'
 import { invoke } from './tauri'
 import type { NotePage, NoteSummary } from '../types/domain'
 vi.mock('./tauri', () => ({ invoke: vi.fn() }))
 const item = (id: string) => ({ id, title: id, excerpt: 'summary' }) as NoteSummary
 const page = (ids: string[], cursor = ''): NotePage => ({ items: ids.map(item), total: 3, hasMore: Boolean(cursor), nextCursor: cursor })
 beforeEach(() => { vi.mocked(invoke).mockReset() })
+
+it('silently refreshes the loaded page window without flashing or dropping later pages', async () => {
+  const state = createNotePageState()
+  vi.mocked(invoke).mockResolvedValueOnce(page(['1', '2'], 'page2')).mockResolvedValueOnce(page(['3', '4'], 'page3'))
+  await loadNotePage(state, { limit: 2 })
+  await loadNotePage(state, state.filter, true)
+  let resolve!: (value: NotePage) => void
+  vi.mocked(invoke).mockReturnValueOnce(new Promise(done => { resolve = done })).mockResolvedValueOnce(page(['2', '3'], 'new-page3'))
+  const refreshing = revalidateNotePage(state)
+  expect(state.loading).toBe(false)
+  expect(state.items.map(item => item.id)).toEqual(['1', '2', '3', '4'])
+  resolve(page(['new', '1'], 'new-page2'))
+  await refreshing
+  expect(state.items.map(item => item.id)).toEqual(['new', '1', '2', '3'])
+  expect(state.nextCursor).toBe('new-page3')
+})
+
+it('discards a silent catalog response after the visible filter changes', async () => {
+  const state = createNotePageState()
+  vi.mocked(invoke).mockResolvedValueOnce(page(['old']))
+  await loadNotePage(state, { search: 'old' })
+  let resolve!: (value: NotePage) => void
+  vi.mocked(invoke).mockReturnValueOnce(new Promise(done => { resolve = done }))
+  const refreshing = revalidateNotePage(state)
+  vi.mocked(invoke).mockResolvedValueOnce(page(['new']))
+  await loadNotePage(state, { search: 'new' })
+  resolve(page(['stale']))
+  await refreshing
+  expect(state.items.map(item => item.id)).toEqual(['new'])
+})
 
 it('keeps rows, totals and cursors visible while refreshing the same filter', async () => {
   const state = createNotePageState()

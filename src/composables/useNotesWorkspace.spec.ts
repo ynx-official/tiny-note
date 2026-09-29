@@ -46,6 +46,20 @@ it('keeps the trash view read-only after leaving and returning', async () => {
   second.wrapper.unmount()
 })
 
+it('refreshes the open cloud note on focus even when its cached summary is stale', async () => {
+  const { workspace: work, wrapper } = await workspace()
+  try {
+    cacheNoteBody(work.store, note('current'))
+    work.store.activeId = 'current'
+    const remote = { ...note('current'), version: 2, contentMarkdown: 'Edited on another computer' }
+    mocks.invoke.mockImplementation(async command => command === 'note_get' ? remote : command === 'note_page'
+      ? { items: [{ id: 'current', version: 1 }], total: 1, hasMore: false, nextCursor: '' } : [])
+    window.dispatchEvent(new Event('focus'))
+    await flushPromises()
+    expect(work.store.active).toMatchObject(remote)
+  } finally { wrapper.unmount() }
+})
+
 it('restores expanded folders and sidebar position on return without refreshing a fresh catalog', async () => {
   const pinia = createPinia()
   const first = await workspace(pinia)

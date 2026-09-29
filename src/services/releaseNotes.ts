@@ -1,4 +1,4 @@
-import changelog from '../../CHANGELOG.md?raw'
+import { version } from '../../package.json'
 
 export interface CurrentReleaseNotes {
   version: string
@@ -6,19 +6,21 @@ export interface CurrentReleaseNotes {
   body: string
 }
 
-const releasePattern = /^## \[([^\]]+)\](?: - (\d{4}-\d{2}-\d{2}))?\s*$/m
+const releaseDetails = import.meta.glob<string>('../../docs/upgrade/tiny-note-v*/README.md', {
+  query: '?raw',
+  import: 'default',
+  eager: true
+})
 
 function readCurrentReleaseNotes(): CurrentReleaseNotes {
-  const match = releasePattern.exec(changelog)
-  if (!match) return { version: '', date: '', body: '' }
-
-  const start = match.index + match[0].length
-  const nextRelease = changelog.slice(start).search(/^## \[/m)
-  const section = changelog.slice(start, nextRelease === -1 ? undefined : start + nextRelease)
-    .replace(/^\[[^\]]+\]:.*$/gm, '')
-    .trim()
-
-  return { version: match[1] || '', date: match[2] || '', body: section }
+  // CHANGELOG contains summaries only; use the installed version's full detail.
+  const detail = releaseDetails[`../../docs/upgrade/tiny-note-v${version}/README.md`] || ''
+  return {
+    version,
+    date: detail.match(/^> 发布日期：(\d{4}-\d{2}-\d{2})/m)?.[1] || '',
+    // This repository navigation link has no destination inside the desktop app.
+    body: detail.replace(/^\[返回版本总览\].*$/gm, '').trim()
+  }
 }
 
 export const CURRENT_RELEASE_NOTES = readCurrentReleaseNotes()

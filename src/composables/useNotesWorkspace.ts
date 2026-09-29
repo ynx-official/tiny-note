@@ -13,6 +13,7 @@ import { useWorkspaceSidebar } from '../utils/workspaceSidebar'
 import { errorMessage, type ExternalMarkdownSource, type Note, type NoteSummary, type Notebook, type Tag } from '../types/domain'
 import { noteSummary } from '../services/noteCache'
 import { registerNoteEditorFlush } from '../services/noteEditorFlush'
+import { startNoteRemoteRefresh } from '../services/noteRemoteRefresh'
 import type { NotePageState } from '../services/notePage'
 import { compareNotebooks } from '../utils/notebooks'
 import { buildMarkdownNotebookImportRequest } from '../services/markdownNotebookImport'
@@ -50,6 +51,7 @@ export function useNotesWorkspace() {
   let mounted = false
   let disposed = false
   let unregisterEditorFlush = () => {}
+  let stopRemoteRefresh = () => {}
   
   const { sidebarCollapsed, expandedNotebookIds, showDeleted, externalSourcesOpen } = storeToRefs(store)
   
@@ -181,7 +183,10 @@ export function useNotesWorkspace() {
       if (route.query.new) await createFromQuery()
       else if (route.query.note) await openRoutedNote()
       else if (!hadCatalog && !showDeleted.value && !store.active && store.listed[0]) await selectNote(store.listed[0])
-    } finally { initializing.value = false }
+    } finally {
+      initializing.value = false
+      if (!disposed && store.cacheScope === scope) stopRemoteRefresh = startNoteRemoteRefresh(store, hadCatalog)
+    }
   })
   
   watch(() => route.query.new, createFromQuery)
@@ -784,6 +789,7 @@ export function useNotesWorkspace() {
   
   onBeforeUnmount(() => {
     unregisterEditorFlush()
+    stopRemoteRefresh()
     mounted = false
     disposed = true
     selectionSequence++

@@ -22,6 +22,37 @@ function filterKey(filter: NotePageFilter): string {
     .filter(([key, value]) => key !== 'cursor' && value !== undefined)
     .sort(([left], [right]) => left.localeCompare(right)))
 }
+/** Stage the already loaded window offscreen; publish it once without loading UI. */
+export async function revalidateNotePage(state: NotePageState): Promise<boolean> {
+  if (state.loading) return false
+  const sequence = (sequences.get(state) || 0) + 1
+  sequences.set(state, sequence)
+  const filter = { ...state.filter }
+  const targetCount = Math.max(state.items.length, 1)
+  const staged = createNotePageState()
+  const cursors = new Set<string>()
+  do {
+    if (sequences.get(state) !== sequence) return false
+    const cursor = staged.nextCursor || undefined
+    if (cursor && cursors.has(cursor)) throw new Error('笔记目录分页游标未前进，请稍后重试')
+    if (cursor) cursors.add(cursor)
+    const page = await invoke('note_page', { ...filter, limit: filter.limit || 80, cursor })
+    if (sequences.get(state) !== sequence) return false
+    staged.items.push(...page.items)
+    staged.total = page.total
+    staged.hasMore = page.hasMore
+    staged.nextCursor = page.nextCursor
+    if (page.notebookCounts) staged.notebookCounts = page.notebookCounts
+  } while (staged.items.length < targetCount && staged.hasMore && staged.nextCursor)
+  const existing = new Map(state.items.map(item => [item.id, item]))
+  state.items = [...new Map(staged.items.map(item => {
+    const current = existing.get(item.id)
+    return [item.id, current && ((current.version || 0) > (item.version || 0) || JSON.stringify(current) === JSON.stringify(item)) ? current : item]
+  })).values()]
+  Object.assign(state, { total: staged.total, hasMore: staged.hasMore, nextCursor: staged.nextCursor, notebookCounts: staged.notebookCounts, loaded: true, error: '', retryAppend: false })
+  return true
+}
+
 export async function loadNotePage(state: NotePageState, filter: NotePageFilter = state.filter, append = false): Promise<boolean> {
   if (append && (state.loading || !state.hasMore)) return false
   const sequence = (sequences.get(state) || 0) + 1

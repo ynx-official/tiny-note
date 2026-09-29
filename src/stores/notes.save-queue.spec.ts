@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { toRaw } from 'vue'
 import { createPinia, setActivePinia } from 'pinia'
 import type { Note } from '../types/domain'
@@ -37,6 +37,7 @@ function noteFixture(): Note {
 }
 
 describe('notes save queue', () => {
+  afterEach(() => vi.useRealTimers())
   beforeEach(() => {
     setActivePinia(createPinia())
     invokeMock.mockReset()
@@ -85,5 +86,34 @@ describe('notes save queue', () => {
     expect(note).toMatchObject({ title: '仍在输入', contentText: '第二版', version: 3 })
     expect(store.saving).toBe(false)
     expect(store.pendingSaveCount).toBe(0)
+  })
+
+  it('automatically saves after typing stops and exposes pending, saving and saved states', async () => {
+    vi.useFakeTimers()
+    const store = useNotesStore()
+    const note = noteFixture()
+    const response = deferred<Note>()
+    invokeMock.mockReturnValueOnce(response.promise)
+    store.scheduleSave(note)
+    expect(store.saveStates[note.id]?.status).toBe('pending')
+    await vi.advanceTimersByTimeAsync(799)
+    expect(invokeMock).not.toHaveBeenCalled()
+    await vi.advanceTimersByTimeAsync(1)
+    expect(store.saveStates[note.id]?.status).toBe('saving')
+    response.resolve({ ...note, version: 2 })
+    await vi.advanceTimersByTimeAsync(0)
+    expect(store.saveStates[note.id]?.status).toBe('saved')
+  })
+
+  it('keeps failed edits and exposes a retryable save error', async () => {
+    const store = useNotesStore()
+    const note = noteFixture()
+    invokeMock.mockRejectedValueOnce(new Error('网络暂时中断'))
+    await expect(store.save(note)).rejects.toThrow('网络暂时中断')
+    expect(store.saveStates[note.id]).toMatchObject({ status: 'error', error: '网络暂时中断' })
+    expect(note.contentText).toBe('第一版')
+    invokeMock.mockResolvedValueOnce({ ...note, version: 2 })
+    await store.save(note)
+    expect(store.saveStates[note.id]?.status).toBe('saved')
   })
 })

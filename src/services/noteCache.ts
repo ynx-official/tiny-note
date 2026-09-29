@@ -4,6 +4,7 @@ import type { Note, NoteSummary } from '../types/domain'
 
 export interface NoteCacheState { notes: Note[]; deleted: Note[]; activeId: string | null; cacheScope: object }
 const persisted = new WeakMap<Note, string>()
+const unparsedDrafts = new WeakSet<Note>()
 const touched = new WeakMap<Note, number>()
 const requests = new WeakMap<object, Map<string, Promise<Note>>>()
 let touchSequence = 0
@@ -13,8 +14,9 @@ function signature(note: Note): string {
 }
 export function trackPersistedNote(note: Note, saved: Note = note) { persisted.set(toRaw(note), signature(saved)) }
 // Source editor drafts can precede parsing into the Note body. Protect them too.
-export function protectNoteDraft(note: Note) { persisted.delete(toRaw(note)) }
-export function noteHasUnsavedChanges(note: Note) { return persisted.get(toRaw(note)) !== signature(note) }
+export function protectNoteDraft(note: Note) { unparsedDrafts.add(toRaw(note)); persisted.delete(toRaw(note)) }
+export function releaseNoteDraft(note: Note) { unparsedDrafts.delete(toRaw(note)) }
+export function noteHasUnsavedChanges(note: Note) { return unparsedDrafts.has(toRaw(note)) || persisted.get(toRaw(note)) !== signature(note) }
 export function noteSummary(note: Note): NoteSummary {
   return { id: note.id, title: note.title, notebookId: note.notebookId, knowledgeBaseId: note.knowledgeBaseId, excerpt: Array.from(note.contentText || '').slice(0, 200).join(''), pinned: Boolean(note.pinned), version: note.version, deletedAt: note.deletedAt, createdAt: note.createdAt, updatedAt: note.updatedAt }
 }
@@ -64,6 +66,10 @@ export async function readNoteBody(state: NoteCacheState, id: string, expectedVe
     const note = await invoke('note_get', { id })
     if (state.cacheScope !== scope) throw new Error('登录状态已变化，请重新打开笔记')
     if (!note) throw new Error('笔记不存在或已被删除')
+    // A save can finish while this read is in flight. Do not roll it back, or
+    // replace an unchanged object and reset the current editor session.
+    const current = cachedNote(state, id)
+    if (current && typeof current.version === 'number' && typeof note.version === 'number' && current.version >= note.version) return current
     return cacheNoteBody(state, note)
   })()
   inflight.set(id, request)

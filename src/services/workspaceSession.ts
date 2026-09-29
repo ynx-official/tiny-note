@@ -1,5 +1,6 @@
 import type { Pinia } from 'pinia'
 import { useChatSessionStore } from '../stores/chatSession'
+import { useNoteSyncStore } from '../stores/noteSync'
 
 interface ResettableStore { $reset: () => void }
 
@@ -7,6 +8,7 @@ interface ResettableStore { $reset: () => void }
 export async function resetWorkspaceSession(pinia: Pinia): Promise<void> {
   // Invalidate in-flight chat work before yielding to lazy store imports.
   useChatSessionStore(pinia).$reset()
+  useNoteSyncStore(pinia).$reset()
   const [app, notes, library, tags, calendar, todos, tasks, images] = await Promise.all([
     import('../stores/app'), import('../stores/notes'), import('../stores/library'), import('../stores/tags'),
     import('../stores/calendar'), import('../stores/todos'), import('../stores/tasks'), import('../stores/images')

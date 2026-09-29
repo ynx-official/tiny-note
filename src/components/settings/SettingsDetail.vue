@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed, ref } from 'vue'
 import CurrentReleaseDialog from './CurrentReleaseDialog.vue'
+import SettingsSync from './SettingsSync.vue'
 import { AlertCircle, Check, ChevronDown, ChevronRight, FlaskConical, FolderOpen, Globe2, Languages, LoaderCircle, Monitor, Pencil, Plus, RefreshCw, Trash2 } from 'lucide-vue-next'
 import AgentToolsCatalog from '../AgentToolsCatalog.vue'
 import type { SettingsWorkspace } from '../../composables/useSettingsWorkspace'
@@ -37,6 +38,8 @@ const currentReleaseOpen = ref(false)
               </div>
             </div>
           </section>
+
+          <SettingsSync v-else-if="activeSectionId === 'sync'" />
 
           <section v-else-if="activeSectionId === 'shortcuts'" class="settings-detail-section settings-shortcuts-section">
             <div class="settings-section-kicker">{{ t('editorShortcuts') }}</div>

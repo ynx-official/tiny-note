@@ -1,7 +1,7 @@
 import { reactive } from 'vue'
 import { beforeEach, expect, it, vi } from 'vitest'
 import { invoke } from './tauri'
-import { assertNoteBody, cacheNoteBody, noteHasUnsavedChanges, protectNoteDraft, readNoteBody, trackPersistedNote, trimNoteCache, type NoteCacheState } from './noteCache'
+import { assertNoteBody, cacheNoteBody, noteHasUnsavedChanges, protectNoteDraft, releaseNoteDraft, readNoteBody, trackPersistedNote, trimNoteCache, type NoteCacheState } from './noteCache'
 import type { Note } from '../types/domain'
 
 vi.mock('./tauri', () => ({ invoke: vi.fn() }))
@@ -74,7 +74,40 @@ it('protects source drafts before their parser updates the cached Note body', ()
   protectNoteDraft(cache.notes[0]!)
   trimNoteCache(cache, '', 0, 0)
   expect(cache.notes[0]?.id).toBe('unparsed')
+  releaseNoteDraft(cache.notes[0]!)
   trackPersistedNote(cache.notes[0]!)
   trimNoteCache(cache, '', 0, 0)
   expect(cache.notes).toEqual([])
+})
+
+it('keeps an unparsed draft protected when an older save acknowledgement arrives', () => {
+  const cache = state()
+  cacheNoteBody(cache, note('typing'))
+  const current = cache.notes[0]!
+  protectNoteDraft(current)
+  trackPersistedNote(current)
+  expect(noteHasUnsavedChanges(current)).toBe(true)
+  expect(cacheNoteBody(cache, note('typing', 3))).toBe(current)
+})
+
+it('keeps the editor object when remote validation returns the same version', async () => {
+  const cache = state()
+  cacheNoteBody(cache, note('one', 2))
+  const current = cache.notes[0]
+  vi.mocked(invoke).mockResolvedValueOnce(note('one', 2))
+  expect(await readNoteBody(cache, 'one')).toBe(current)
+  expect(cache.notes[0]).toBe(current)
+})
+
+it('does not roll back a save completed while remote validation was in flight', async () => {
+  const cache = state()
+  cacheNoteBody(cache, note('one'))
+  let resolve!: (value: Note) => void
+  vi.mocked(invoke).mockReturnValueOnce(new Promise(done => { resolve = done }))
+  const refreshing = readNoteBody(cache, 'one')
+  const saved = { ...note('one', 3), contentMarkdown: 'Saved while refreshing' }
+  cacheNoteBody(cache, saved)
+  resolve(note('one', 2))
+  await refreshing
+  expect(cache.notes[0]).toMatchObject(saved)
 })

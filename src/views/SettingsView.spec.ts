@@ -4,6 +4,8 @@ import { createPinia, setActivePinia } from 'pinia'
 import { createI18n } from 'vue-i18n'
 import { messages } from '../i18n'
 import { appUpdater } from '../services/appUpdater'
+import { CURRENT_RELEASE_NOTES } from '../services/releaseNotes'
+import { renderMarkdown } from '../utils/markdown'
 
 const model = {
   id: 'custom-model',
@@ -229,7 +231,12 @@ describe('SettingsView model services', () => {
       try {
         await wrapper.get('[data-testid="current-release-notes"]').trigger('click')
         expect(showModal).toHaveBeenCalledOnce()
-        expect(wrapper.get('dialog .release-notes-markdown').findAll('h3').length).toBeGreaterThan(0)
+        const currentNotes = wrapper.get('dialog .release-notes-markdown')
+        expect(currentNotes.findAll('h2').map(heading => heading.text())).toContain('版本概述')
+        const expectedNotes = document.createElement('div')
+        expectedNotes.innerHTML = renderMarkdown(CURRENT_RELEASE_NOTES.body)
+        expect(currentNotes.element.innerHTML).toBe(expectedNotes.innerHTML)
+        expect(currentNotes.text()).not.toContain('返回版本总览')
         await wrapper.get('dialog button').trigger('click')
         expect(wrapper.find('dialog').exists()).toBe(false)
       } finally {

@@ -2,6 +2,7 @@
 import { computed } from 'vue'
 import '../styles/note-workspace.css'
 import ToolbarPopover from './notes/ToolbarPopover.vue'
+import NoteSaveStatus from './notes/NoteSaveStatus.vue'
 import { Ellipsis, ListTree } from 'lucide-vue-next'
 import { EditorContent } from '@tiptap/vue-3'
 import { BubbleMenu } from '@tiptap/vue-3/menus'
@@ -179,7 +180,7 @@ const notebookPath = computed(() => {
       </div>
       <div v-if="splitMode" class="split-divider" role="separator" :aria-orientation="splitVertical ? 'horizontal' : 'vertical'" aria-label="调整源码与预览比例" aria-valuemin="30" aria-valuemax="70" :aria-valuenow="Math.round(splitRatio)" @pointerdown="startSplitResize"><span></span></div>
       <div v-show="!codeMode || markdownPreview" key="editor-render" ref="previewScroller" class="editor-render-pane" :class="{ 'split-preview-pane': splitMode }" @scroll.passive="handlePreviewScroll">
-        <div class="note-document-context" aria-label="当前笔记位置"><span>{{ notebookPath }}</span><span aria-hidden="true">/</span><span>{{ note.title || '未命名笔记' }}</span></div>
+        <div class="note-document-context" aria-label="当前笔记位置"><span>{{ notebookPath }}</span><span aria-hidden="true">/</span><span>{{ note.title || '未命名笔记' }}</span><NoteSaveStatus :note-id="note.id" :source-dirty="sourceDirty" @retry="flushLatestContent({ save: true }).catch(() => {})" /></div>
         <EditorContent :editor="editor" class="editor-content" :class="{ 'split-preview-content': splitMode, 'has-pending-ai-change': aiChangePending }" @mousedown="confirmPendingAiChange" @keydown.tab="handleEditorTab" @keydown.esc="dismissFim" />
       </div>
       <div v-if="markdownParseError" class="markdown-parse-error" role="alert">{{ markdownParseError }}</div>

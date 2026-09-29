@@ -2,6 +2,7 @@ import { assertNoteBody, cacheNoteBody, cachedNote, noteHasUnsavedChanges, noteS
 import { createNotePageState, loadNotePage, type NotePageState } from '../services/notePage'
 import { toRaw } from 'vue'
 import { defineStore } from 'pinia'
+import { useNoteSyncStore } from './noteSync'
 import { invoke } from '../services/tauri'
 import { saveExternalDocument } from '../services/externalDocument'
 import { markdownToEditorHtml, sanitizeEditorHtml, textFromEditorHtml } from '../utils/noteMarkdown'
@@ -11,6 +12,7 @@ import { errorMessage, type ExternalMarkdownSource, type JsonValue, type Markdow
 
 interface CreateNoteContent { title?: string; contentHtml?: string; contentText?: string; contentMarkdown?: string; notebookId?: string | null; knowledgeBaseId?: string | null; pinned?: boolean }
 interface ExternalMarkdownInput { path: string; title: string; contentHtml: string; contentText: string; contentMarkdown: string }
+interface NoteSaveState { status: 'pending' | 'saving' | 'saved' | 'error'; error: string }
 
 interface NoteSaveContent {
   title: string
@@ -75,6 +77,7 @@ export const useNotesStore = defineStore('notes', {
     loadError: '',
     saveTimer: null as ReturnType<typeof setTimeout> | null,
     saving: false,
+    saveStates: {} as Record<string, NoteSaveState>,
     pendingSaveCount: 0
   }),
   getters: {
@@ -270,14 +273,23 @@ export const useNotesStore = defineStore('notes', {
     },
     async save(note: Note) {
       assertNoteBody(note)
+      const scope = this.cacheScope
+      const sync = useNoteSyncStore()
       const cacheKey = toRaw(note)
       const previous = noteSaveQueues.get(cacheKey) || Promise.resolve(note)
       const queued = previous.catch(() => note).then(async () => {
+        if (this.cacheScope !== scope) throw new Error('登录状态已变化，请重新打开笔记')
+        this.saveStates[note.id] = { status: 'saving', error: '' }
         const content = noteSaveContent(note)
         const updated = note.external && window.__TAURI_INTERNALS__
           ? await saveExternalDocument(note, content.contentMarkdown)
           : await invoke('note_update', { id: note.id, input: { ...content, version: requireResourceVersion(note, '笔记') } })
-        if (updated) { mergeSavedNote(note, updated, content); trackPersistedNote(note, updated); this.syncSummary(note) }
+        if (this.cacheScope !== scope) throw new Error('登录状态已变化，请重新打开笔记')
+        if (updated) {
+          mergeSavedNote(note, updated, content); trackPersistedNote(note, updated); this.syncSummary(note)
+          sync.lastSavedAt = Date.now()
+          this.saveStates[note.id] = { status: noteHasUnsavedChanges(note) ? 'pending' : 'saved', error: '' }
+        } else this.saveStates[note.id] = { status: 'error', error: '未收到保存结果，请重试' }
         return note
       })
 
@@ -286,6 +298,9 @@ export const useNotesStore = defineStore('notes', {
       this.saving = true
       try {
         return await queued
+      } catch (error) {
+        if (this.cacheScope === scope) this.saveStates[note.id] = { status: 'error', error: errorMessage(error, '笔记保存失败') }
+        throw error
       } finally {
         if (noteSaveQueues.get(cacheKey) === queued) noteSaveQueues.delete(cacheKey)
         this.pendingSaveCount = Math.max(0, this.pendingSaveCount - 1)
@@ -294,8 +309,11 @@ export const useNotesStore = defineStore('notes', {
       }
     },
     scheduleSave(note: Note, onSaved?: () => void) {
+      this.saveStates[note.id] = { status: 'pending', error: '' }
       if (this.saveTimer) clearTimeout(this.saveTimer)
+      const scope = this.cacheScope
       this.saveTimer = setTimeout(async () => {
+        if (this.cacheScope !== scope) return
         this.saveTimer = null
         try {
           await this.save(note)

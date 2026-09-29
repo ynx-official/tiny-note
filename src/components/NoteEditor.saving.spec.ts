@@ -2,8 +2,47 @@ import { flushPromises } from '@vue/test-utils'
 import { describe, expect, it, vi } from 'vitest'
 import MarkdownSourceEditor from './MarkdownSourceEditor.vue'
 import { mountEditor, note } from './NoteEditor.testHarness'
+import { cacheNoteBody, trackPersistedNote } from '../services/noteCache'
 
 describe('NoteEditor save and synchronization', () => {
+  it('shows automatic save progress and saves the edited body without a save click', async () => {
+    const original = { ...note('visible-autosave'), title: '标题' }
+    localStorage.setItem('tiny-note-browser-state', JSON.stringify({ notes: [original] }))
+    const wrapper = await mountEditor(original)
+    try {
+      vi.useFakeTimers()
+      wrapper.vm.editor.commands.setContent('<h1>标题</h1><p>自动保存的新内容</p>')
+      await flushPromises()
+      expect(wrapper.get('.note-auto-save').text()).toContain('等待自动保存')
+      await vi.advanceTimersByTimeAsync(800)
+      await flushPromises()
+      expect(wrapper.get('.note-auto-save').text()).toBe('已保存')
+      expect(JSON.parse(localStorage.getItem('tiny-note-browser-state')!).notes[0].contentText).toContain('自动保存的新内容')
+    } finally { wrapper.unmount(); vi.useRealTimers() }
+  })
+
+  it.each(['rich', 'markdown'])('renders a newer cloud body for the same ID in %s mode', async mode => {
+    const original = { ...note('remote-refresh'), title: '标题' }
+    const wrapper = await mountEditor(original)
+    try {
+      trackPersistedNote(original)
+      if (mode === 'markdown') {
+        await wrapper.get('.editor-mode-trigger').trigger('click')
+        await wrapper.findAll('[role="menuitemradio"]')[1].trigger('click')
+        await flushPromises()
+      }
+      const save = vi.spyOn(wrapper.notesStore, 'save')
+      const remote = { ...original, version: 2, title: '远端标题', contentHtml: '<h1>远端标题</h1><p>另一台电脑保存的正文</p>', contentText: '远端标题\n另一台电脑保存的正文', contentMarkdown: '# 远端标题\n\n另一台电脑保存的正文' }
+      cacheNoteBody(wrapper.notesStore, remote)
+      await wrapper.setProps({ note: wrapper.notesStore.active })
+      await flushPromises()
+      if (mode === 'markdown') expect(wrapper.findComponent(MarkdownSourceEditor).props('modelValue')).toBe(remote.contentMarkdown)
+      else expect(wrapper.get('.note-prose').text()).toContain('另一台电脑保存的正文')
+      expect(save).not.toHaveBeenCalled()
+      expect(wrapper.notesStore.active?.version).toBe(2)
+    } finally { wrapper.unmount() }
+  })
+
   it('restores reading position before slow links arrive without moving a reader who has scrolled', async () => {
     const first = note('slow-links-first')
     const second = note('slow-links-second')

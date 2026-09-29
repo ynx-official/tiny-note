@@ -1,7 +1,7 @@
 import { computed, onMounted, ref, watch, type Component } from 'vue'
 import { storeToRefs } from 'pinia'
 import { useI18n } from 'vue-i18n'
-import { Cpu, FolderDown, Info, Keyboard, Moon, Monitor, Palette, Sparkles, Sun, Wrench } from 'lucide-vue-next'
+import { Cpu, FolderDown, Info, Keyboard, Moon, Monitor, Palette, RefreshCw, Sparkles, Sun, Wrench } from 'lucide-vue-next'
 import { invoke } from '../services/tauri'
 import type { BalanceData as CommandBalanceData } from '../services/commandMap'
 import { appUpdater, BUNDLED_APP_VERSION, type UpdateCheckState } from '../services/appUpdater'
@@ -139,6 +139,7 @@ export function useSettingsWorkspace() {
   
   const settingsSections = computed(() => [
     { id: 'appearance', label: t('appearance'), description: t('appearanceHint'), icon: Palette },
+    { id: 'sync', label: t('syncSettings'), description: t('syncSettingsHint'), icon: RefreshCw },
     { id: 'shortcuts', label: t('shortcutSettings'), description: t('shortcutSettingsHint'), icon: Keyboard },
     { id: 'files', label: t('fileSaveLocation'), description: t('fileSaveLocationHint'), icon: FolderDown },
     { id: 'ai', label: t('aiWriting'), description: t('aiWritingHint'), icon: Sparkles },

@@ -110,3 +110,22 @@ Object.assign(messages.en, {
   todoListNone: 'No list', todoListAssignment: 'List', todoListsExpand: 'Expand lists', todoListsCollapse: 'Collapse lists',
   trayTodoOpenFull: 'Open todos in the main window'
 })
+
+Object.assign(messages['zh-CN'], {
+  syncSettings: '同步', syncSettingsHint: '更新频率、秒、分钟与自动保存', syncAutomatic: '自动更新', syncAutomaticHint: '在后台检查其他设备的修改，安静更新到这里',
+  syncFrequency: '检查更新频率', syncFrequencyHint: '每隔指定时间检查一次，支持 1 秒至 24 小时', syncUnit: '时间单位', syncSeconds: '秒', syncMinutes: '分钟',
+  syncNow: '立即同步', syncChecking: '正在检查…', syncConnected: '已连接', syncNotChecked: '尚未检查', syncOffline: '当前离线', syncFailed: '同步暂时失败',
+  syncFirstCheckHint: '完成一次检查后显示最近同步时间', syncLastChecked: '最近检查 {time}', syncLastSaved: '最近保存 {time}',
+  syncDraftProtected: '本机有尚未保存的编辑，已保留草稿，暂不替换当前正文。', syncDevicePreference: '同步频率保存在本机。正常同步不弹窗、不打断输入；关闭自动更新仍可手动同步，自动保存继续生效。',
+  syncPreferenceError: '设置未能保存，请重试。', noteAutoSave: '自动保存', noteAutoSaveEnabled: '已开启', noteAutoSaveHint: '停止输入 0.8 秒后自动保存，切换文档前也会保存最新修改。',
+  noteSavePending: '等待自动保存', noteSaveError: '保存失败 · 点击重试', noteAutoSaveReady: '自动保存已开启'
+})
+Object.assign(messages.en, {
+  syncSettings: 'Sync', syncSettingsHint: 'Update frequency, seconds, minutes and autosave', syncAutomatic: 'Automatic updates', syncAutomaticHint: 'Check other devices quietly in the background',
+  syncFrequency: 'Check for updates every', syncFrequencyHint: 'Choose an interval from 1 second to 24 hours', syncUnit: 'Time unit', syncSeconds: 'Seconds', syncMinutes: 'Minutes',
+  syncNow: 'Sync now', syncChecking: 'Checking…', syncConnected: 'Connected', syncNotChecked: 'Not checked yet', syncOffline: 'Offline', syncFailed: 'Sync failed',
+  syncFirstCheckHint: 'The latest successful check will appear here', syncLastChecked: 'Last checked {time}', syncLastSaved: 'Last saved {time}',
+  syncDraftProtected: 'Local edits are unsaved. Your draft is preserved and will not be replaced.', syncDevicePreference: 'The interval is saved on this device. Background checks do not interrupt editing. Manual sync and autosave still work with automatic updates off.',
+  syncPreferenceError: 'Could not save this preference. Please retry.', noteAutoSave: 'Autosave', noteAutoSaveEnabled: 'On', noteAutoSaveHint: 'Saves 0.8 seconds after you stop typing, and before switching documents.',
+  noteSavePending: 'Waiting to save', noteSaveError: 'Save failed · Retry', noteAutoSaveReady: 'Autosave is on'
+})

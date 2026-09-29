@@ -5,7 +5,7 @@ import type { Editor } from '@tiptap/core'
 import { getEditorSelectionText } from '../utils/editorSelection'
 import type { Mark, Node as ProseMirrorNode } from '@tiptap/pm/model'
 import type { EditorView } from '@tiptap/pm/view'
-import { protectNoteDraft, trackPersistedNote } from '../services/noteCache'
+import { protectNoteDraft, releaseNoteDraft, trackPersistedNote } from '../services/noteCache'
 import { EventChannel } from '../services/eventChannel'
 import { createLowlight } from 'lowlight'
 import javascript from 'highlight.js/lib/languages/javascript'
@@ -430,6 +430,7 @@ export function useNoteEditor(props: Readonly<NoteEditorProps>, emit: NoteEditor
       if (schedule) scheduleNoteSave(note)
       return true
     } finally {
+      releaseNoteDraft(note)
       applyingEditorContent = false
     }
   }
@@ -730,12 +731,21 @@ export function useNoteEditor(props: Readonly<NoteEditorProps>, emit: NoteEditor
 
   // A reopened source or a refreshed clean body keeps the same ID. The store
   // preserves dirty objects; replacing this object starts a fresh editor session.
-  watch(() => props.note, (next, previous) => {
+  watch(() => props.note, async (next, previous) => {
     if (!next || next === previous || next.id !== previous?.id) return
+    const scroller = previewScroller.value || editor.value?.view.dom.closest('.editor-render-pane') as HTMLElement | null
+    const scrollTop = scroller?.scrollTop
+    const selection = editor.value?.state.selection
     pendingSourceDrafts.delete(next.id)
     persistedSignatures.delete(toRaw(next))
     resetTransientEditorState()
     resetEditorSession(next)
+    if (selection && !next.external && editor.value) {
+      const size = editor.value.state.doc.content.size
+      editor.value.commands.setTextSelection({ from: Math.min(selection.from, size), to: Math.min(selection.to, size) })
+    }
+    await nextTick()
+    if (props.note === next && scroller && scrollTop !== undefined) scroller.scrollTop = scrollTop
   }, { flush: 'post' })
   
   watch(assistantOpen, () => nextTick(setupSplitObserver))
