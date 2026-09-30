@@ -1,4 +1,4 @@
-/* Approved desktop layout: a quiet notebook tree and a single-row editor toolbar.
+/* Approved desktop layout: independent note title/actions above body formatting.
    Scope overrides to the note workspace so lazy legacy route styles cannot leak in. */
 .note-page .note-sidebar {
   --workspace-sidebar-min-width: 240px;
@@ -31,17 +31,31 @@
 .note-editor-shell .friday-editor-toolbar,
 .note-editor-shell .friday-editor-toolbar.with-assistant {
   position: relative;
-  height: 54px;
-  min-height: 54px;
-  padding: 10px 20px;
+  height: auto;
+  min-height: 94px;
+  padding: 0;
+  flex-direction: column;
   flex-wrap: nowrap;
   align-items: center;
-  gap: 10px;
+  gap: 0;
   border-bottom: 1px solid var(--border-color);
 }
+.note-editor-shell .note-title-row { display: flex; align-items: center; gap: 8px; width: 100%; min-width: 0; min-height: 50px; padding: 8px 16px; box-sizing: border-box; border-bottom: 1px solid var(--border-color); }
+.note-editor-shell .note-title-icon { flex: none; color: var(--text-secondary); }
+.note-editor-shell .note-title-input { flex: 1 1 160px; min-width: 48px; width: 0; height: 32px; padding: 4px 9px; border: 1px solid transparent; border-radius: 5px; background: transparent; color: var(--text-primary); font: inherit; font-size: 14px; font-weight: 550; outline: none; text-overflow: ellipsis; }
+.note-editor-shell .note-title-input:hover { border-color: var(--border-color); }
+.note-editor-shell .note-title-input:focus { border-color: var(--accent-color); background: var(--bg-primary); box-shadow: 0 0 0 1px color-mix(in srgb, var(--accent-color) 12%, transparent); }
+.note-editor-shell .note-title-input[readonly] { color: var(--text-secondary); }
+.note-editor-shell .note-title-row .note-auto-save { margin-left: 0; max-width: 105px; white-space: nowrap; }
+.note-editor-shell .friday-editor-toolbar .note-title-row .editor-mode-trigger { width: auto; padding: 0 7px; gap: 5px; border: 1px solid var(--border-color); border-radius: 5px; }
+.note-editor-shell .editor-mode-trigger .mode-icon { display: none; }
+.note-editor-shell .format-detail { display: flex; align-items: center; gap: 2px; flex: none; }
 .note-editor-shell .friday-editor-toolbar .toolbar-left-group,
 .note-editor-shell .friday-editor-toolbar .markdown-toolbar-controls { display: flex; flex-wrap: nowrap; flex: 1 1 auto; width: auto; align-items: center; gap: 3px; order: 0; }
+.note-editor-shell .friday-editor-toolbar > .toolbar-left-group { width: 100%; min-height: 44px; padding: 6px 16px; box-sizing: border-box; }
 .note-editor-shell .friday-editor-toolbar .toolbar-right-group { flex: none; width: auto; order: 0; gap: 4px; margin-left: auto; }
+.note-editor-shell .friday-editor-toolbar.with-assistant .toolbar-right-group { flex: none; width: auto; order: 0; margin-left: 0; }
+.note-editor-shell .friday-editor-toolbar.with-assistant .toolbar-left-group { flex: none; width: 100%; order: 0; }
 .note-editor-shell .friday-editor-toolbar button { height: 30px; min-width: 30px; padding: 0 6px; font-size: 13px; font-weight: 500; opacity: 1; color: var(--text-secondary); }
 .note-editor-shell .friday-editor-toolbar button:hover,
 .note-editor-shell .friday-editor-toolbar button.pressed,
@@ -52,6 +66,7 @@
 .note-editor-shell .friday-editor-toolbar .ai-button,
 .note-editor-shell .friday-editor-toolbar .toolbar-toc-trigger { min-width: 0; height: 30px; gap: 6px; padding: 0 9px; border: 1px solid var(--border-color); border-radius: 6px; background: transparent; color: var(--text-primary); }
 .note-editor-shell .friday-editor-toolbar .ai-button:hover { background: var(--bg-hover); }
+.note-editor-shell .friday-editor-toolbar .ai-button[aria-pressed='true'] { background: var(--accent-light); color: var(--accent-color); }
 .note-editor-shell .format-history,
 .note-editor-shell .format-primary { display: flex; align-items: center; gap: 2px; flex: none; }
 .note-editor-shell .format-overflow-history,
@@ -79,6 +94,9 @@
 .note-editor-shell .note-prose h2 { font-size: 20px; }
 .note-editor-shell .note-prose h3 { font-size: 17px; }
 .note-editor-shell .note-prose p { margin: 8px 0; }
+.note-editor-shell .note-prose [data-markdown-source] { font-family: ui-monospace, SFMono-Regular, Consolas, monospace; background: var(--bg-secondary); border-radius: 4px; white-space: pre-wrap; overflow-wrap: anywhere; }
+.note-editor-shell .note-prose span[data-markdown-source] { padding: 1px 4px; }
+.note-editor-shell .note-prose pre[data-markdown-source] { padding: 12px 16px; border: 1px solid var(--border-color); font-size: 13px; }
 .note-editor-shell .note-prose .code-block-component { margin: 14px 0 24px; border: 1px solid var(--border-color); border-radius: 7px; background: var(--bg-secondary); }
 .note-editor-shell .note-prose .code-block-header { min-height: 34px; padding: 5px 12px 0; }
 .note-editor-shell .note-prose .language-select { padding-left: 4px; color: var(--text-secondary); background-color: transparent; }
@@ -104,14 +122,16 @@
 .note-editor-shell .note-prose .is-mermaid { background: var(--bg-primary); }
 
 @container note-editor (max-width: 790px) {
-  .note-editor-shell .friday-editor-toolbar { padding-inline: 12px; gap: 5px; }
-  .note-editor-shell .format-primary { display: none; }
-  .note-editor-shell .format-overflow-primary { display: flex; }
+  .note-editor-shell .note-title-row { padding-inline: 12px; gap: 5px; }
+  .note-editor-shell .friday-editor-toolbar > .toolbar-left-group { padding-inline: 12px; }
+  .note-editor-shell .format-detail { display: none; }
 }
 @container note-editor (max-width: 570px) {
-  .note-editor-shell .format-history { display: none; }
-  .note-editor-shell .format-overflow-history { display: flex; }
   .note-editor-shell .document-action-label { display: none; }
+  .note-editor-shell .editor-mode-label { display: none; }
+  .note-editor-shell .editor-mode-trigger .mode-icon { display: block; }
+  .note-editor-shell .note-title-icon { display: none; }
+  .note-editor-shell .note-title-row .note-auto-save { max-width: 76px; font-size: 10px; }
   .note-editor-shell .note-document-context { padding-inline: 24px; }
   .note-editor-shell .editor-content { padding-inline: 24px; }
   .note-editor-shell .friday-editor-toolbar .toolbar-left-group { gap: 1px; }
@@ -120,14 +140,21 @@
   .note-editor-shell .friday-editor-toolbar .format-popover,
   .note-editor-shell .friday-editor-toolbar .mode-menu-anchor { position: static; }
   .note-editor-shell .format-popover-panel,
-  .note-editor-shell .friday-editor-toolbar .editor-mode-menu { top: 48px; left: 8px; right: auto; max-width: calc(100% - 16px); }
+  .note-editor-shell .friday-editor-toolbar .editor-mode-menu { top: 50px; left: 8px; right: auto; max-width: calc(100% - 16px); }
+  .note-editor-shell .format-popover-panel { top: 90px; }
   .note-editor-shell .format-popover-panel .color-menu-anchor { position: static; }
   .note-editor-shell .format-popover-panel .editor-color-menu { top: calc(100% + 4px); left: 0; right: auto; }
   .note-editor-shell .insert-submenu-anchor .table-picker-menu { top: 100%; left: 0; right: auto; }
 }
+@container note-editor (max-width: 480px) {
+  .note-editor-shell .format-primary { display: none; }
+  .note-editor-shell .format-overflow-primary { display: flex; }
+}
 @container note-editor (max-width: 390px) {
-  .note-editor-shell .friday-editor-toolbar,
-  .note-editor-shell .friday-editor-toolbar.with-assistant { padding-inline: 5px; gap: 2px; }
+  .note-editor-shell .format-history { display: none; }
+  .note-editor-shell .format-overflow-history { display: flex; }
+  .note-editor-shell .note-title-row,
+  .note-editor-shell .friday-editor-toolbar > .toolbar-left-group { padding-inline: 5px; gap: 2px; }
   .note-editor-shell .toolbar-left-group > .toolbar-menu-anchor > button .toolbar-label:not(.heading-label),
   .note-editor-shell .toolbar-left-group > .toolbar-menu-anchor > button .friday-dropdown-chevron { display: none; }
   .note-editor-shell .friday-editor-toolbar .toolbar-right-group { gap: 1px; }

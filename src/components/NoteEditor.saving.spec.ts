@@ -1,7 +1,7 @@
+import { editMarkdown, editHtml, mountEditor, note } from './NoteEditor.testHarness'
 import { flushPromises } from '@vue/test-utils'
 import { describe, expect, it, vi } from 'vitest'
-import MarkdownSourceEditor from './MarkdownSourceEditor.vue'
-import { mountEditor, note } from './NoteEditor.testHarness'
+import VditorEditor from './VditorEditor.vue'
 import { cacheNoteBody, trackPersistedNote } from '../services/noteCache'
 
 describe('NoteEditor save and synchronization', () => {
@@ -11,10 +11,10 @@ describe('NoteEditor save and synchronization', () => {
     const wrapper = await mountEditor(original)
     try {
       vi.useFakeTimers()
-      wrapper.vm.editor.commands.setContent('<h1>标题</h1><p>自动保存的新内容</p>')
+      editHtml(wrapper, '<h1>标题</h1><p>自动保存的新内容</p>')
       await flushPromises()
       expect(wrapper.get('.note-auto-save').text()).toContain('等待自动保存')
-      await vi.advanceTimersByTimeAsync(800)
+      await vi.advanceTimersByTimeAsync(950)
       await flushPromises()
       expect(wrapper.get('.note-auto-save').text()).toBe('已保存')
       expect(JSON.parse(localStorage.getItem('tiny-note-browser-state')!).notes[0].contentText).toContain('自动保存的新内容')
@@ -36,8 +36,8 @@ describe('NoteEditor save and synchronization', () => {
       cacheNoteBody(wrapper.notesStore, remote)
       await wrapper.setProps({ note: wrapper.notesStore.active })
       await flushPromises()
-      if (mode === 'markdown') expect(wrapper.findComponent(MarkdownSourceEditor).props('modelValue')).toBe(remote.contentMarkdown)
-      else expect(wrapper.get('.note-prose').text()).toContain('另一台电脑保存的正文')
+      if (mode === 'markdown') expect(wrapper.findComponent(VditorEditor).props('modelValue')).toBe(remote.contentMarkdown)
+      else expect(wrapper.get('.vditor-ir pre.vditor-reset').text()).toContain('另一台电脑保存的正文')
       expect(save).not.toHaveBeenCalled()
       expect(wrapper.notesStore.active?.version).toBe(2)
     } finally { wrapper.unmount() }
@@ -48,7 +48,7 @@ describe('NoteEditor save and synchronization', () => {
     const second = note('slow-links-second')
     const wrapper = await mountEditor(first)
     wrapper.notesStore.notes.push(second)
-    const scroller = wrapper.get('.editor-render-pane').element as HTMLElement
+    const scroller = wrapper.get('.vditor-ir pre.vditor-reset').element as HTMLElement
     Object.defineProperties(scroller, {
       scrollHeight: { value: 1200, configurable: true },
       clientHeight: { value: 400, configurable: true }
@@ -77,14 +77,14 @@ describe('NoteEditor save and synchronization', () => {
     await wrapper.get('.editor-mode-trigger').trigger('click')
     await wrapper.findAll('[role="menuitemradio"]')[1].trigger('click')
     await flushPromises()
-    const source = wrapper.findComponent(MarkdownSourceEditor)
+
     const exactDraft = '# 新稿\n\n\n保留空行\n'
-    source.vm.view.dispatch({ changes: { from: 0, to: source.vm.view.state.doc.length, insert: exactDraft } })
+    editMarkdown(wrapper, exactDraft)
 
     await wrapper.setProps({ note: second })
     await flushPromises()
     expect(first.contentMarkdown).toBe(exactDraft)
-    expect(first.contentHtml).toContain('<h1 data-note-title="true">新稿</h1>')
+    expect(first.contentHtml).toContain('新稿</h1>')
     expect(first.contentText).toContain('保留空行')
     expect(JSON.parse(localStorage.getItem('tiny-note-browser-state')).notes[0].contentMarkdown).toBe(exactDraft)
     expect(wrapper.get('.editor-mode-trigger').attributes('aria-label')).toContain('Markdown')
@@ -97,17 +97,17 @@ describe('NoteEditor save and synchronization', () => {
     await wrapper.findAll('[role="menuitemradio"]')[1].trigger('click')
     await flushPromises()
 
-    const workspace = wrapper.get('.editor-workspace').element
+    const workspace = wrapper.get('.tiny-vditor').element
     workspace.getBoundingClientRect = () => ({ left: 0, top: 0, width: 1000, height: 600, right: 1000, bottom: 600 })
-    await wrapper.get('.split-divider').trigger('pointerdown', { button: 0, pointerId: 7, clientX: 500 })
+    await wrapper.get('.vditor-split-divider').trigger('pointerdown', { button: 0, pointerId: 7, clientX: 500 })
     const move = new window.MouseEvent('pointermove', { clientX: 950 })
     Object.defineProperty(move, 'pointerId', { value: 7 })
     window.dispatchEvent(move)
     await flushPromises()
-    expect(wrapper.get('.split-divider').attributes('aria-valuenow')).toBe('70')
+    expect(wrapper.get('.vditor-split-divider').attributes('aria-valuenow')).toBe('70')
 
-    const sourceScroller = wrapper.get('.cm-scroller').element
-    const previewScroller = wrapper.get('.split-preview-pane').element
+    const sourceScroller = wrapper.get('.vditor-sv').element
+    const previewScroller = wrapper.get('.vditor-preview').element
     Object.defineProperties(sourceScroller, { scrollHeight: { value: 1000, configurable: true }, clientHeight: { value: 500, configurable: true } })
     Object.defineProperties(previewScroller, { scrollHeight: { value: 800, configurable: true }, clientHeight: { value: 200, configurable: true } })
     sourceScroller.scrollTop = 250
@@ -127,7 +127,7 @@ describe('NoteEditor save and synchronization', () => {
     const second = note('reading-position-second')
     const wrapper = await mountEditor(first)
     wrapper.notesStore.notes.push(second)
-    const scroller = wrapper.get('.editor-render-pane').element as HTMLElement
+    const scroller = wrapper.get('.vditor-ir pre.vditor-reset').element as HTMLElement
     Object.defineProperties(scroller, {
       scrollHeight: { value: 1200, configurable: true },
       clientHeight: { value: 400, configurable: true }
@@ -156,13 +156,12 @@ describe('NoteEditor save and synchronization', () => {
     await flushPromises()
     vi.useFakeTimers()
 
-    const source = wrapper.findComponent(MarkdownSourceEditor)
-    source.vm.view.dispatch({ changes: { from: 0, to: source.vm.view.state.doc.length, insert: '## 自动保存' } })
+    editMarkdown(wrapper, '## 自动保存')
     await vi.advanceTimersByTimeAsync(149)
     expect(active.contentMarkdown).toBe('# 标题\n\n正文')
     await vi.advanceTimersByTimeAsync(1)
     expect(active.contentMarkdown).toBe('## 自动保存')
-    expect(active.contentHtml).toContain('<h1 data-note-title="true">自动保存</h1>')
+    expect(active.contentHtml).toContain('自动保存</h2>')
     await vi.advanceTimersByTimeAsync(800)
     expect(JSON.parse(localStorage.getItem('tiny-note-browser-state')).notes[0].contentMarkdown).toBe('## 自动保存')
 
@@ -179,16 +178,15 @@ describe('NoteEditor save and synchronization', () => {
     await flushPromises()
     vi.useFakeTimers()
 
-    const source = wrapper.findComponent(MarkdownSourceEditor)
     const drafts = ['', '> ', '1. ', '最终内容']
     for (const draft of drafts) {
-      source.vm.view.dispatch({ changes: { from: 0, to: source.vm.view.state.doc.length, insert: draft } })
+      editMarkdown(wrapper, draft)
       await vi.advanceTimersByTimeAsync(150)
       expect(active.contentMarkdown).toBe(draft)
       expect(wrapper.find('.markdown-parse-error').exists()).toBe(false)
     }
 
-    expect(wrapper.get('.split-preview-pane').text()).toContain('最终内容')
+    expect(wrapper.get('.vditor-preview').text()).toContain('最终内容')
 
     await vi.advanceTimersByTimeAsync(800)
     expect(JSON.parse(localStorage.getItem('tiny-note-browser-state')).notes[0].contentMarkdown).toBe('最终内容')

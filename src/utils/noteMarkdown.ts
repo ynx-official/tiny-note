@@ -1,6 +1,9 @@
 import DOMPurify from 'dompurify'
-import { marked } from 'marked'
+import { Marked } from 'marked'
 import type { Editor } from '@tiptap/core'
+import { sourceMarkedExtensions } from './sourceMarkdown'
+
+const marked = new Marked({ extensions: sourceMarkedExtensions })
 
 export const DEFAULT_NOTE_MODE = 'rich'
 
@@ -19,7 +22,7 @@ const allowedTags = [
 const allowedAttributes = [
   'href', 'target', 'rel', 'src', 'alt', 'title', 'class', 'style', 'data-color', 'data-note-title',
   'data-type', 'data-checked', 'colspan', 'rowspan', 'colwidth', 'span', 'start',
-  'type', 'checked', 'disabled'
+  'type', 'checked', 'disabled', 'data-markdown-source', 'data-source-kind'
 ]
 
 const colorValuePattern = /^(?:#[\da-f]{3,8}|(?:rgb|rgba|hsl|hsla)\([\d\s.,%+\-/]+\)|[a-z]+)$/i

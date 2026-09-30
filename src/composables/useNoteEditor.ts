@@ -1,44 +1,25 @@
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, toRaw, watch } from 'vue'
-import { useEditor } from '@tiptap/vue-3'
-import { TextSelection, type EditorState } from '@tiptap/pm/state'
-import type { Editor } from '@tiptap/core'
-import { getEditorSelectionText } from '../utils/editorSelection'
-import type { Mark, Node as ProseMirrorNode } from '@tiptap/pm/model'
-import type { EditorView } from '@tiptap/pm/view'
+import { shallowRef } from 'vue'
+import TurndownService from 'turndown'
+import type { VditorPort } from '../editor/vditorPort'
+import { applyMarkdownProposal, type MarkdownSelection } from '../editor/markdownSelection'
 import { protectNoteDraft, releaseNoteDraft, trackPersistedNote } from '../services/noteCache'
 import { EventChannel } from '../services/eventChannel'
-import { createLowlight } from 'lowlight'
-import javascript from 'highlight.js/lib/languages/javascript'
-import typescript from 'highlight.js/lib/languages/typescript'
-import python from 'highlight.js/lib/languages/python'
-import json from 'highlight.js/lib/languages/json'
-import xml from 'highlight.js/lib/languages/xml'
-import css from 'highlight.js/lib/languages/css'
-import bash from 'highlight.js/lib/languages/bash'
-import sql from 'highlight.js/lib/languages/sql'
-import markdown from 'highlight.js/lib/languages/markdown'
-import yaml from 'highlight.js/lib/languages/yaml'
-import rust from 'highlight.js/lib/languages/rust'
-import { VueNodeViewRenderer } from '@tiptap/vue-3'
-import CodeBlockComponent from '../components/CodeBlockComponent.vue'
 import { FileCode2, PenLine } from 'lucide-vue-next'
 import { useNotesStore } from '../stores/notes'
 import { useLibraryStore } from '../stores/library'
 import { useAppStore } from '../stores/app'
 import { useTasksStore } from '../stores/tasks'
 import { useI18n } from 'vue-i18n'
-import { createNoteExtensions } from '../editor/noteExtensions'
-import { DEFAULT_NOTE_MODE, NOTE_MODES, applyMarkdownSourceToEditor, clampSplitRatio, isRichClipboardHtml, markdownToEditorHtml, sanitizeEditorHtml, scrollOffset, scrollProgress } from '../utils/noteMarkdown'
+import { DEFAULT_NOTE_MODE, NOTE_MODES, markdownToEditorHtml, sanitizeEditorHtml, scrollOffset, scrollProgress } from '../utils/noteMarkdown'
 import { matchesKeyboardShortcut, shortcutDisplayParts } from '../utils/keyboardShortcut'
 import { createSafeExportFilename, downloadNoteHtml, exportNotePdf, printNote as printNoteDocument } from '../utils/noteExport'
 import { prepareTaskFlight } from '../utils/taskFlight'
-import { markMermaidDiagramForEditing } from '../utils/mermaidEditorState'
 import { requestPrompt } from '../services/promptDialog'
 import { showToast } from '../services/appFeedback'
 import { saveExportBlob } from '../services/exportLocation'
 import { showExportSuccess } from '../services/exportSuccess'
 import { errorMessage, type BackgroundTask, type EditProposal, type Note, type NoteLink, type JsonValue } from '../types/domain'
-import type { NodeViewProps } from '@tiptap/core'
 
 export interface NoteEditorProps {
   note: Note | null
@@ -54,25 +35,18 @@ export type NoteEditorEmit = {
 }
 
 export function useNoteEditor(props: Readonly<NoteEditorProps>, emit: NoteEditorEmit) {  
-  const lowlight = createLowlight()
-  lowlight.register('javascript', javascript); lowlight.register('typescript', typescript); lowlight.register('python', python); lowlight.register('json', json); lowlight.register('html', xml); lowlight.register('xml', xml); lowlight.register('css', css); lowlight.register('bash', bash); lowlight.register('sql', sql); lowlight.register('markdown', markdown); lowlight.register('yaml', yaml); lowlight.register('rust', rust)
   type EditorMode = 'rich' | 'markdown'
   type AiAction = 'interpret' | 'refine' | 'polish' | 'expand' | 'translate' | 'summarize' | 'continue_write' | 'fix_grammar' | 'generate_plan' | 'generate_table' | 'custom'
   type ExportFormat = '' | 'html' | 'pdf' | 'print'
   type TaskFlight = () => void
-  interface SelectionRange { from: number; to: number; text?: string }
+  type SelectionRange = MarkdownSelection
   interface AssistantReference { key: string; type: string; label: string; preview?: string }
   interface AssistantMessage { role: 'assistant' | 'user'; content: string; sources?: JsonValue[]; proposal?: EditProposal | null; references?: AssistantReference[] }
   interface AiEvent { code?: string; message?: string }
   interface AiEditorRequest { kind: 'editor'; action: AiAction; requestText: string | null; instruction: string | null; taskFlight: TaskFlight | null }
   interface AiAssistantRequest { kind: 'assistant'; prompt: string; taskFlight: TaskFlight | null }
   type PendingAiRequest = AiEditorRequest | AiAssistantRequest
-  interface PendingAiChange { type: 'insert' | 'replace'; noteId: string; proposal: EditProposal; replacement: string; resultAction: string; resultSources: JsonValue[]; beforeHtml: string; beforeText: string; beforeMarkdown: string; beforeDraft: string; strikeFrom: number; strikeTo: number; highlightFrom: number; highlightTo: number }
-  type PendingAiChangeBase = Omit<PendingAiChange, 'type' | 'strikeFrom' | 'strikeTo' | 'highlightFrom' | 'highlightTo'>
   interface AiDragState { pointerId: number; offsetX: number; offsetY: number; width: number; height: number }
-  interface SplitDragState { pointerId: number }
-  interface ScrollPayload { scrollTop: number; scrollHeight: number; clientHeight: number }
-  interface MarkdownEditorExpose { focus(): void; setScrollProgress(progress: number): void; applyFormat(format: string): boolean; setHeading(level: number): boolean; setSmallParagraph(): boolean }
   interface ExportArtifact { blob: Blob; filename: string }
   
   const store = useNotesStore()
@@ -106,26 +80,17 @@ export function useNoteEditor(props: Readonly<NoteEditorProps>, emit: NoteEditor
   const moreOpen = ref(false)
   const moreTriggerRef = ref<HTMLButtonElement | null>(null)
   const moreMenuRef = ref<HTMLElement | null>(null)
-  const insertOpen = ref(false)
-  const tablePickerOpen = ref(false)
-  const textColorOpen = ref(false)
-  const highlightOpen = ref(false)
-  const headingOpen = ref(false)
   const imageDialogOpen = ref(false)
   const imageUrl = ref('')
   const imageAlt = ref('')
   const imageInput = ref<HTMLInputElement | null>(null)
   const imageFileInput = ref<HTMLInputElement | null>(null)
-  const tableRows = ref(0)
-  const tableCols = ref(0)
   const fimEnabled = computed(() => appStore.settings.fimEnabled === true)
   const fimSuggestion = ref('')
-  const editorStateTick = ref(0)
   let fimTimer: ReturnType<typeof setTimeout> | undefined
   let assistantTriggerTimer: ReturnType<typeof setTimeout> | undefined
   let savedSelection: SelectionRange | null = null
   let pendingAiRequest: PendingAiRequest | null = null
-  let pendingAiChange: PendingAiChange | null = null
   const modeIcons = { rich: PenLine, markdown: FileCode2 }
   const noteLinks = ref<NoteLink[]>([])
   const editorModes = NOTE_MODES.map(mode => ({ ...mode, id: mode.id as EditorMode, icon: modeIcons[mode.id as EditorMode] }))
@@ -133,16 +98,12 @@ export function useNoteEditor(props: Readonly<NoteEditorProps>, emit: NoteEditor
   const modeMenuOpen = ref(false)
   const modeMenuIndex = ref(0)
   const modeMenuRef = ref<HTMLElement | null>(null)
+  let editingNote = props.note
   const markdownDraft = ref('')
   const markdownParseError = ref('')
   const sourceDirty = ref(false)
   const markdownPasteNotice = ref(false)
   const markdownPreview = ref(true)
-  const splitRatio = ref(50)
-  const splitVertical = ref(false)
-  const splitWorkspace = ref<HTMLElement | null>(null)
-  const sourceEditorRef = ref<MarkdownEditorExpose | null>(null)
-  const previewScroller = ref<HTMLElement | null>(null)
   const READING_POSITION_PREFIX = 'tiny-note:reading-position:'
   let readingPositionTimer: ReturnType<typeof setTimeout> | undefined
   const pendingSourceDrafts = new Map<string, string>()
@@ -153,13 +114,8 @@ export function useNoteEditor(props: Readonly<NoteEditorProps>, emit: NoteEditor
   const EXTERNAL_NOTICE_DISMISSED_PREFIX = 'tiny-note:external-file-notice-dismissed:'
   const externalNoticeDismissed = ref(false)
   const showExternalNoteBanner = computed(() => props.note?.external === true && !externalNoticeDismissed.value)
-  let applyingEditorContent = false
   let markdownParseTimer: ReturnType<typeof setTimeout> | undefined
   let markdownPasteTimer: ReturnType<typeof setTimeout> | undefined
-  let splitResizeObserver: ResizeObserver | null = null
-  let splitDragState: SplitDragState | null = null
-  let scrollSyncFrame: number | undefined
-  let scrollSyncSource = ''
   let modeShortcutSwitching = false
   function externalNoticeStorageKey(noteId?: string) {
     return noteId ? `${EXTERNAL_NOTICE_DISMISSED_PREFIX}${String(noteId)}` : ''
@@ -192,7 +148,6 @@ export function useNoteEditor(props: Readonly<NoteEditorProps>, emit: NoteEditor
   const richMode = computed(() => editorMode.value === 'rich')
   const codeMode = computed(() => editorMode.value === 'markdown')
   const splitMode = computed(() => codeMode.value && markdownPreview.value)
-  const splitPaneStyle = computed(() => splitVertical.value ? { height: `${splitRatio.value}%` } : { width: `${splitRatio.value}%` })
   const aiActionLabels: Record<AiAction, string> = { interpret: '解读', refine: '精炼', polish: '润色', expand: '扩写', translate: '翻译', summarize: '总结', continue_write: '续写', fix_grammar: '语法修正', generate_plan: '生成任务计划', generate_table: '生成表格', custom: 'AI 写作' }
   const aiErrorMessages: Record<string, string> = { model_profile_unavailable: '还没有配置可用模型，请先打开设置完成配置。', api_key_not_configured: '当前模型还没有配置 API Key，请先打开设置完成配置。', credential_store_unavailable: '系统凭据存储不可用，暂时无法调用 AI。', provider_request_failed: '模型服务请求失败，请检查模型地址和网络连接。', provider_stream_failed: '模型服务连接中断，请稍后重试。' }
   function aiEventErrorMessage(event: AiEvent) {
@@ -206,8 +161,6 @@ export function useNoteEditor(props: Readonly<NoteEditorProps>, emit: NoteEditor
   const aiFeedback = ref('')
   const aiOutputOpen = ref(false)
   const aiOriginalText = ref('')
-  const aiChangePending = ref(false)
-  const AI_CHANGE_HIGHLIGHT = '#fef08a'
   const aiCharCount = computed(() => aiText.value.replace(/\s/g, '').length)
   const aiDialogPosition = ref<{ left: number; top: number } | null>(null)
   const aiDialogStyle = computed(() => {
@@ -219,137 +172,42 @@ export function useNoteEditor(props: Readonly<NoteEditorProps>, emit: NoteEditor
     }
   })
   let aiDragState: AiDragState | null = null
-  const refreshEditorState = () => { editorStateTick.value += 1 }
-  function looksLikeMarkdown(text: string) {
-    return /(^|\n)\s{0,3}(#{1,6}\s|[-*+]\s|\d+\.\s|>\s|```|~~~)/m.test(text) ||
-      /(?:\*\*[^*]+\*\*|__[^_]+__|`[^`]+`|!?\[[^\]]+\]\([^)]+\)|^\s*\|.+\|\s*$)/m.test(text)
+  const editor = shallowRef<VditorPort | null>(null)
+  const currentSelection = ref<MarkdownSelection | null>(null)
+  const selectedText = computed(() => currentSelection.value?.text || '')
+  const applyingAi = ref(false)
+  const aiError = ref('')
+  let aiBaseSource: string | null = null
+  let aiProposalStale = false
+  function prepareEditorContent(note: Note | null) {
+    return sanitizeEditorHtml(note?.contentMarkdown ? markdownToEditorHtml(note.contentMarkdown) : note?.contentHtml || '')
   }
-  function isPlainInlineAiReplacement(text: string) {
-    if (!text || text.includes('\n') || looksLikeMarkdown(text)) return false
-    return !/(?:\*[^*]+\*|_[^_]+_|~~[^~]+~~|<\/?[a-z][^>]*>)/i.test(text)
+  function deriveMarkdown(note: Note | null = props.note): string {
+    if (!note) return ''
+    if (pendingSourceDrafts.has(note.id)) return pendingSourceDrafts.get(note.id) || ''
+    // Empty Markdown is authoritative for a shared source. HTML-only legacy
+    // notes are converted in memory, never written back merely by opening.
+    if (note.markdownSource || note.contentMarkdown || !note.contentHtml) return note.contentMarkdown || ''
+    return new TurndownService({ headingStyle: 'atx', codeBlockStyle: 'fenced' }).turndown(sanitizeEditorHtml(note.contentHtml))
   }
-  function handleMarkdownPaste(view: EditorView, event: ClipboardEvent) {
-    if (!richMode.value || !event.clipboardData) return false
-  
-    const { $head } = view.state.selection
-    for (let depth = $head.depth; depth > 0; depth -= 1) {
-      if ($head.node(depth).type.name === 'codeBlock') return false
-    }
-  
-    const text = event.clipboardData.getData('text/plain')
-    const html = event.clipboardData.getData('text/html')
-    if (!text || !editor.value || (html && isRichClipboardHtml(html))) return false
-  
-    try {
-      event.preventDefault()
-      event.stopPropagation?.()
-      const parsedHtml = sanitizeEditorHtml(markdownToEditorHtml(text))
-      const applied = editor.value.chain().focus().insertContent(parsedHtml).run()
-      if (applied && looksLikeMarkdown(text)) {
-        markdownPasteNotice.value = true
-        clearTimeout(markdownPasteTimer)
-        markdownPasteTimer = setTimeout(() => { markdownPasteNotice.value = false }, 5000)
-      }
-      return applied
-    } catch (error) {
-      console.error('Markdown paste failed:', error)
-      return false
-    }
+  function onEditorReady(instance: VditorPort) {
+    editor.value = instance
+    instance.setMarkdown(markdownDraft.value, true)
+    restoreReadingPosition(props.note?.id)
   }
-  function prepareEditorContent(note: Pick<Note, 'contentHtml'> | null | undefined) {
-    const container = document.createElement('div')
-    container.innerHTML = note?.contentHtml || ''
-  
-    // Friday treats the first editor block as a dedicated noteTitle node. A
-    // previous Tiny Note build accidentally put these nodes inside table cells,
-    // so retain only the top-level title and repair nested ones as paragraphs.
-    const legacyTitle = container.firstElementChild?.matches('h1[data-note-title]')
-      ? container.firstElementChild
-      : null
-    container.querySelectorAll('[data-note-title]').forEach(titleNode => {
-      if (titleNode === legacyTitle) {
-        return
-      }
-      const paragraph = document.createElement('p')
-      const textAlign = (titleNode as HTMLElement).style.textAlign
-      if (textAlign) paragraph.style.textAlign = textAlign
-      paragraph.innerHTML = titleNode.innerHTML
-      titleNode.replaceWith(paragraph)
-    })
-  
-    const firstBlock = container.firstElementChild
-    if (!firstBlock) return '<h1 data-note-title="true"></h1><p></p>'
-    if (/^H[1-3]$/.test(firstBlock.tagName) || firstBlock.tagName === 'P') {
-      if (!firstBlock.matches('h1[data-note-title]')) {
-        const title = document.createElement('h1')
-        title.setAttribute('data-note-title', 'true')
-        title.innerHTML = firstBlock.innerHTML
-        firstBlock.replaceWith(title)
-      }
-    } else {
-      container.insertAdjacentHTML('afterbegin', '<h1 data-note-title="true"></h1>')
-    }
-    return container.innerHTML || '<p></p>'
+  function onEditorSelection(selection: MarkdownSelection | null) {
+    const previous = currentSelection.value
+    if (previous?.from !== selection?.from || previous?.to !== selection?.to || previous?.source !== selection?.source) fimSuggestion.value = ''
+    currentSelection.value = selection
   }
-  function extractNoteTitle(text = '') {
-    const firstLine = String(text).split(/\r?\n/).find(line => line.trim())?.trim() || ''
-    return (firstLine || t('untitled')).slice(0, 50)
+  function updateNoteTitle(title: string) {
+    const note = props.note
+    if (!note || note.external || note.title === title) return
+    note.title = title
+    scheduleNoteSave(note)
   }
-  function textFromPreparedEditorContent(html = '') {
-    const container = document.createElement('div')
-    container.innerHTML = html
-    return Array.from(container.children).map(node => node.textContent || '').join('\n')
-  }
-  function syncNoteTitle(note: Note | null | undefined, text: string, { schedule = false }: { schedule?: boolean } = {}) {
-    if (!note) return false
-    const nextTitle = extractNoteTitle(text)
-    if (note.title === nextTitle) return false
-    note.title = nextTitle
-    if (schedule) scheduleNoteSave(note)
-    return true
-  }
-  function getEditorMarkdown(instance: Editor | null | undefined = editor.value) {
-    return instance?.getMarkdown?.() || ''
-  }
-  const editor = useEditor({
-    content: prepareEditorContent(props.note),
-    extensions: createNoteExtensions({
-      lowlight,
-      codeBlockNodeView: VueNodeViewRenderer(CodeBlockComponent as unknown as import('vue').Component<NodeViewProps>),
-      placeholder: ({ node }: { node: ProseMirrorNode }) => node.type.name === 'noteTitle'
-        ? '输入标题…'
-        : '写下此刻的想法…'
-    }),
-    editorProps: { attributes: { class: 'note-prose' }, handlePaste: handleMarkdownPaste },
-    onTransaction: refreshEditorState,
-    onSelectionUpdate: refreshEditorState,
-    onUpdate: ({ editor: instance }) => handleRichEditorUpdate(instance)
-  })
-  const canUndo = computed(() => { void editorStateTick.value; return editor.value?.can().undo() ?? false })
-  const canRedo = computed(() => { void editorStateTick.value; return editor.value?.can().redo() ?? false })
-  const linkActive = computed(() => { void editorStateTick.value; return editor.value?.isActive('link') ?? false })
-  const canEditLink = computed(() => { void editorStateTick.value; const instance = editor.value; return !!instance && (!instance.state.selection.empty || instance.isActive('link')) })
-  const selectedText = computed(() => { void editorStateTick.value; const instance = editor.value; if (!instance || instance.state.selection.empty) return ''; return getEditorSelectionText(instance, instance.state.selection).trim() })
-  function shouldShowBubbleMenu({ state }: { state: EditorState }) { return richMode.value && !aiOutputOpen.value && !state.selection.empty && state.doc.textBetween(state.selection.from, state.selection.to, '\n').trim().length > 0 }
-  const textColorPalette = ['#1c1917', '#dc2626', '#ea580c', '#ca8a04', '#16a34a', '#0891b2', '#2563eb', '#7c3aed', '#db2777']
-  const highlightPalette = ['#fef08a', '#fed7aa', '#fecaca', '#bbf7d0', '#bae6fd', '#c7d2fe', '#e9d5ff', '#fbcfe8']
-  const currentHeadingLabel = computed(() => {
-    void editorStateTick.value
-    const instance = editor.value
-    if (!instance || instance.isActive('noteTitle')) return '标题'
-    for (const level of [1, 2, 3]) {
-      if (instance.isActive('heading', { level })) return `标题 ${level}`
-    }
-    return instance.isActive('smallParagraph') ? '小正' : '正文'
-  })
-  const canSetNoteTitle = computed(() => {
-    void editorStateTick.value
-    const instance = editor.value
-    if (!instance) return false
-    const { $from } = instance.state.selection
-    return $from.depth === 1 && $from.index(0) === 0
-  })
-  
+  function focusNoteBody() { editor.value?.focus() }
+  function getEditorMarkdown() { return editor.value?.getMarkdown() ?? markdownDraft.value }
   function noteContentSignature(note: Note | null | undefined) {
     if (!note) return ''
     return JSON.stringify([note.title, note.notebookId, note.contentHtml, note.contentText, note.contentMarkdown || '', note.pinned])
@@ -369,88 +227,48 @@ export function useNoteEditor(props: Readonly<NoteEditorProps>, emit: NoteEditor
     persistedSignatures.set(toRaw(note), signature)
   }
   
-  function handleRichEditorUpdate(instance: Editor) {
-    if (!props.note || props.note.markdownSource || applyingEditorContent || editorMode.value !== 'rich') return
-    props.note.contentHtml = sanitizeEditorHtml(instance.getHTML())
-    props.note.contentText = instance.getText()
-    props.note.contentMarkdown = getEditorMarkdown(instance)
-    markdownDraft.value = props.note.contentMarkdown
-    sourceDirty.value = false
-    markdownParseError.value = ''
-    pendingSourceDrafts.delete(props.note.id)
-    syncNoteTitle(props.note, props.note.contentText)
-    scheduleNoteSave(props.note)
-    if (fimEnabled.value) {
-      clearTimeout(fimTimer)
-      fimTimer = setTimeout(runFim, 2000)
-    }
-  }
-  
-  function deriveMarkdown(note: Note | null = props.note) {
-    if (!note) return ''
-    if (pendingSourceDrafts.has(note.id)) return pendingSourceDrafts.get(note.id) || ''
-    if (note.contentMarkdown || !note.contentHtml) return note.contentMarkdown || ''
-    return getEditorMarkdown() || ''
-  }
-  
   function commitMarkdown(note: Note | null = props.note, { schedule = true }: { schedule?: boolean } = {}) {
-    if (!note || !editor.value || !sourceDirty.value) return true
+    if (!note || !sourceDirty.value) return true
     const source = markdownDraft.value
-    const fallbackHtml = note.contentHtml || '<p></p>'
-    applyingEditorContent = true
-    let previewApplied = false
+    note.contentMarkdown = source
     try {
-      previewApplied = applyMarkdownSourceToEditor(editor.value, source)
-      if (previewApplied) {
-        const preparedHtml = prepareEditorContent({ contentHtml: editor.value.getHTML() })
-        editor.value.commands.setContent(preparedHtml, { emitUpdate: false })
-        const editorHtml = editor.value.getHTML()
-        const safeHtml = sanitizeEditorHtml(editorHtml)
-        if (safeHtml !== editorHtml) {
-          editor.value.commands.setContent(safeHtml || '<p></p>', { emitUpdate: false })
-        }
-        note.contentHtml = sanitizeEditorHtml(editor.value.getHTML())
-        note.contentText = editor.value.getText()
+      if (editor.value) {
+        note.contentHtml = editor.value.getHTML(source)
+        note.contentText = editor.value.getText(source)
       } else {
-        editor.value.commands.setContent(fallbackHtml, { emitUpdate: false })
+        note.contentHtml = sanitizeEditorHtml(markdownToEditorHtml(source))
+        const element = document.createElement('div')
+        element.innerHTML = note.contentHtml
+        note.contentText = element.textContent || ''
       }
-      note.contentMarkdown = source
-      syncNoteTitle(note, note.contentText)
-      sourceDirty.value = false
-      markdownParseError.value = previewApplied ? '' : '预览暂未更新，源码已保存'
-      pendingSourceDrafts.delete(note.id)
-      if (schedule) scheduleNoteSave(note)
-      return true
-    } catch {
-      note.contentMarkdown = source
-      sourceDirty.value = false
-      pendingSourceDrafts.delete(note.id)
-      markdownParseError.value = '预览暂未更新，源码已保存'
-      try { editor.value.commands.setContent(fallbackHtml, { emitUpdate: false }) } catch {}
-      if (schedule) scheduleNoteSave(note)
-      return true
-    } finally {
-      releaseNoteDraft(note)
-      applyingEditorContent = false
-    }
+      markdownParseError.value = ''
+    } catch { markdownParseError.value = '预览暂未更新，Markdown 原文已保留' }
+    sourceDirty.value = false
+    pendingSourceDrafts.delete(note.id)
+    releaseNoteDraft(note)
+    if (schedule) scheduleNoteSave(note)
+    return true
   }
-  
   function queueMarkdownParse() {
     clearTimeout(markdownParseTimer)
-    markdownParseTimer = setTimeout(() => commitMarkdown(props.note), 150)
+    markdownParseTimer = setTimeout(() => commitMarkdown(editingNote), 150)
   }
   
   function updateMarkdownDraft(value: string) {
-    if (!props.note) return
+    if (!editingNote) return
     markdownDraft.value = value
     sourceDirty.value = true
     markdownParseError.value = ''
-    pendingSourceDrafts.set(props.note.id, value)
-    protectNoteDraft(props.note)
+    pendingSourceDrafts.set(editingNote.id, value)
+    protectNoteDraft(editingNote)
     queueMarkdownParse()
+    fimSuggestion.value = ''
+    clearTimeout(fimTimer)
+    if (fimEnabled.value) fimTimer = setTimeout(runFim, 2000)
   }
   
   async function flushLatestContent({ note = props.note, save = false }: { note?: Note | null; save?: boolean } = {}) {
+    if (note === editingNote) editor.value?.getMarkdown()
     clearTimeout(markdownParseTimer)
     const valid = !sourceDirty.value || commitMarkdown(note, { schedule: !save })
     if (valid && save) await saveDirtyNote(note)
@@ -458,44 +276,35 @@ export function useNoteEditor(props: Readonly<NoteEditorProps>, emit: NoteEditor
   }
   
   function resetEditorSession(note: Note | null) {
-    if (note?.markdownSource) editorMode.value = 'markdown'
+    editingNote = note
     clearTimeout(markdownParseTimer)
     modeMenuOpen.value = false
     markdownParseError.value = ''
     sourceDirty.value = note ? pendingSourceDrafts.has(note.id) : false
-    const previousSignature = noteContentSignature(note)
-    const preparedContent = prepareEditorContent(note)
-    applyingEditorContent = true
-    if (note && editor.value) editor.value.commands.setContent(preparedContent, { emitUpdate: false })
-    applyingEditorContent = false
-    setEditorEditable(editorMode.value === 'rich')
     markdownDraft.value = deriveMarkdown(note)
-    if (sourceDirty.value) markdownParseError.value = '预览正在等待刷新，源码草稿仍保留'
-    if (note) {
-      const titleChanged = syncNoteTitle(note, editor.value?.getText() || textFromPreparedEditorContent(preparedContent))
-      persistedSignatures.set(toRaw(note), titleChanged ? previousSignature : noteContentSignature(note))
-      if (titleChanged) scheduleNoteSave(note)
-    }
+    editor.value?.setMarkdown(markdownDraft.value, true)
+    currentSelection.value = null
+    if (note) persistedSignatures.set(toRaw(note), noteContentSignature(note))
   }
-  
   async function changeEditorMode(mode: EditorMode) {
     if (!editorModes.some(option => option.id === mode)) return
     modeMenuOpen.value = false
-    if (mode === 'rich' && props.note?.markdownSource) {
-      showToast('这篇共享笔记使用 Markdown 源码编辑，以保留公式和扩展语法。')
-      return
-    }
     if (mode === editorMode.value) return
     saveReadingPosition(props.note?.id)
-    const valid = await flushLatestContent({ save: true })
+    const note = props.note
+    // Both modes use the same in-memory document. Commit the source locally
+    // before switching, but a slow or failed network save must not lock the UI.
+    const valid = await flushLatestContent({ note })
     if (!valid && mode === 'rich') return
     if (mode === 'markdown' && !sourceDirty.value) markdownDraft.value = deriveMarkdown()
     editorMode.value = mode
-    setEditorEditable(mode === 'rich')
+    editor.value?.setMode(mode)
     closeToolbarMenus()
     fimSuggestion.value = ''
+    void saveDirtyNote(note).catch(error => {
+      showToast(`草稿仍保留，${errorMessage(error, '笔记保存失败')}。请点击保存状态重试。`, { tone: 'error' })
+    })
     await nextTick()
-    setupSplitObserver()
     restoreReadingPosition(props.note?.id)
   }
   
@@ -509,8 +318,7 @@ export function useNoteEditor(props: Readonly<NoteEditorProps>, emit: NoteEditor
       const nextMode = editorMode.value === 'rich' ? 'markdown' : 'rich'
       await changeEditorMode(nextMode)
       await nextTick()
-      if (editorMode.value === 'markdown') sourceEditorRef.value?.focus()
-      else editor.value?.commands.focus()
+      editor.value?.focus()
     } finally {
       modeShortcutSwitching = false
     }
@@ -575,74 +383,14 @@ export function useNoteEditor(props: Readonly<NoteEditorProps>, emit: NoteEditor
     if (!target?.closest('.more-menu-anchor')) moreOpen.value = false
   }
   
-  function updateSplitOrientation() {
-    if (splitWorkspace.value) splitVertical.value = splitWorkspace.value.clientWidth < 720
-  }
-  
-  function setupSplitObserver() {
-    splitResizeObserver?.disconnect()
-    splitResizeObserver = null
-    if (!splitMode.value || !splitWorkspace.value || typeof ResizeObserver === 'undefined') return
-    updateSplitOrientation()
-    splitResizeObserver = new ResizeObserver(updateSplitOrientation)
-    splitResizeObserver.observe(splitWorkspace.value)
-  }
-  
-  function stopSplitResize() {
-    if (!splitDragState) return
-    window.removeEventListener('pointermove', resizeSplitPane)
-    window.removeEventListener('pointerup', stopSplitResize)
-    window.removeEventListener('pointercancel', stopSplitResize)
-    splitDragState = null
-  }
-  
-  function resizeSplitPane(event: PointerEvent) {
-    if (!splitDragState || event.pointerId !== splitDragState.pointerId) return
-    const rect = splitWorkspace.value?.getBoundingClientRect()
-    if (!rect) return
-    const position = splitVertical.value ? event.clientY - rect.top : event.clientX - rect.left
-    const total = splitVertical.value ? rect.height : rect.width
-    if (total) splitRatio.value = clampSplitRatio((position / total) * 100)
-  }
-  
-  function startSplitResize(event: PointerEvent) {
-    if (event.button !== 0) return
-    splitDragState = { pointerId: event.pointerId }
-    window.addEventListener('pointermove', resizeSplitPane)
-    window.addEventListener('pointerup', stopSplitResize)
-    window.addEventListener('pointercancel', stopSplitResize)
-    event.preventDefault()
-  }
-  
-  function synchronizeSplitScroll(origin: 'source' | 'preview', payload: Partial<ScrollPayload>) {
-    if (!splitMode.value || (scrollSyncSource && scrollSyncSource !== origin)) return
-    scrollSyncSource = origin
-    if (scrollSyncFrame != null) cancelAnimationFrame(scrollSyncFrame)
-    scrollSyncFrame = requestAnimationFrame(() => {
-      if (origin === 'source') {
-        const progress = scrollProgress(payload.scrollTop || 0, payload.scrollHeight || 0, payload.clientHeight || 0)
-        const target = previewScroller.value
-        if (target) target.scrollTop = scrollOffset(progress, target.scrollHeight, target.clientHeight)
-      } else {
-        const target = previewScroller.value
-        if (target) sourceEditorRef.value?.setScrollProgress(scrollProgress(target.scrollTop, target.scrollHeight, target.clientHeight))
-      }
-      requestAnimationFrame(() => { scrollSyncSource = '' })
-    })
-  }
-  
-  function handlePreviewScroll() {
-    scheduleReadingPositionSave()
-    if (splitMode.value) synchronizeSplitScroll('preview', {})
-  }
-
+  function handlePreviewScroll() { scheduleReadingPositionSave() }
   function readingPositionStorageKey(noteId?: string) {
     return noteId ? `${READING_POSITION_PREFIX}${noteId}` : ''
   }
 
   function saveReadingPosition(noteId?: string) {
     const key = readingPositionStorageKey(noteId)
-    const scroller = previewScroller.value
+    const scroller = editor.value?.getScroller()
     if (!key || !scroller || scroller.clientHeight <= 0 || scroller.scrollHeight <= scroller.clientHeight) return
     const progress = Number(scrollProgress(scroller.scrollTop, scroller.scrollHeight, scroller.clientHeight).toFixed(6))
     try { window.localStorage.setItem(key, String(progress)) } catch {}
@@ -656,7 +404,7 @@ export function useNoteEditor(props: Readonly<NoteEditorProps>, emit: NoteEditor
 
   function restoreReadingPosition(noteId?: string) {
     const key = readingPositionStorageKey(noteId)
-    const scroller = previewScroller.value
+    const scroller = editor.value?.getScroller()
     if (!key || !scroller) return
     let progress = 0
     try {
@@ -666,20 +414,20 @@ export function useNoteEditor(props: Readonly<NoteEditorProps>, emit: NoteEditor
     scroller.scrollTop = scrollOffset(progress, scroller.scrollHeight, scroller.clientHeight)
   }
   
-  async function toggleMarkdownPreview() {
+  function toggleMarkdownPreview() {
     markdownPreview.value = !markdownPreview.value
-    await nextTick()
-    setupSplitObserver()
+    editor.value?.setPreview(markdownPreview.value)
   }
-  
-  async function viewPastedMarkdown() {
-    markdownPasteNotice.value = false
-    clearTimeout(markdownPasteTimer)
-    await changeEditorMode('markdown')
-    sourceEditorRef.value?.focus()
-  }
-  
   function resetTransientEditorState() {
+    aiBaseSource = null
+    aiProposalStale = false
+    fimSuggestion.value = ''
+    imageDialogOpen.value = false
+    clearTimeout(fimTimer)
+    aiRequestId.value = ''
+    assistantRequestId.value = ''
+    aiProposal.value = null
+    aiError.value = ''
     savedSelection = null
     pendingAiRequest = null
     aiConsentOpen.value = false
@@ -689,8 +437,6 @@ export function useNoteEditor(props: Readonly<NoteEditorProps>, emit: NoteEditor
     aiBusy.value = false
     aiOutputOpen.value = false
     aiOriginalText.value = ''
-    aiChangePending.value = false
-    pendingAiChange = null
     aiDialogPosition.value = null
     clearTimeout(assistantTriggerTimer)
     assistantOpen.value = false
@@ -710,7 +456,12 @@ export function useNoteEditor(props: Readonly<NoteEditorProps>, emit: NoteEditor
       clearTimeout(readingPositionTimer)
       saveReadingPosition(previousId)
       const previous = [...store.notes, ...store.deleted].find(note => note.id === previousId)
-      if (previous) await flushLatestContent({ note: previous, save: true })
+      if (previous) {
+        // Commit synchronously before the child renders the next article.
+        void flushLatestContent({ note: previous, save: true }).catch(() => {
+          showToast('上一篇文章保存失败，草稿仍保留，请返回后重试。', { tone: 'error' })
+        })
+      }
     }
     if (cancelled) return
     resetTransientEditorState()
@@ -724,31 +475,24 @@ export function useNoteEditor(props: Readonly<NoteEditorProps>, emit: NoteEditor
     }).catch(() => {})
     await nextTick()
     if (cancelled) return
-    setupSplitObserver()
     restoreReadingPosition(id)
     loadExternalProposal()
-  }, { immediate: true, flush: 'post' })
+  }, { immediate: true, flush: 'pre' })
 
   // A reopened source or a refreshed clean body keeps the same ID. The store
   // preserves dirty objects; replacing this object starts a fresh editor session.
   watch(() => props.note, async (next, previous) => {
     if (!next || next === previous || next.id !== previous?.id) return
-    const scroller = previewScroller.value || editor.value?.view.dom.closest('.editor-render-pane') as HTMLElement | null
+    const scroller = editor.value?.getScroller()
     const scrollTop = scroller?.scrollTop
-    const selection = editor.value?.state.selection
     pendingSourceDrafts.delete(next.id)
     persistedSignatures.delete(toRaw(next))
     resetTransientEditorState()
     resetEditorSession(next)
-    if (selection && !next.external && editor.value) {
-      const size = editor.value.state.doc.content.size
-      editor.value.commands.setTextSelection({ from: Math.min(selection.from, size), to: Math.min(selection.to, size) })
-    }
     await nextTick()
     if (props.note === next && scroller && scrollTop !== undefined) scroller.scrollTop = scrollTop
   }, { flush: 'post' })
   
-  watch(assistantOpen, () => nextTick(setupSplitObserver))
   
   async function handleBackgroundNoteTask(event: Event) {
     const task = (event as CustomEvent<BackgroundTask>).detail
@@ -772,13 +516,6 @@ export function useNoteEditor(props: Readonly<NoteEditorProps>, emit: NoteEditor
     }
   }
   
-  function setEditorEditable(editable: boolean) {
-    const instance = editor.value
-    if (!instance) return
-    instance.setEditable(editable, false)
-    ;(instance.emit as (event: string, payload: unknown) => void)('tinyNoteEditableChange', { editable })
-  }
-  
   onBeforeUnmount(() => {
     clearTimeout(fimTimer)
     clearTimeout(assistantTriggerTimer)
@@ -787,27 +524,28 @@ export function useNoteEditor(props: Readonly<NoteEditorProps>, emit: NoteEditor
     clearTimeout(readingPositionTimer)
     saveReadingPosition(props.note?.id)
     stopAiDrag()
-    stopSplitResize()
-    splitResizeObserver?.disconnect()
-    if (scrollSyncFrame != null) cancelAnimationFrame(scrollSyncFrame)
     document.removeEventListener('pointerdown', handleDocumentPointerDown)
     window.removeEventListener('tiny-note-task-updated', handleBackgroundNoteTask)
     window.removeEventListener('keydown', handleEditorModeShortcut, true)
-    void flushLatestContent({ save: true })
-    editor.value?.destroy()
+    void flushLatestContent({ save: true }).catch(() => {})
   })
   async function loadExternalProposal(id = props.proposalId) {
     if (!id || !props.note) return
     try {
       const proposal = await (await import('../services/tauri')).invoke('note_edit_get', { proposalId: id })
       if (!proposal || proposal.noteId !== props.note.id || proposal.status !== 'draft') return
+      editor.value?.getMarkdown()
+      const persisted = persistedSignatures.get(toRaw(props.note))
+      const dirty = sourceDirty.value || (persisted !== undefined && persisted !== noteContentSignature(props.note))
+      aiProposalStale = dirty || (aiProposal.value?.id === proposal.id && aiProposalStale)
       aiProposal.value = proposal
+      aiBaseSource ??= markdownDraft.value
       aiText.value = proposal.replacementMarkdown || ''
       aiResultAction.value = proposal.action || ''
       aiOutputOpen.value = true
       aiOriginalText.value = proposal.originalText || ''
       aiSources.value = proposal.sources || []
-      savedSelection = proposal.selectionFrom != null && proposal.selectionTo != null ? { from: proposal.selectionFrom, to: proposal.selectionTo } : null
+      savedSelection = proposal.selectionFrom != null && proposal.selectionTo != null ? { from: proposal.selectionFrom, to: proposal.selectionTo, text: proposal.originalText || '', source: aiBaseSource } : null
       emit('proposal-reviewed')
     } catch {}
   }
@@ -820,37 +558,7 @@ export function useNoteEditor(props: Readonly<NoteEditorProps>, emit: NoteEditor
     await tasksStore.initialize()
     if (!library.bases.length) { try { await library.load() } catch {} }
     await loadExternalProposal()
-    setupSplitObserver()
   })
-  type ToggleCommand = 'toggleBold' | 'toggleItalic' | 'toggleUnderline' | 'toggleStrike' | 'toggleBulletList' | 'toggleOrderedList' | 'toggleTaskList'
-  function toggle(type: ToggleCommand) {
-    const chain = editor.value?.chain().focus()
-    if (!chain) return
-    if (type === 'toggleBold') chain.toggleBold().run()
-    else if (type === 'toggleItalic') chain.toggleItalic().run()
-    else if (type === 'toggleUnderline') chain.toggleUnderline().run()
-    else if (type === 'toggleStrike') chain.toggleStrike().run()
-    else if (type === 'toggleBulletList') chain.toggleBulletList().run()
-    else if (type === 'toggleOrderedList') chain.toggleOrderedList().run()
-    else chain.toggleTaskList().run()
-  }
-  async function applyMarkdownFormat(format: string) {
-    if (!sourceEditorRef.value?.applyFormat(format)) return
-    await nextTick()
-    commitMarkdown(props.note)
-  }
-  async function setMarkdownHeading(level: number) {
-    if (!sourceEditorRef.value?.setHeading(level)) return
-    headingOpen.value = false
-    await nextTick()
-    commitMarkdown(props.note)
-  }
-  async function setMarkdownSmallBody() {
-    if (!sourceEditorRef.value?.setSmallParagraph()) return
-    headingOpen.value = false
-    await nextTick()
-    commitMarkdown(props.note)
-  }
   function hasNoteContextConsent() {
     const key = `tiny-note-context-consent:${contextConsentModelId.value}`
     return localStorage.getItem(key) === 'granted'
@@ -879,7 +587,14 @@ export function useNoteEditor(props: Readonly<NoteEditorProps>, emit: NoteEditor
       aiConsentOpen.value = true
       return
     }
-    if (requestText == null) requestText = props.note.contentText || ''
+    const activeNote = props.note
+    const baseSource = editor.value?.getMarkdown() ?? markdownDraft.value
+    const capturedSelection = savedSelection
+    if (capturedSelection?.source !== undefined && capturedSelection.source !== baseSource) {
+      showToast('选区已经变化，请重新选择要修改的文字。', { tone: 'info' })
+      return
+    }
+    if (requestText == null) requestText = activeNote.contentText || ''
     const actionLabel = aiActionLabel(action)
     aiBusy.value = true
     aiOutputOpen.value = true
@@ -889,7 +604,9 @@ export function useNoteEditor(props: Readonly<NoteEditorProps>, emit: NoteEditor
     aiProposal.value = null
     aiSources.value = []
     aiDialogPosition.value = null
-    aiRequestId.value = crypto.randomUUID()
+    const requestKey = crypto.randomUUID()
+    aiRequestId.value = requestKey
+    const isCurrent = () => props.note === activeNote && aiRequestId.value === requestKey && markdownDraft.value === baseSource
     if (!await flushLatestContent()) {
       aiText.value = `${actionLabel}失败：文章保存失败，请稍后重试。`
       aiBusy.value = false
@@ -897,28 +614,29 @@ export function useNoteEditor(props: Readonly<NoteEditorProps>, emit: NoteEditor
     }
     if (store.saveTimer != null) clearTimeout(store.saveTimer)
     try {
-      await saveDirtyNote(props.note)
+      await saveDirtyNote(activeNote)
     } catch {
+      if (!isCurrent()) return
       aiText.value = `${actionLabel}失败：文章保存失败，请稍后重试。`
       aiBusy.value = false
       return
     }
-    const selection = savedSelection ? { ...savedSelection, text: editor.value ? getEditorSelectionText(editor.value, savedSelection) : requestText } : null
+    if (!isCurrent()) { if (aiRequestId.value === requestKey) { aiBusy.value = false; aiText.value = '文章已经变化，请重新生成建议。' }; return }
+    const selection = capturedSelection ? { from: capturedSelection.from, to: capturedSelection.to, text: capturedSelection.text } : null
+    aiBaseSource = baseSource
     try {
-      const task = await tasksStore.createNoteAI({ noteId: props.note.id, requestKey: aiRequestId.value, action, mode: action === 'interpret' ? 'chat' : 'edit', instruction, selection, modelProfileId: null, thinkingMode: 'disabled', baseVersion: props.note.version || 1 }, { preparedFlight: taskFlight })
-      aiRequestId.value = task.id
+      const task = await tasksStore.createNoteAI({ noteId: activeNote.id, requestKey, action, mode: action === 'interpret' ? 'chat' : 'edit', instruction, selection, modelProfileId: null, thinkingMode: 'disabled', baseVersion: activeNote.version || 1 }, { preparedFlight: taskFlight })
+      if (isCurrent()) aiRequestId.value = task.id
     } catch (cause) {
+      if (!isCurrent()) return
       const event: AiEvent = typeof cause === 'object' && cause !== null ? cause as AiEvent : { message: String(cause || '') }
       aiText.value = `${actionLabel}失败：${aiEventErrorMessage(event)}`
       aiBusy.value = false
     }
   }
   function captureAssistantSelection() {
-    const instance = editor.value
-    if (!instance || instance.state.selection.empty) return null
-    const { from, to } = instance.state.selection
-    const text = getEditorSelectionText(instance, { from, to }).trim()
-    return text ? { from, to, text } : null
+    const range = editor.value?.getSelection()
+    return range?.text ? { ...range } : null
   }
   function openAssistant(selection: SelectionRange | null = captureAssistantSelection()) {
     if (!requireCloudNote()) return
@@ -957,9 +675,21 @@ export function useNoteEditor(props: Readonly<NoteEditorProps>, emit: NoteEditor
       aiConsentOpen.value = true
       return
     }
+    const activeNote = props.note
+    const baseSource = editor.value?.getMarkdown() ?? markdownDraft.value
+    const range = assistantSelection.value
+    if (range?.source !== undefined && range.source !== baseSource) {
+      pushAssistantResponse('选区已经变化，请重新选择文字。')
+      return
+    }
     if (!await flushLatestContent()) return
     if (store.saveTimer != null) clearTimeout(store.saveTimer)
-    await saveDirtyNote(props.note)
+    try { await saveDirtyNote(activeNote) } catch {
+      if (props.note === activeNote) pushAssistantResponse('文章保存失败，请重试。')
+      return
+    }
+    if (props.note !== activeNote || markdownDraft.value !== baseSource) return
+    const selection = range ? { from: range.from, to: range.to, text: range.text } : null
     const message = prompt.trim()
     assistantMessages.value.push({ role: 'user', content: message, references: assistantReferences() })
     assistantBusy.value = true
@@ -968,9 +698,10 @@ export function useNoteEditor(props: Readonly<NoteEditorProps>, emit: NoteEditor
     assistantResponseSources.value = []
     assistantResponseProposal.value = null
     try {
-      const task = await tasksStore.createNoteAI({ noteId: props.note.id, requestKey: assistantRequestId.value, action: 'custom', mode: assistantEditIntent(message) ? 'edit' : 'chat', instruction: message, selection: assistantSelection.value, modelProfileId: null, baseVersion: props.note.version || 1 }, { preparedFlight: taskFlight })
-      assistantRequestId.value = task.id
+      const task = await tasksStore.createNoteAI({ noteId: activeNote.id, requestKey: assistantRequestId.value, action: 'custom', mode: assistantEditIntent(message) ? 'edit' : 'chat', instruction: message, selection, modelProfileId: null, baseVersion: activeNote.version || 1 }, { preparedFlight: taskFlight })
+      if (props.note === activeNote) assistantRequestId.value = task.id
     } catch {
+      if (props.note !== activeNote) return
       pushAssistantResponse('AI 请求失败，请检查模型设置。')
       assistantStreamingText.value = ''
       assistantBusy.value = false
@@ -984,17 +715,18 @@ export function useNoteEditor(props: Readonly<NoteEditorProps>, emit: NoteEditor
   }
   async function copyAssistantMessage(content: string) { if (content) await navigator.clipboard?.writeText(content) }
   async function stopAi() { if (!aiRequestId.value) return; await tasksStore.cancel(aiRequestId.value); aiBusy.value = false }
-  function exportBodyHtml(html = '') {
+  function exportBodyHtml(html = '', title = '') {
     const container = document.createElement('div')
     container.innerHTML = sanitizeEditorHtml(html)
-    if (container.firstElementChild?.matches('h1')) container.firstElementChild.remove()
+    const firstBlock = container.firstElementChild
+    if (firstBlock?.matches('h1') && firstBlock.textContent?.trim() === title.trim()) firstBlock.remove()
     return container.innerHTML
   }
   async function prepareExportSnapshot() {
     if (!props.note || !editor.value || !await flushLatestContent()) return null
     return {
       title: String(props.note.title || '').trim() || t('untitled'),
-      contentHtml: exportBodyHtml(prepareEditorContent(props.note))
+      contentHtml: exportBodyHtml(editor.value.getHTML(), props.note.title)
     }
   }
   async function runArticleExport(format: Exclude<ExportFormat, ''>) {
@@ -1045,202 +777,56 @@ export function useNoteEditor(props: Readonly<NoteEditorProps>, emit: NoteEditor
   function exportHtml() { return runArticleExport('html') }
   function exportPdf() { return runArticleExport('pdf') }
   function printNote() { return runArticleExport('print') }
-  function restoreSavedSelection() { if (!editor.value || !savedSelection) return false; return editor.value.chain().focus().setTextSelection(savedSelection).run() }
-  function clearAiResultState() { aiOutputOpen.value = false; aiText.value = ''; aiOriginalText.value = ''; aiResultAction.value = ''; aiFeedback.value = ''; aiDialogPosition.value = null; aiProposal.value = null; aiSources.value = [] }
-  function syncNoteFromEditor() {
-    if (!props.note || !editor.value) return
-    props.note.contentHtml = sanitizeEditorHtml(editor.value.getHTML())
-    props.note.contentText = editor.value.getText()
-    props.note.contentMarkdown = getEditorMarkdown()
-    markdownDraft.value = props.note.contentMarkdown
-    sourceDirty.value = false
-    markdownParseError.value = ''
-    pendingSourceDrafts.delete(props.note.id)
-  }
-  function selectedContentMarks(doc: ProseMirrorNode, from: number, to: number): readonly Mark[] {
-    let marks: readonly Mark[] = []
-    doc.nodesBetween(from, to, (node: ProseMirrorNode) => {
-      if (node.isText && !marks.length) marks = node.marks
-    })
-    return marks
-  }
-  function insertPendingAiContent(content: string, insertPos: number, selectionFrom: number, selectionTo: number) {
-    if (!editor.value) return null
-    const beforeSize = editor.value.state.doc.content.size
-    const { doc, schema } = editor.value.state
-    const $from = doc.resolve(selectionFrom)
-    const $to = doc.resolve(selectionTo)
-    applyingEditorContent = true
-    if ($from.parent === $to.parent && $from.parent.isTextblock && isPlainInlineAiReplacement(content)) {
-      const marks = selectedContentMarks(doc, selectionFrom, selectionTo)
-      editor.value.view.dispatch(editor.value.state.tr.insert(insertPos, schema.text(content, marks)).scrollIntoView())
-      editor.value.commands.focus()
-    } else {
-      editor.value.chain().focus().insertContentAt(insertPos, content, { contentType: 'markdown' }).run()
-    }
-    const insertedLength = editor.value.state.doc.content.size - beforeSize
-    applyingEditorContent = false
-    return { insertionFrom: insertPos, insertionTo: insertPos + insertedLength }
-  }
-  function stagePendingAiChange(mode: 'insert' | 'replace', content: string, selectionFrom: number, selectionTo: number, change: PendingAiChangeBase) {
-    const preview = insertPendingAiContent(content, selectionTo, selectionFrom, selectionTo)
-    if (!preview) return false
-    const instance = editor.value
-    if (!instance || !props.note) return false
-    const highlightMark = instance.state.schema.marks.highlight
-    const strikeMark = instance.state.schema.marks.strike
-    applyingEditorContent = true
-    let transaction = instance.state.tr
-    if (highlightMark && preview.insertionFrom < preview.insertionTo) {
-      transaction = transaction.addMark(preview.insertionFrom, preview.insertionTo, highlightMark.create({ color: AI_CHANGE_HIGHLIGHT }))
-    }
-    if (mode === 'replace' && strikeMark) {
-      transaction = transaction.addMark(selectionFrom, selectionTo, strikeMark.create())
-    }
-    transaction = transaction.setSelection(TextSelection.near(transaction.doc.resolve(preview.insertionTo)))
-    instance.view.dispatch(transaction.scrollIntoView())
-    applyingEditorContent = false
-    pendingAiChange = {
-      ...change,
-      type: mode,
-      noteId: props.note.id,
-      strikeFrom: selectionFrom,
-      strikeTo: selectionTo,
-      highlightFrom: preview.insertionFrom,
-      highlightTo: preview.insertionTo
-    }
-    aiChangePending.value = true
-    clearAiResultState()
-    return true
-  }
-  function restoreAiChange(change: PendingAiChangeBase) {
-    aiChangePending.value = false
-    applyingEditorContent = true
-    editor.value?.commands.setContent(change.beforeHtml, { emitUpdate: false })
-    applyingEditorContent = false
-    const activeNote = props.note
-    if (activeNote?.id === change.noteId) {
-      activeNote.contentHtml = change.beforeHtml
-      activeNote.contentText = change.beforeText
-      activeNote.contentMarkdown = change.beforeMarkdown
-      markdownDraft.value = change.beforeDraft
-      sourceDirty.value = false
-    }
-    aiText.value = change.replacement
-    aiOutputOpen.value = true
-    aiOriginalText.value = change.proposal.originalText || ''
-    aiResultAction.value = change.resultAction
-    aiProposal.value = change.proposal
-    aiSources.value = change.resultSources
-  }
-  async function persistAiChange(change: PendingAiChangeBase) {
-    const activeNote = props.note
-    if (!activeNote) return
-    if (store.saveTimer != null) clearTimeout(store.saveTimer)
-    if (!window.__TAURI_INTERNALS__) {
-      await saveDirtyNote(activeNote)
-      change.proposal.status = 'applied'
-      savedSelection = null
-      return
-    }
-    const updated = await (await import('../services/tauri')).invoke('note_edit_apply', {
-      proposalId: change.proposal.id,
-      expectedUpdatedAt: change.proposal.baseUpdatedAt,
-      contentHtml: activeNote.contentHtml,
-      contentText: activeNote.contentText,
-      contentMarkdown: activeNote.contentMarkdown || getEditorMarkdown()
-    })
-    Object.assign(activeNote, updated)
-    trackPersistedNote(activeNote)
-    store.syncSummary(activeNote)
-    markdownDraft.value = updated.contentMarkdown || getEditorMarkdown()
-    persistedSignatures.set(toRaw(activeNote), noteContentSignature(updated))
-    change.proposal.status = 'applied'
-    savedSelection = null
-  }
-  async function confirmPendingAiChange() {
-    if (!pendingAiChange || !editor.value || pendingAiChange.noteId !== props.note?.id) return
-    const change = pendingAiChange
-    pendingAiChange = null
-    aiChangePending.value = false
-    try {
-      const highlightMark = editor.value.state.schema.marks.highlight
-      applyingEditorContent = true
-      let transaction = editor.value.state.tr
-      if (change.type === 'replace') {
-        transaction = transaction.delete(change.strikeFrom, change.strikeTo)
-        const mappedFrom = transaction.mapping.map(change.highlightFrom)
-        const mappedTo = transaction.mapping.map(change.highlightTo)
-        if (highlightMark) transaction = transaction.removeMark(mappedFrom, mappedTo, highlightMark)
-      } else if (highlightMark) {
-        transaction = transaction.removeMark(change.highlightFrom, change.highlightTo, highlightMark)
-      }
-      editor.value.view.dispatch(transaction.scrollIntoView())
-      applyingEditorContent = false
-      syncNoteFromEditor()
-      await persistAiChange(change)
-    } catch (error) {
-      applyingEditorContent = false
-      restoreAiChange(change)
-      showToast(unknownErrorCode(error) === 'proposal_stale' ? '文章已经发生变化，请重新生成修改建议。' : '应用修改失败，请重试。', { tone: 'error' })
-    }
-  }
+  function clearAiResultState() { aiBaseSource = null; aiProposalStale = false; aiOutputOpen.value = false; aiText.value = ''; aiOriginalText.value = ''; aiResultAction.value = ''; aiFeedback.value = ''; aiDialogPosition.value = null; aiProposal.value = null; aiSources.value = []; aiError.value = '' }
   async function applyAiResult(mode: 'insert' | 'replace') {
     const activeNote = props.note
-    if (!editor.value || !activeNote || !aiText.value || !aiProposal.value) return
-    if (mode === 'insert' && editorMode.value !== 'rich') {
-      showToast('Markdown 模式没有可靠插入位置，请切换到即时编辑后再应用插入。', { tone: 'warning' })
-      return
-    }
-    if (!await flushLatestContent()) return
     const proposal = aiProposal.value
-    const replacement = aiText.value
-    const resultAction = aiResultAction.value
-    const resultSources = aiSources.value
-    const beforeHtml = editor.value.getHTML()
-    const beforeText = editor.value.getText()
-    const beforeMarkdown = activeNote.contentMarkdown || getEditorMarkdown()
-    const beforeDraft = markdownDraft.value
-    const selectionFrom = proposal.selectionFrom
-    const selectionTo = proposal.selectionTo
-    const hasProposalSelection = typeof selectionFrom === 'number' && typeof selectionTo === 'number' && Number.isInteger(selectionFrom) && Number.isInteger(selectionTo) && selectionFrom < selectionTo
-    const change: PendingAiChangeBase = { noteId: activeNote.id, proposal, replacement, resultAction, resultSources, beforeHtml, beforeText, beforeMarkdown, beforeDraft }
-    const insertionSelection = hasProposalSelection ? { from: selectionFrom, to: selectionTo } : savedSelection
-    if (editorMode.value === 'rich' && ((mode === 'replace' && hasProposalSelection) || (mode === 'insert' && insertionSelection))) {
-      const range = mode === 'replace' && hasProposalSelection ? { from: selectionFrom, to: selectionTo } : insertionSelection
-      if (!range) return
-      stagePendingAiChange(mode, replacement, range.from, range.to, change)
-      return
-    }
-    clearAiResultState()
+    if (applyingAi.value || !editor.value || !activeNote || !proposal || !aiText.value) return
+    if (proposal.noteId !== activeNote.id) return
+    await flushLatestContent()
+    if (props.note !== activeNote || aiProposal.value !== proposal) return
+    const before = { contentMarkdown: activeNote.contentMarkdown, contentHtml: activeNote.contentHtml, contentText: activeNote.contentText }
+    const draftBefore = markdownDraft.value
+    applyingAi.value = true
+    aiError.value = ''
+    editor.value.setEditable(false)
+    if (store.saveTimer != null) clearTimeout(store.saveTimer)
     try {
-      if (mode === 'replace') {
-        if (hasProposalSelection) {
-          const { doc, tr } = editor.value.state
-          const $from = doc.resolve(selectionFrom)
-          const $to = doc.resolve(selectionTo)
-          if ($from.parent === $to.parent && $from.parent.isTextblock && isPlainInlineAiReplacement(replacement)) {
-            editor.value.view.dispatch(tr.insertText(replacement, selectionFrom, selectionTo).scrollIntoView())
-            editor.value.commands.focus()
-          } else {
-            editor.value.chain().focus().setTextSelection({ from: selectionFrom, to: selectionTo }).insertContent(replacement, { contentType: 'markdown' }).run()
-          }
-          syncNoteFromEditor()
-        } else {
-          markdownDraft.value = replacement
-          sourceDirty.value = true
-          if (!commitMarkdown(activeNote, { schedule: false })) return
-        }
-      } else {
-        editor.value.chain().focus().insertContent(replacement, { contentType: 'markdown' }).run()
-        syncNoteFromEditor()
+      if (aiProposalStale || proposal.baseUpdatedAt !== activeNote.updatedAt) throw new Error('文章已经发生变化，请重新生成修改建议。')
+      if (aiBaseSource !== null && aiBaseSource !== draftBefore) throw new Error('文章已经发生变化，请重新生成修改建议。')
+      const hasSelection = proposal.selectionFrom != null || proposal.selectionTo != null
+      const selection = hasSelection
+        ? { from: proposal.selectionFrom ?? -1, to: proposal.selectionTo ?? -1, text: proposal.originalText || '', source: savedSelection?.source }
+        : mode === 'insert' ? editor.value.getSelection() : null
+      const next = applyMarkdownProposal(draftBefore, aiText.value, mode, selection)
+      editor.value.setMarkdown(next)
+      const payload = { contentMarkdown: next, contentHtml: editor.value.getHTML(), contentText: editor.value.getText() }
+      const updated = await (await import('../services/tauri')).invoke('note_edit_apply', {
+        proposalId: proposal.id, expectedUpdatedAt: proposal.baseUpdatedAt, ...payload
+      })
+      // A late response must never write into whichever article is now open.
+      if (!updated || updated.id !== activeNote.id) throw new Error('服务器未确认保存，请重试')
+      Object.assign(activeNote, updated)
+      trackPersistedNote(activeNote)
+      store.saveStates[activeNote.id] = { status: 'saved', error: '' }
+      store.syncSummary(activeNote)
+      persistedSignatures.set(toRaw(activeNote), noteContentSignature(activeNote))
+      proposal.status = 'applied'
+      if (props.note?.id === activeNote.id) {
+        markdownDraft.value = activeNote.contentMarkdown
+        editor.value?.setMarkdown(markdownDraft.value)
+        savedSelection = null
+        currentSelection.value = null
+        clearAiResultState()
       }
-      await persistAiChange(change)
     } catch (error) {
-      applyingEditorContent = false
-      restoreAiChange(change)
-      showToast(unknownErrorCode(error) === 'proposal_stale' ? '文章已经发生变化，请重新生成修改建议。' : '应用修改失败，请重试。', { tone: 'error' })
-    }
+      if (props.note?.id === activeNote.id) {
+        Object.assign(activeNote, before)
+        markdownDraft.value = draftBefore
+        editor.value?.setMarkdown(draftBefore)
+        aiError.value = errorMessage(error, '应用修改失败，请重试')
+      }
+    } finally { applyingAi.value = false; editor.value?.setEditable(true) }
   }
   function insertAi() { return applyAiResult('insert') }
   function replaceWithAi() { return applyAiResult('replace') }
@@ -1283,14 +869,14 @@ export function useNoteEditor(props: Readonly<NoteEditorProps>, emit: NoteEditor
     if (aiBusy.value || !aiResultAction.value) return
     const action = aiResultAction.value as AiAction
     let text = selectedText.value
-    if (savedSelection && editor.value) text = getEditorSelectionText(editor.value, savedSelection).trim()
+    if (savedSelection) text = savedSelection.text.trim()
     if (aiProposal.value?.status === 'draft' && window.__TAURI_INTERNALS__) {
       const proposalId = aiProposal.value.id
       void import('../services/tauri').then(({ invoke }) => invoke('note_edit_discard', { proposalId })).catch(() => {})
     }
     runAi(action, text || props.note?.contentText || '', null, prepareTaskFlight(event?.currentTarget))
   }
-  function saveCurrentSelection() { const selection = editor.value?.state.selection; if (selection && !selection.empty) savedSelection = { from: selection.from, to: selection.to } }
+  function saveCurrentSelection() { const selection = captureAssistantSelection(); if (selection) savedSelection = selection }
   function closeAiPanel() { aiPanelOpen.value = false; aiPanelSelectionText.value = ''; commandMenuOpen.value = false; aiPrompt.value = '' }
   function positionCommandMenu() {
     const button = document.querySelector('.tiny-note-ai-input-wrapper .tiny-note-command-btn')
@@ -1313,62 +899,38 @@ export function useNoteEditor(props: Readonly<NoteEditorProps>, emit: NoteEditor
     closeAiPanel()
     openAssistant(captureAssistantSelection())
   }
-  async function runFim() { if (props.note?.external || editorMode.value !== 'rich' || !fimEnabled.value || !editor.value || !props.note?.contentText) return; const id = crypto.randomUUID(); const channel = new EventChannel<{ type: string; text?: string }>(); let result = ''; channel.onmessage = event => { if (event.type === 'delta') result += event.text || ''; if (event.type === 'completed') fimSuggestion.value = result }; try { await (await import('../services/tauri')).invoke('note_fim_stream', { request: { requestId: id, action: 'continue_write', text: props.note.contentText.slice(-800), instruction: `Continue naturally. Context after cursor: ${props.note.contentText.slice(-400)}`, modelProfileId: null }, onEvent: channel }) } catch { fimSuggestion.value = '' } }
-  function acceptFim() { if (fimSuggestion.value && editor.value) { editor.value.commands.insertContent(fimSuggestion.value); fimSuggestion.value = '' } }
+  let fimSource = ''
+  let fimSelection: MarkdownSelection | null = null
+  async function runFim() {
+    const note = props.note
+    const range = editor.value?.getSelection()
+    if (!note || note.external || !fimEnabled.value || !hasNoteContextConsent() || !range || range.from !== range.to) return
+    const source = markdownDraft.value
+    const channel = new EventChannel<{ type: string; text?: string }>()
+    let result = ''
+    channel.onmessage = event => {
+      if (event.type === 'delta') result += event.text || ''
+      if (event.type === 'completed' && props.note?.id === note.id && markdownDraft.value === source && editor.value?.getSelection()?.from === range.from) {
+        fimSource = source; fimSelection = range; fimSuggestion.value = result
+      }
+    }
+    try { await (await import('../services/tauri')).invoke('note_fim_stream', { request: { requestId: crypto.randomUUID(), action: 'continue_write', text: source.slice(Math.max(0, range.from - 800), range.from), instruction: `Continue naturally. Context after cursor: ${source.slice(range.to, range.to + 400)}`, modelProfileId: null }, onEvent: channel }) } catch { fimSuggestion.value = '' }
+  }
+  function acceptFim() {
+    if (!fimSuggestion.value || !fimSelection || fimSource !== markdownDraft.value) return
+    const next = applyMarkdownProposal(fimSource, fimSuggestion.value, 'insert', fimSelection)
+    editor.value?.setMarkdown(next)
+    updateMarkdownDraft(next)
+    fimSuggestion.value = ''
+  }
   function handleEditorTab(event: KeyboardEvent) {
-    if (!fimSuggestion.value || !editor.value || editorMode.value !== 'rich') return
-    if (event.target instanceof Element && event.target.closest('button, select, input, textarea, [contenteditable="false"]')) return
-    event.preventDefault()
-    acceptFim()
+    if (!fimSuggestion.value || !editor.value) return
+    event.preventDefault(); event.stopPropagation(); acceptFim()
   }
   function dismissFim() { fimSuggestion.value = '' }
-  function insertCodeBlock() { editor.value?.chain().focus().toggleCodeBlock().run(); insertOpen.value = false }
-  const mermaidTemplates = {
-    flowchart: [
-      'flowchart LR',
-      '  accTitle: 示例流程图',
-      '  accDescr: 从开始经过判断，到达完成或调整。',
-      '  start[开始] --> decision{条件满足?}',
-      '  decision -->|是| done[完成]',
-      '  decision -->|否| revise[调整]',
-      '  revise --> decision'
-    ].join('\n'),
-    swimlane: [
-      'swimlane-beta LR',
-      '  accTitle: 示例审批泳道',
-      '  accDescr: 申请人提交申请，审批人审核并返回结果。',
-      '  subgraph applicant [申请人]',
-      '    submit[提交申请]',
-      '    receive[接收结果]',
-      '  end',
-      '  subgraph reviewer [审批人]',
-      '    review{是否批准}',
-      '  end',
-      '  submit --> review --> receive'
-    ].join('\n')
-  }
-  function insertMermaidDiagram(kind: keyof typeof mermaidTemplates) {
-    const source = mermaidTemplates[kind] || mermaidTemplates.flowchart
-    const currentEditor = editor.value
-    if (!currentEditor) return
-    markMermaidDiagramForEditing(currentEditor, source)
-    currentEditor.chain().focus().insertContent({
-      type: 'codeBlock',
-      attrs: { language: 'mermaid' },
-      content: [{ type: 'text', text: source }]
-    }).run()
-    insertOpen.value = false
-  }
-  function closeToolbarMenus() { insertOpen.value = false; tablePickerOpen.value = false; textColorOpen.value = false; highlightOpen.value = false; headingOpen.value = false; moreOpen.value = false }
-  function toggleInsertMenu() { closeToolbarMenus(); insertOpen.value = !insertOpen.value }
-  function selectTableCell(row: number, col: number) { tableRows.value = row; tableCols.value = col }
-  function insertTable(rows = tableRows.value, cols = tableCols.value) {
-    if (!editor.value || !rows || !cols) return
-    editor.value.chain().focus().insertTable({ rows, cols, withHeaderRow: true }).run()
-    insertOpen.value = false; tablePickerOpen.value = false; tableRows.value = 0; tableCols.value = 0
-  }
+  function closeToolbarMenus() { moreOpen.value = false }
   function openImageDialog() {
-    insertOpen.value = false; imageUrl.value = ''; imageAlt.value = ''; imageDialogOpen.value = true
+    imageUrl.value = ''; imageAlt.value = ''; imageDialogOpen.value = true
     nextTick(() => imageInput.value?.focus())
   }
   function normalizeImageUrl(value: string) {
@@ -1379,7 +941,7 @@ export function useNoteEditor(props: Readonly<NoteEditorProps>, emit: NoteEditor
   function confirmImage() {
     const src = normalizeImageUrl(imageUrl.value)
     if (!src || !editor.value) return
-    editor.value.chain().focus().setImage({ src, alt: imageAlt.value.trim() }).run()
+    editor.value.insertMarkdown(`![${imageAlt.value.trim().replaceAll(']', '\\]')}](${src})`)
     imageDialogOpen.value = false
   }
   function insertLocalImage(event: Event) {
@@ -1387,78 +949,17 @@ export function useNoteEditor(props: Readonly<NoteEditorProps>, emit: NoteEditor
     const file = input.files?.[0]
     input.value = ''
     if (!file || !file.type.startsWith('image/') || file.size > 5 * 1024 * 1024 || !editor.value) return
+    const noteId = props.note?.id
     const reader = new FileReader()
     reader.onload = () => {
+      if (props.note?.id !== noteId) return
       const src = String(reader.result || '')
       if (/^data:image\/(?:png|jpe?g|gif|webp);base64,/i.test(src)) {
-        editor.value?.chain().focus().setImage({ src, alt: imageAlt.value.trim() }).run()
+        editor.value?.insertMarkdown(`![${imageAlt.value.trim().replaceAll(']', '\\]')}](${src})`)
         imageDialogOpen.value = false
       }
     }
     reader.readAsDataURL(file)
-  }
-  function setTextColor(color: string) {
-    if (!editor.value) return
-    const chain = editor.value.chain().focus()
-    if (color === 'inherit') chain.unsetColor().run()
-    else chain.setColor(color).run()
-    textColorOpen.value = false
-  }
-  function setHighlightColor(color: string) {
-    if (!editor.value) return
-    if (color === 'none') editor.value.chain().focus().unsetHighlight().run()
-    else editor.value.chain().focus().toggleHighlight({ color }).run()
-    highlightOpen.value = false
-  }
-  function setHeading(level: 0 | 1 | 2 | 3) {
-    if (!editor.value) return
-    if (editor.value.isActive('noteTitle')) {
-      headingOpen.value = false
-      return
-    }
-    if (level === 0) editor.value.chain().focus().setParagraph().run()
-    else editor.value.chain().focus().toggleHeading({ level }).run()
-    headingOpen.value = false
-  }
-  function setNoteTitle() {
-    if (!editor.value || !canSetNoteTitle.value) return
-    editor.value.chain().focus().setNode('noteTitle').run()
-    headingOpen.value = false
-  }
-  function setSmallBody() {
-    if (!editor.value || editor.value.isActive('noteTitle')) return
-    const chain = editor.value.chain().focus()
-    if (editor.value.isActive('smallParagraph')) chain.setParagraph().run()
-    else chain.setNode('smallParagraph').run()
-    headingOpen.value = false
-  }
-  function clearRichFormatting() {
-    if (!editor.value) return
-    const chain = editor.value.chain().focus().unsetAllMarks()
-    if (!editor.value.isActive('noteTitle')) chain.clearNodes()
-    chain.run()
-  }
-  function normalizeLinkHref(value: string) {
-    let href = value.trim()
-    if (!href) return ''
-    if (/^www\./i.test(href)) href = `https://${href}`
-    try {
-      const protocol = new URL(href, window.location.origin).protocol
-      return ['http:', 'https:', 'mailto:', 'tel:'].includes(protocol) ? href : ''
-    } catch { return '' }
-  }
-  async function editLink() {
-    const instance = editor.value
-    if (!instance || !canEditLink.value) return
-    const currentHref = instance.getAttributes('link').href || ''
-    const nextHref = await requestPrompt(linkActive.value ? '编辑链接地址' : '输入链接地址', currentHref || 'https://', { inputType: 'url' })
-    if (nextHref === null) return
-    if (!nextHref.trim()) { if (linkActive.value) instance.chain().focus().extendMarkRange('link').unsetLink().run(); return }
-    const href = normalizeLinkHref(nextHref)
-    if (!href) return
-    const chain = instance.chain().focus()
-    if (linkActive.value) chain.extendMarkRange('link').setLink({ href }).run()
-    else chain.setLink({ href }).run()
   }
   async function saveNoteMetadata() {
     if (!props.note) return
@@ -1483,37 +984,6 @@ export function useNoteEditor(props: Readonly<NoteEditorProps>, emit: NoteEditor
   
 
   return {
-    lowlight, store, library, appStore, tasksStore, t, locale, aiBusy,
-    aiText, aiRequestId, aiAction, aiResultAction, aiProposal, aiSources, aiConsentOpen, assistantOpen,
-    assistantTriggerVisible, assistantBusy, assistantRequestId, assistantStreamingText, assistantMessages, assistantSelection, assistantResponseSources, assistantResponseProposal,
-    aiPanelOpen, aiPanelSelectionText, commandMenuOpen, aiPrompt, aiInputRef, commandMenuDirection, moreOpen, moreTriggerRef,
-    moreMenuRef, insertOpen, tablePickerOpen, textColorOpen, highlightOpen, headingOpen, imageDialogOpen, imageUrl,
-    imageAlt, imageInput, imageFileInput, tableRows, tableCols, fimEnabled, fimSuggestion, editorStateTick,
-    fimTimer, assistantTriggerTimer, savedSelection, pendingAiRequest, pendingAiChange, modeIcons, noteLinks, editorModes,
-    editorMode, modeMenuOpen, modeMenuIndex, modeMenuRef, markdownDraft, markdownParseError, sourceDirty, markdownPasteNotice,
-    markdownPreview, splitRatio, splitVertical, splitWorkspace, sourceEditorRef, previewScroller, pendingSourceDrafts, persistedSignatures,
-    exportingFormat, exportStatusLabel, externalFileName, EXTERNAL_NOTICE_DISMISSED_PREFIX, externalNoticeDismissed, showExternalNoteBanner, applyingEditorContent, markdownParseTimer,
-    markdownPasteTimer, splitResizeObserver, splitDragState, scrollSyncFrame, scrollSyncSource, modeShortcutSwitching, externalNoticeStorageKey, readExternalNoticeDismissed,
-    dismissExternalNoteBanner, currentMode, modeShortcutParts, modeShortcutLabel, richMode, codeMode, splitMode, splitPaneStyle,
-    aiActionLabels, aiErrorMessages, aiEventErrorMessage, aiActionLabel, unknownErrorCode, contextConsentModelId, aiFeedback, aiOutputOpen,
-    aiOriginalText, aiChangePending, AI_CHANGE_HIGHLIGHT, aiCharCount, aiDialogPosition, aiDialogStyle, aiDragState, refreshEditorState,
-    looksLikeMarkdown, isPlainInlineAiReplacement, handleMarkdownPaste, prepareEditorContent, extractNoteTitle, textFromPreparedEditorContent, syncNoteTitle, getEditorMarkdown,
-    editor, canUndo, canRedo, linkActive, canEditLink, selectedText, shouldShowBubbleMenu, textColorPalette,
-    highlightPalette, currentHeadingLabel, canSetNoteTitle, noteContentSignature, scheduleNoteSave, saveDirtyNote, handleRichEditorUpdate, deriveMarkdown,
-    commitMarkdown, queueMarkdownParse, updateMarkdownDraft, flushLatestContent, resetEditorSession, changeEditorMode, handleEditorModeShortcut, toggleModeMenu,
-    focusModeOption, moveModeFocus, handleModeMenuKeydown, focusMoreItem, toggleMoreMenu, handleMoreMenuKeydown, handleDocumentPointerDown, updateSplitOrientation,
-    setupSplitObserver, stopSplitResize, resizeSplitPane, startSplitResize, synchronizeSplitScroll, handlePreviewScroll, readingPositionStorageKey, saveReadingPosition,
-    scheduleReadingPositionSave, restoreReadingPosition, toggleMarkdownPreview, viewPastedMarkdown,
-    resetTransientEditorState, handleBackgroundNoteTask, setEditorEditable, loadExternalProposal, toggle, applyMarkdownFormat, setMarkdownHeading, setMarkdownSmallBody,
-    hasNoteContextConsent, cancelAiConsent, confirmAiConsent, runAi, captureAssistantSelection, openAssistant, closeAssistant, toggleAssistant,
-    assistantReferences, pushAssistantResponse, assistantEditIntent, sendAssistantMessage, stopAssistant, copyAssistantMessage, stopAi,
-    exportBodyHtml, prepareExportSnapshot, runArticleExport, exportMarkdown, exportHtml, exportPdf, printNote, restoreSavedSelection,
-    clearAiResultState, syncNoteFromEditor, selectedContentMarks, insertPendingAiContent, stagePendingAiChange, restoreAiChange, persistAiChange, confirmPendingAiChange,
-    applyAiResult, insertAi, replaceWithAi, copyAi, toggleAiFeedback, dismissAiResult, closeAiResult, stopAiDrag,
-    moveAiDialog, startAiDrag, rewriteAi, saveCurrentSelection, closeAiPanel, positionCommandMenu, openAiPanel, toggleCommandMenu,
-    selectAiCommand, sendCustomAi, runSelectedAi, openInConversation, runFim, acceptFim, handleEditorTab, dismissFim,
-    insertCodeBlock, mermaidTemplates, insertMermaidDiagram, closeToolbarMenus, toggleInsertMenu, selectTableCell, insertTable, openImageDialog,
-    normalizeImageUrl, confirmImage, insertLocalImage, setTextColor, setHighlightColor, setHeading, setNoteTitle, setSmallBody,
-    clearRichFormatting, normalizeLinkHref, editLink, saveNoteMetadata, importExternalSource,
+    t, locale, store, library, appStore, tasksStore, aiBusy, aiText, aiRequestId, aiAction, aiResultAction, aiProposal, aiSources, aiConsentOpen, assistantOpen, assistantTriggerVisible, assistantBusy, assistantRequestId, assistantStreamingText, assistantMessages, assistantSelection, assistantResponseSources, assistantResponseProposal, aiPanelOpen, aiPanelSelectionText, commandMenuOpen, aiPrompt, aiInputRef, commandMenuDirection, moreOpen, moreTriggerRef, moreMenuRef, imageDialogOpen, imageUrl, imageAlt, imageInput, imageFileInput, fimEnabled, fimSuggestion, fimTimer, assistantTriggerTimer, savedSelection, pendingAiRequest, modeIcons, noteLinks, editorModes, editorMode, modeMenuOpen, modeMenuIndex, modeMenuRef, markdownDraft, markdownParseError, sourceDirty, markdownPasteNotice, markdownPreview, READING_POSITION_PREFIX, readingPositionTimer, pendingSourceDrafts, persistedSignatures, exportingFormat, exportStatusLabel, externalFileName, EXTERNAL_NOTICE_DISMISSED_PREFIX, externalNoticeDismissed, showExternalNoteBanner, markdownParseTimer, markdownPasteTimer, modeShortcutSwitching, externalNoticeStorageKey, readExternalNoticeDismissed, dismissExternalNoteBanner, currentMode, modeShortcutParts, modeShortcutLabel, richMode, codeMode, splitMode, aiActionLabels, aiErrorMessages, aiEventErrorMessage, aiActionLabel, unknownErrorCode, contextConsentModelId, aiFeedback, aiOutputOpen, aiOriginalText, aiCharCount, aiDialogPosition, aiDialogStyle, aiDragState, editor, currentSelection, selectedText, applyingAi, aiError, prepareEditorContent, deriveMarkdown, onEditorReady, onEditorSelection, updateNoteTitle, focusNoteBody, getEditorMarkdown, noteContentSignature, scheduleNoteSave, saveDirtyNote, commitMarkdown, queueMarkdownParse, updateMarkdownDraft, flushLatestContent, resetEditorSession, changeEditorMode, handleEditorModeShortcut, toggleModeMenu, focusModeOption, moveModeFocus, handleModeMenuKeydown, focusMoreItem, toggleMoreMenu, handleMoreMenuKeydown, handleDocumentPointerDown, handlePreviewScroll, readingPositionStorageKey, saveReadingPosition, scheduleReadingPositionSave, restoreReadingPosition, toggleMarkdownPreview, resetTransientEditorState, handleBackgroundNoteTask, loadExternalProposal, hasNoteContextConsent, cancelAiConsent, confirmAiConsent, requireCloudNote, runAi, captureAssistantSelection, openAssistant, closeAssistant, toggleAssistant, assistantReferences, pushAssistantResponse, assistantEditIntent, sendAssistantMessage, stopAssistant, copyAssistantMessage, stopAi, exportBodyHtml, prepareExportSnapshot, runArticleExport, exportMarkdown, exportHtml, exportPdf, printNote, clearAiResultState, applyAiResult, insertAi, replaceWithAi, copyAi, toggleAiFeedback, dismissAiResult, closeAiResult, stopAiDrag, moveAiDialog, startAiDrag, rewriteAi, saveCurrentSelection, closeAiPanel, positionCommandMenu, openAiPanel, toggleCommandMenu, selectAiCommand, sendCustomAi, runSelectedAi, openInConversation, fimSource, fimSelection, runFim, acceptFim, handleEditorTab, dismissFim, closeToolbarMenus, openImageDialog, normalizeImageUrl, confirmImage, insertLocalImage, saveNoteMetadata, importExternalSource
   }
 }

@@ -1,6 +1,6 @@
 # 构建、发布与在线升级（Review）
 
-最后更新：2026-09-18
+最后更新：2026-09-30
 关联配置：`.github/workflows/ci.yml`、`.github/workflows/release.yml`、`src-tauri/tauri.conf.json`
 
 ## 生产 API 联调
@@ -57,3 +57,7 @@ SHA-256 校验可以发现下载损坏或资产被替换，但不等同于发布
 ## Linux CI 依赖
 
 Ubuntu runner 需要 `libwebkit2gtk-4.1-dev`、GTK、AppIndicator、`librsvg2-dev`、`patchelf` 和 `xdg-utils`。本地 Linux 构建也需要安装相同依赖。
+
+## Vditor 运行资源（2026-09-30）
+
+`npm run dev` / `npm run build` 的前置脚本自动从锁定的 npm 包生成 `public/vendor/vditor/dist`，包含 Lute、语言、图标、公式字体和本地渲染脚本。生成目录已忽略，不手工提交；CI 仍使用 `npm ci` 后执行既有构建命令。直接运行 `vite` 前需先执行 `node scripts/prepare-vditor-assets.mjs`。资源与 CSP 边界详见 [Vditor 集成](../03-architecture/vditor-editor.md)。

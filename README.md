@@ -5,6 +5,7 @@ Tiny Note 是一个必须登录联网的 Tauri 2 + Vue 3 桌面笔记客户端�
 ## 架构
 
 - 前端：TypeScript、Vue 3、Vite、Vue Router、Pinia、Vue I18n。
+- 文章编辑器：Vditor，即时编辑与 Markdown 源码共用实例，支持现有 AI 选区工具。详见 [编辑器集成](docs/03-architecture/vditor-editor.md)。
 - 桌面薄壳：Tauri 2/Rust，负责窗口、托盘、更新、通知、文件对话框、本机 Markdown 授权和 OS 安全凭据库。
 - 业务后端：GoFrame + MySQL 8 + Redis + S3 兼容对象存储。
 - 传输契约：前端保留 134 个 `CommandMap` 命令，业务命令路由到 REST/SSE，平台命令路由到 Tauri invoke。

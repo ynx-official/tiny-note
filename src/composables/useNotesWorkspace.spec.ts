@@ -221,3 +221,20 @@ it('does not open a note if the initial catalog arrives after the workspace unmo
   expect(work.store.activeId).toBeNull()
   expect(mocks.invoke.mock.calls.map(([command]) => command)).not.toContain('note_get')
 })
+
+it('lists every body heading independently of the note name and scrolls Vditor', async () => {
+  const { workspace: work, wrapper } = await workspace()
+  const shell = document.createElement('div')
+  shell.className = 'note-editor-area'
+  shell.innerHTML = '<div class="note-editor-shell"><div class="vditor-ir"><pre class="vditor-reset"><h1>首个标题</h1><h6>深层标题</h6></pre></div></div>'
+  document.body.append(shell)
+  const scroller = shell.querySelector('pre')!
+  scroller.scrollTo = vi.fn()
+  try {
+    cacheNoteBody(work.store, { ...note('toc'), contentHtml: '<h1>首个标题</h1><h6>深层标题</h6>' })
+    work.store.activeId = 'toc'
+    expect(work.tocHeadings.value.map(h => h.text)).toEqual(['首个标题', '深层标题'])
+    work.scrollToHeading(1)
+    expect(scroller.scrollTo).toHaveBeenCalled()
+  } finally { shell.remove(); wrapper.unmount() }
+})

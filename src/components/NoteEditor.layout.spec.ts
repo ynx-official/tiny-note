@@ -1,47 +1,41 @@
-import { describe, expect, it } from 'vitest'
 import { mountEditor } from './NoteEditor.testHarness'
+import { describe, expect, it } from 'vitest'
 
 describe('note workspace layout', () => {
-  it('puts the directory control beside document actions and exposes its state', async () => {
-    const wrapper = await mountEditor()
-    const toggle = wrapper.get('.toolbar-right-group button[aria-label="目录"]')
-    expect(toggle.attributes('aria-pressed')).toBe('false')
-    await toggle.trigger('click')
-    expect(wrapper.emitted('toggle-toc')).toHaveLength(1)
-    await wrapper.setProps({ tocVisible: true })
-    expect(toggle.attributes('aria-pressed')).toBe('true')
-    expect(wrapper.find('.toc-btn').exists()).toBe(false)
-    wrapper.unmount()
+  it('keeps the directory toggle in the document action row', async () => {
+    const w = await mountEditor()
+    try {
+      const toggle = w.get('.toolbar-right-group button[aria-label="目录"]')
+      expect(toggle.attributes('aria-pressed')).toBe('false')
+      await toggle.trigger('click'); expect(w.emitted('toggle-toc')).toHaveLength(1)
+      await w.setProps({ tocVisible: true }); expect(toggle.attributes('aria-pressed')).toBe('true')
+    } finally { w.unmount() }
   })
-
-  it('keeps less frequent formatting reachable in a keyboard dismissible menu', async () => {
-    const wrapper = await mountEditor()
-    const trigger = wrapper.get('button[aria-label="更多格式"]')
-    await trigger.trigger('click')
-    const menu = wrapper.get('[aria-label="更多格式选项"]')
-    expect(menu.find('button[title="清除格式"]').exists()).toBe(true)
-    expect(menu.find('button[title="居中"]').exists()).toBe(true)
-    await menu.trigger('keydown', { key: 'Escape' })
-    expect(wrapper.find('[aria-label="更多格式选项"]').exists()).toBe(false)
-    expect(document.activeElement).toBe(trigger.element)
-    wrapper.unmount()
+  it('places the native Markdown formatting row after the separate title row', async () => {
+    const w = await mountEditor()
+    try {
+      expect(w.get('.note-title-row').element.compareDocumentPosition(w.get('.vditor-toolbar').element) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
+      expect(w.findAll('.vditor-toolbar')).toHaveLength(1)
+      for (const type of ['bold', 'italic', 'strike', 'list', 'ordered-list', 'check', 'quote', 'link', 'table', 'code']) expect(w.find(`.vditor-toolbar [data-type="${type}"]`).exists()).toBe(true)
+      expect(w.find('button[title="居中"]').exists()).toBe(false)
+    } finally { w.unmount() }
   })
-
-  it('closes the heading dropdown before opening another format group', async () => {
-    const wrapper = await mountEditor()
-    await wrapper.get('.heading-menu-anchor > button').trigger('click')
-    expect(wrapper.find('.editor-heading-menu').exists()).toBe(true)
-    await wrapper.get('button[aria-label="列表"]').trigger('click')
-    expect(wrapper.find('.editor-heading-menu').exists()).toBe(false)
-    expect(wrapper.get('[aria-label="列表选项"]').find('button[title="任务列表"]').exists()).toBe(true)
-    wrapper.unmount()
+  it('keeps heading choices in the native accessible toolbar', async () => {
+    const w = await mountEditor()
+    try {
+      const trigger = w.get('.vditor-toolbar [data-type="headings"]')
+      await trigger.trigger('click')
+      expect(w.find('.vditor-toolbar [data-tag="h1"]').exists()).toBe(true)
+      expect(w.find('.vditor-toolbar [data-tag="h6"]').exists()).toBe(true)
+      expect(w.text()).not.toContain('小正')
+    } finally { w.unmount() }
   })
-
-  it('shows the actual notebook path without inventing a saved state', async () => {
-    const wrapper = await mountEditor()
-    expect(wrapper.get('.note-document-context').text()).toContain('未分类')
-    expect(wrapper.get('.note-document-context').text()).toContain(wrapper.props('note').title)
-    expect(wrapper.text()).not.toContain('已保存')
-    wrapper.unmount()
+  it('omits the duplicate breadcrumb and keeps the title and real save status', async () => {
+    const w = await mountEditor()
+    try {
+      expect(w.find('.note-document-context').exists()).toBe(false)
+      expect(w.get<HTMLInputElement>('input[aria-label="笔记名称"]').element.value).toBe(w.props('note').title)
+      expect(w.get('.note-auto-save').text()).not.toBe('已保存')
+    } finally { w.unmount() }
   })
 })

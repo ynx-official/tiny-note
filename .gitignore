@@ -9,3 +9,4 @@ src-tauri/gen/
 .DS_Store
 
 public/pdfjs/
+public/vendor/vditor/

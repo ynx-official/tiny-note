@@ -1,7 +1,6 @@
+import { editMarkdown, mountEditor, note, noteEditorTestMocks } from './NoteEditor.testHarness'
 import { flushPromises } from '@vue/test-utils'
 import { describe, expect, it, vi } from 'vitest'
-import MarkdownSourceEditor from './MarkdownSourceEditor.vue'
-import { mountEditor, note, noteEditorTestMocks } from './NoteEditor.testHarness'
 
 const { exportLocationMocks, exportSuccessMocks, noteExportMocks } = noteEditorTestMocks()
 
@@ -24,7 +23,7 @@ describe('NoteEditor export and external files', () => {
     expect(wrapper.get('.external-note-banner').text()).toContain('outside.md')
     expect(wrapper.get('.external-note-banner').text()).toContain('不会出现在笔记列表')
     expect(wrapper.findAll('.external-note-actions button').map(button => button.text().trim())).toEqual(['不再提醒', '导入到笔记'])
-    expect(wrapper.get('.editor-mode-trigger').text()).toBe('')
+    expect(wrapper.get('.editor-mode-trigger').text()).toBe('即时编辑')
     expect(wrapper.get('.editor-mode-trigger').attributes('aria-label')).toContain('即时编辑')
 
     await wrapper.get('.external-note-import').trigger('click')
@@ -39,11 +38,11 @@ describe('NoteEditor export and external files', () => {
     const reopened = { ...external, contentMarkdown: '# Changed on disk\n', contentHtml: '<h1>Changed on disk</h1>', contentText: 'Changed on disk' }
     await wrapper.setProps({ note: reopened })
     await flushPromises()
-    expect(wrapper.get('.tiptap').text()).toContain('Changed on disk')
+    expect(wrapper.get('.vditor-ir pre.vditor-reset').text()).toContain('Changed on disk')
     await wrapper.get('.editor-mode-trigger').trigger('click')
     await wrapper.findAll('[role="menuitemradio"]')[1].trigger('click')
     await flushPromises()
-    expect(wrapper.findComponent({ name: 'MarkdownSourceEditor' }).props('modelValue')).toBe('# Changed on disk\n')
+    expect(wrapper.findComponent({ name: 'VditorEditor' }).props('modelValue')).toBe('# Changed on disk\n')
     wrapper.unmount()
   })
 
@@ -129,26 +128,19 @@ describe('NoteEditor export and external files', () => {
     await wrapper.findAll('[role="menuitemradio"]')[1].trigger('click')
     await flushPromises()
 
-    const source = wrapper.findComponent(MarkdownSourceEditor)
-    source.vm.view.dispatch({
-      changes: {
-        from: 0,
-        to: source.vm.view.state.doc.length,
-        insert: '## 最新草稿\n\n尚未经过 150ms 防抖'
-      }
-    })
+    editMarkdown(wrapper, '## 最新草稿\n\n尚未经过 150ms 防抖')
 
     await wrapper.get('button[title="导出与打印"]').trigger('click')
     await wrapper.findAll('.toolbar-more-menu button').find(button => button.text().includes('导出 HTML')).trigger('click')
     await flushPromises()
     expect(noteExportMocks.downloadNoteHtml).toHaveBeenCalledWith(
       expect.objectContaining({
-        title: '最新草稿',
+        title: '四种模式',
         contentHtml: expect.stringContaining('尚未经过 150ms 防抖')
       }),
       expect.objectContaining({ lang: 'zh-CN', download: expect.any(Function) })
     )
-    expect(noteExportMocks.downloadNoteHtml.mock.calls[0][0].contentHtml).not.toContain('最新草稿')
+    expect(noteExportMocks.downloadNoteHtml.mock.calls[0][0].contentHtml).toContain('最新草稿')
 
     await wrapper.get('button[title="导出与打印"]').trigger('click')
     await wrapper.findAll('.toolbar-more-menu button').find(button => button.text().includes('导出 PDF')).trigger('click')

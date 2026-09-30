@@ -1,0 +1,127 @@
+/* Scoped Vditor integration. Never attach legacy note-prose/editor-content
+   classes; native marker visibility and selection behavior remain upstream. */
+.note-editor-shell .vditor-editor { flex:1; min-height:0; min-width:0; display:flex; flex-direction:column; overflow:hidden; }
+.note-editor-shell .vditor-frame { position:relative; flex:1; min-height:0; min-width:0; display:flex; }
+.note-editor-shell .tiny-vditor { flex:1; min-height:0; min-width:0; }
+.note-editor-shell .friday-editor-toolbar,.note-editor-shell .friday-editor-toolbar.with-assistant { min-height:50px; }
+.note-editor-shell .vditor-toolbar [data-type="edit-mode"] { display:none; }
+
+/* Keep the existing resizable preview; leave each pane's content styling native. */
+.note-editor-shell .vditor-split .vditor-sv { flex:0 0 var(--source-ratio); min-width:0; box-sizing:border-box; }
+.note-editor-shell .vditor-split .vditor-preview { flex:1; min-width:0; min-height:0; }
+.note-editor-shell .vditor-split-divider { position:absolute; top:var(--native-toolbar-height); bottom:0; left:var(--source-ratio); width:5px; transform:translateX(-50%); cursor:col-resize; z-index:5; }
+.note-editor-shell .vditor-split-divider:hover,.note-editor-shell .vditor-split-divider:focus-visible { background:var(--accent-color); }
+.note-editor-shell .vditor-vertical .vditor-content { flex-direction:column; }
+.note-editor-shell .vditor-vertical .vditor-sv,.note-editor-shell .vditor-vertical .vditor-preview { width:100%; }
+.note-editor-shell .vditor-vertical .vditor-split-divider { left:0; right:0; top:calc(var(--native-toolbar-height) + (100% - var(--native-toolbar-height))*var(--source-factor)); bottom:auto; width:100%; height:5px; transform:none; cursor:row-resize; }
+
+/* Application-owned overlays, outside Vditor's editable content. */
+.note-editor-shell .editor-panel { position:relative; }
+.note-editor-shell .tiny-note-bubble-menu { position:absolute; z-index:30; bottom:24px; left:50%; transform:translateX(-50%); max-width:calc(100% - 24px); }
+.note-editor-shell .vditor-editor .markdown-parse-error { position:static; padding:12px; color:var(--text-primary); }
+.note-editor-shell .vditor-editor .markdown-parse-error button { margin-left:12px; }
+.note-editor-shell .ai-apply-error { padding:8px 20px; color:var(--danger-color, #b42318); font-size:13px; }
+
+/* Capture application tokens before Vditor's dark class overrides its own names. */
+.note-editor-shell .vditor-editor {
+  --editor-border:var(--border-color);
+  --editor-font:-apple-system, BlinkMacSystemFont, "Segoe UI", "Microsoft YaHei", "PingFang SC", "Noto Sans CJK SC", sans-serif;
+  --editor-code-font:"Cascadia Code", Consolas, "SFMono-Regular", "Microsoft YaHei", monospace;
+  --editor-ink:#37352f;
+  --editor-muted:#66635f;
+  --editor-link:#356a9f;
+}
+[data-theme="dark"] .note-editor-shell .vditor-editor {
+  --editor-ink:#e5e3df;
+  --editor-muted:#b0ada7;
+  --editor-link:#8bb8e8;
+}
+.note-editor-shell .tiny-vditor {
+  --border-color:var(--editor-border);
+  --second-color:var(--editor-muted);
+  --panel-background-color:var(--bg-primary);
+  --toolbar-background-color:var(--bg-primary);
+  --toolbar-icon-color:var(--editor-muted);
+  --toolbar-icon-hover-color:var(--accent-color);
+  --textarea-background-color:var(--bg-primary);
+  --textarea-text-color:var(--editor-ink);
+  --heading-border-color:var(--editor-border);
+  --blockquote-color:var(--editor-muted);
+  --ir-heading-color:var(--editor-muted);
+  --ir-title-color:var(--editor-muted);
+  --ir-bi-color:var(--editor-muted);
+  --ir-link-color:var(--editor-link);
+  --ir-bracket-color:var(--editor-link);
+  --ir-paren-color:var(--editor-muted);
+  --toolbar-height:40px;
+  --toolbar-divider-margin-top:12px;
+  border:0;
+  border-radius:0;
+  font-family:var(--editor-font);
+}
+/* Vditor writes toolbar/IR padding inline on resize. Override only those layout
+   values, never the display/height/overflow rules of its source markers. */
+.note-editor-shell .tiny-vditor .vditor-toolbar { padding:0 16px !important; min-height:40px; flex-shrink:0; }
+.note-editor-shell .tiny-vditor .vditor-toolbar__item { padding:0; }
+.note-editor-shell .tiny-vditor .vditor-toolbar__item > button { width:30px; border-radius:4px; }
+.note-editor-shell .tiny-vditor .vditor-toolbar__item > button:hover { background:var(--bg-hover); }
+.note-editor-shell .tiny-vditor .vditor-toolbar__item > button:focus-visible { outline:2px solid var(--accent-color); outline-offset:-3px; }
+.note-editor-shell .tiny-vditor .vditor-menu--current { background:var(--accent-light); }
+.note-editor-shell .tiny-vditor .vditor-toolbar__divider { border-color:var(--editor-border); margin-left:6px; margin-right:6px; }
+.note-editor-shell .tiny-vditor .vditor-reset {
+  font-family:-apple-system, BlinkMacSystemFont, "Segoe UI", "Microsoft YaHei", "PingFang SC", "Noto Sans CJK SC", sans-serif;
+  font-size:16px;
+  line-height:1.75;
+  color:var(--editor-ink);
+  -webkit-font-smoothing:antialiased;
+}
+.note-editor-shell .tiny-vditor .vditor-ir > .vditor-reset { padding:32px max(32px, calc((100% - 960px) / 2)) 64px !important; }
+.note-editor-shell .tiny-vditor .vditor-preview > .vditor-reset { padding:28px 24px 64px; }
+.note-editor-shell .tiny-vditor .vditor-reset h1,
+.note-editor-shell .tiny-vditor .vditor-reset h2,
+.note-editor-shell .tiny-vditor .vditor-reset h3,
+.note-editor-shell .tiny-vditor .vditor-reset h4,
+.note-editor-shell .tiny-vditor .vditor-reset h5,
+.note-editor-shell .tiny-vditor .vditor-reset h6 { border:0; padding-bottom:0; margin:28px 0 12px; line-height:1.4; font-weight:600; color:var(--text-primary); }
+.note-editor-shell .tiny-vditor .vditor-reset h1 { font-size:28px; margin-top:0; margin-bottom:20px; }
+.note-editor-shell .tiny-vditor .vditor-reset h2 { font-size:23px; }
+.note-editor-shell .tiny-vditor .vditor-reset h3 { font-size:19px; }
+.note-editor-shell .tiny-vditor .vditor-reset h4,
+.note-editor-shell .tiny-vditor .vditor-reset h5,
+.note-editor-shell .tiny-vditor .vditor-reset h6 { font-size:16px; }
+.note-editor-shell .tiny-vditor .vditor-ir .vditor-reset > h1::before,
+.note-editor-shell .tiny-vditor .vditor-ir .vditor-reset > h2::before,
+.note-editor-shell .tiny-vditor .vditor-ir .vditor-reset > h3::before,
+.note-editor-shell .tiny-vditor .vditor-ir .vditor-reset > h4::before,
+.note-editor-shell .tiny-vditor .vditor-ir .vditor-reset > h5::before,
+.note-editor-shell .tiny-vditor .vditor-ir .vditor-reset > h6::before { content:none; }
+.note-editor-shell .tiny-vditor .vditor-reset p { margin:0 0 14px; }
+.note-editor-shell .tiny-vditor .vditor-reset ul,
+.note-editor-shell .tiny-vditor .vditor-reset ol { margin:0 0 16px; padding-left:1.6em; }
+.note-editor-shell .tiny-vditor .vditor-reset li { margin:4px 0; }
+.note-editor-shell .tiny-vditor .vditor-reset li > p { margin-bottom:6px; }
+.note-editor-shell .tiny-vditor .vditor-reset blockquote { margin:16px 0 22px; padding:0 0 0 16px; border-left:3px solid var(--editor-border); color:var(--editor-muted); }
+.note-editor-shell .tiny-vditor .vditor-reset blockquote > p:last-child { margin-bottom:0; }
+.note-editor-shell .tiny-vditor .vditor-reset a,
+.note-editor-shell .tiny-vditor .vditor-ir__link { color:var(--editor-link); text-decoration:underline; text-underline-offset:3px; }
+.note-editor-shell .tiny-vditor .vditor-reset strong { font-weight:600; }
+.note-editor-shell .tiny-vditor .vditor-reset code { font-family:var(--editor-code-font); }
+.note-editor-shell .tiny-vditor .vditor-reset code:not(.hljs):not(.highlight-chroma) { background-image:none; background-color:var(--bg-secondary); }
+.note-editor-shell .tiny-vditor .vditor-reset pre > code { padding:16px 18px; font-size:13px; line-height:1.65; border-radius:6px; background-image:none; background-color:var(--bg-secondary); }
+.note-editor-shell .tiny-vditor .vditor-reset table { font-size:15px; }
+.note-editor-shell .tiny-vditor .vditor-reset table td,
+.note-editor-shell .tiny-vditor .vditor-reset table th { border-color:var(--editor-border); padding:8px 12px; }
+.note-editor-shell .tiny-vditor .vditor-reset table tr { background:var(--bg-primary); }
+.note-editor-shell .tiny-vditor .vditor-reset table th { background:var(--bg-secondary); }
+.note-editor-shell .tiny-vditor .vditor-reset hr { height:1px; background:var(--editor-border); border:0; margin:24px 0; }
+.note-editor-shell .tiny-vditor .vditor-sv { padding:28px 24px 64px; font-family:var(--editor-code-font); font-size:14px; line-height:1.8; }
+.note-editor-shell .tiny-vditor .vditor-sv .h1,
+.note-editor-shell .tiny-vditor .vditor-sv .h2,
+.note-editor-shell .tiny-vditor .vditor-sv .h3,
+.note-editor-shell .tiny-vditor .vditor-sv .h4,
+.note-editor-shell .tiny-vditor .vditor-sv .h5,
+.note-editor-shell .tiny-vditor .vditor-sv .h6 { font-size:14px; line-height:inherit; }
+.note-editor-shell .tiny-vditor .vditor-preview { scrollbar-width:thin; }
+.note-editor-shell .tiny-vditor .vditor-preview::-webkit-scrollbar { display:block; width:6px; }
+.note-editor-shell .vditor-vertical .vditor-preview { border-left:0; border-top:1px solid var(--editor-border); }
+.note-editor-shell .tiny-vditor .vditor-reset .language-mermaid { background:transparent; }

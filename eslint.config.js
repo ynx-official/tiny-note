@@ -2,7 +2,7 @@ import vue from 'eslint-plugin-vue'
 import tseslint from 'typescript-eslint'
 
 export default [
-  { ignores: ['dist/**', 'node_modules/**', '**/src-tauri/target/**', 'src-tauri/icons/**', '**/src-tauri/icons/**'] },
+  { ignores: ['dist/**', 'node_modules/**', 'public/vendor/**', 'tmp/**', '*.timestamp-*.mjs', '**/src-tauri/target/**', 'src-tauri/icons/**', '**/src-tauri/icons/**'] },
   ...tseslint.configs.recommended.map(config => ({ ...config, files: ['**/*.ts'] })),
   ...vue.configs['flat/recommended'],
   {

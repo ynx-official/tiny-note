@@ -34,7 +34,7 @@ const secureConfigKeys = [
   'swimlane'
 ]
 
-const themeVariables = {
+export const mermaidThemeVariables = {
   light: {
     background: '#ffffff',
     mainBkg: '#fafaf9',
@@ -90,7 +90,7 @@ function createConfig(theme: MermaidTheme) {
     look: 'classic' as const,
     htmlLabels: false,
     fontFamily: '-apple-system, BlinkMacSystemFont, Segoe UI, Microsoft YaHei, sans-serif',
-    themeVariables: themeVariables[normalizedTheme],
+    themeVariables: mermaidThemeVariables[normalizedTheme],
     flowchart: {
       useMaxWidth: false,
       nodeSpacing: 40,

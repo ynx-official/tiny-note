@@ -24,6 +24,8 @@ import type { JSONContent, MarkdownRendererHelpers, NodeViewRenderer, RenderCont
 import type { PlaceholderOptions } from '@tiptap/extension-placeholder'
 import type { createLowlight } from 'lowlight'
 import { safeColorValue } from '../utils/noteMarkdown'
+import { SourceBlock, SourceInline } from './sourceMarkdown'
+import { sourceTokenHtml } from '../utils/sourceMarkdown'
 
 function escapeHtml(value: unknown = ''): string {
   return String(value)
@@ -39,6 +41,7 @@ function safeAlign(value: unknown): string {
 }
 
 function renderInlineNode(node: JSONContent): string {
+  if (node.type === 'sourceInline') return sourceTokenHtml(node.attrs?.source || '', node.attrs?.kind || '源码', false)
   if (node.type === 'hardBreak') return '<br>'
   if (node.type === 'image') {
     const src = escapeHtml(node.attrs?.src || '')
@@ -77,6 +80,7 @@ function renderInlineHtml(content: JSONContent[] = []): string {
 }
 
 function renderBlockHtml(node: JSONContent): string {
+  if (node.type === 'sourceBlock') return sourceTokenHtml(node.attrs?.source || '', node.attrs?.kind || '源码', true)
   if (node.type === 'paragraph') {
     const align = safeAlign(node.attrs?.textAlign)
     const style = align ? ` style="text-align: ${align}"` : ''
@@ -249,6 +253,8 @@ interface NoteExtensionOptions { lowlight?: ReturnType<typeof createLowlight>; c
 
 export function createNoteExtensions({ lowlight, codeBlockNodeView, placeholder, resizableTables = true }: NoteExtensionOptions = {}) {
   const extensions = [
+    SourceBlock,
+    SourceInline,
     StarterKit.configure({
       codeBlock: lowlight ? false : {},
       heading: false,

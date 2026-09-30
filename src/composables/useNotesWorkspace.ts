@@ -756,9 +756,7 @@ export function useNotesWorkspace() {
     if (!html || typeof document === 'undefined') return []
     const container = document.createElement('div')
     container.innerHTML = html
-    const titleBlock = container.firstElementChild
-    return Array.from(container.querySelectorAll('h1, h2, h3'))
-      .filter(element => element !== titleBlock)
+    return Array.from(container.querySelectorAll('h1, h2, h3, h4, h5, h6'))
       .map((element, index) => ({ level: Number(element.tagName.slice(1)), text: element.textContent?.trim() || '', index }))
       .filter(heading => heading.text)
   })
@@ -770,15 +768,15 @@ export function useNotesWorkspace() {
   function closeToc() { tocVisible.value = false }
   
   function scrollToHeading(index: number) {
-    const editorPanel = document.querySelector('.note-editor-area .note-editor-shell > .editor-panel')
-    const previewPane = editorPanel?.querySelector('.split-preview-pane')
-    const renderPane = editorPanel?.querySelector('.editor-render-pane')
-    const activeScroller = previewPane || renderPane || editorPanel
-    const editorContent = activeScroller?.querySelector('.editor-content')
-    if (!activeScroller || !editorContent) return
-    const prose = editorContent.querySelector('.note-prose')
-    const titleBlock = prose?.firstElementChild
-    const headings = Array.from(prose?.querySelectorAll('h1, h2, h3') || []).filter(element => element !== titleBlock)
+    const shell = document.querySelector('.note-editor-area .note-editor-shell')
+    if (!shell) return
+    const ir = shell.querySelector<HTMLElement>('.vditor-ir')
+    const activeScroller = shell.querySelector<HTMLElement>('.vditor-split .vditor-preview')
+      || (ir && ir.style.display !== 'none' ? ir.querySelector<HTMLElement>('pre.vditor-reset') : null)
+      || shell.querySelector<HTMLElement>('.vditor-sv')
+    if (!activeScroller) return
+    const headings = Array.from(activeScroller.querySelectorAll(activeScroller.classList.contains('vditor-sv')
+      ? '[data-type="heading-marker"]' : 'h1, h2, h3, h4, h5, h6'))
     const target = headings[index]
     if (!target) return
     const containerRect = activeScroller.getBoundingClientRect()
