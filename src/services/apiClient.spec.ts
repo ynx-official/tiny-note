@@ -116,4 +116,15 @@ describe('remote API authentication', () => {
     expect(tauriInvoke).not.toHaveBeenCalled()
     expect(JSON.stringify(localStorage)).not.toContain('access')
   })
+  it('sends multipart files without JSON encoding or overriding the boundary', async () => {
+    const fetchMock = vi.fn().mockResolvedValue(envelope({ fileUrl: 'https://oss.example/photo.png' }))
+    vi.stubGlobal('fetch', fetchMock)
+    const { apiRequest } = await import('./apiClient')
+    const body = new FormData()
+    body.append('file', new File(['image'], 'photo.png', { type: 'image/png' }))
+    await apiRequest('/auth/file/upload/img', { method: 'POST', body })
+    const init = fetchMock.mock.calls[0]![1] as RequestInit
+    expect(init.body).toBe(body)
+    expect(new Headers(init.headers).has('Content-Type')).toBe(false)
+  })
 })

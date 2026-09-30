@@ -66,6 +66,9 @@
 .note-editor-shell .tiny-vditor .vditor-toolbar__item > button { width:30px; border-radius:4px; }
 .note-editor-shell .tiny-vditor .vditor-toolbar__item > button:hover { background:var(--bg-hover); }
 .note-editor-shell .tiny-vditor .vditor-toolbar__item > button:focus-visible { outline:2px solid var(--accent-color); outline-offset:-3px; }
+/* Vditor hides all tips below 520px; desktop windows still need hover/focus help. */
+.note-editor-shell .tiny-vditor .vditor-toolbar .vditor-tooltipped::after { content:attr(aria-label); }
+.note-editor-shell .tiny-vditor .vditor-toolbar .vditor-tooltipped::before { content:""; }
 .note-editor-shell .tiny-vditor .vditor-menu--current { background:var(--accent-light); }
 .note-editor-shell .tiny-vditor .vditor-toolbar__divider { border-color:var(--editor-border); margin-left:6px; margin-right:6px; }
 .note-editor-shell .tiny-vditor .vditor-reset {

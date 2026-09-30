@@ -944,22 +944,25 @@ export function useNoteEditor(props: Readonly<NoteEditorProps>, emit: NoteEditor
     editor.value.insertMarkdown(`![${imageAlt.value.trim().replaceAll(']', '\\]')}](${src})`)
     imageDialogOpen.value = false
   }
-  function insertLocalImage(event: Event) {
+  async function insertLocalImage(event: Event) {
     const input = event.target as HTMLInputElement
     const file = input.files?.[0]
     input.value = ''
     if (!file || !file.type.startsWith('image/') || file.size > 5 * 1024 * 1024 || !editor.value) return
-    const noteId = props.note?.id
-    const reader = new FileReader()
-    reader.onload = () => {
-      if (props.note?.id !== noteId) return
-      const src = String(reader.result || '')
-      if (/^data:image\/(?:png|jpe?g|gif|webp);base64,/i.test(src)) {
-        editor.value?.insertMarkdown(`![${imageAlt.value.trim().replaceAll(']', '\\]')}](${src})`)
+    const note = props.note
+    const targetEditor = editor.value
+    const alt = imageAlt.value.trim().replaceAll(']', '\\]')
+    try {
+      const { resolveNoteImage } = await import('../services/noteImage')
+      const src = await resolveNoteImage(file)
+      if (props.note !== note || editor.value !== targetEditor) return
+      if (normalizeImageUrl(src) || /^data:image\/(?:png|jpe?g|gif|webp);base64,/i.test(src)) {
+        targetEditor.insertMarkdown(`![${alt}](${src})`)
         imageDialogOpen.value = false
       }
+    } catch (error) {
+      showToast(errorMessage(error, '读取图片失败，请重试'), { tone: 'error' })
     }
-    reader.readAsDataURL(file)
   }
   async function saveNoteMetadata() {
     if (!props.note) return

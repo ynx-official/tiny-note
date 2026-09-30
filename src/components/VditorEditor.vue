@@ -9,6 +9,8 @@ import { readVditorSelection } from '../editor/vditorSelection'
 import type { VditorPort, NoteEditorMode } from '../editor/vditorPort'
 import { applyMarkdownProposal, type MarkdownSelection } from '../editor/markdownSelection'
 import { sanitizeEditorHtml } from '../utils/noteMarkdown'
+import { resolveNoteImage } from '../services/noteImage'
+import { showToast } from '../services/appFeedback'
 
 const props = defineProps<{ modelValue: string; mode: NoteEditorMode; preview: boolean; noteId: string }>()
 const emit = defineEmits<{
@@ -61,6 +63,38 @@ let observer: MutationObserver | undefined
 let themeObserver: MutationObserver | undefined
 let publishing = false
 let darkTheme: boolean | undefined
+let noteRevision = 0
+
+async function pasteImages(event: ClipboardEvent) {
+  if (!instance || !(event.target instanceof Element) || !event.target.closest('.vditor-ir, .vditor-sv')) return
+  const files = Array.from(event.clipboardData?.files || []).filter(file => file.type.startsWith('image/'))
+  if (!files.length) return
+  // Run before Vditor's native paste handler can inline clipboard images.
+  event.preventDefault(); event.stopPropagation()
+  const target = instance
+  const revision = noteRevision
+  syncInput(); selectionChanged()
+  const range = selection
+  const original = source
+  try {
+    const images: string[] = []
+    for (const file of files) {
+      if (file.size > 5 * 1024 * 1024) {
+        showToast('图片不能超过 5 MB', { tone: 'error' })
+        continue
+      }
+      const url = await resolveNoteImage(file)
+      if (disposed || instance !== target || revision !== noteRevision) return
+      images.push(`![](${url})`)
+    }
+    if (images.length) {
+      if (source === original) selection = range
+      port.insertMarkdown(images.join('\n\n'))
+    }
+  } catch {
+    if (!disposed && revision === noteRevision) showToast('读取粘贴图片失败，请重试', { tone: 'error' })
+  }
+}
 
 function currentScroller() { return instance?.vditor[instance.getCurrentMode()]?.element || null }
 function selectionChanged() {
@@ -157,7 +191,12 @@ async function initialize() {
       placeholder: '写下此刻的想法…',
       toolbar: ['undo', 'redo', '|', 'headings', 'bold', 'italic', 'strike', '|', 'list', 'ordered-list', 'check', 'quote', '|', 'link',
         { name: 'tiny-image', tip: '插入图片', icon: '<svg><use xlink:href="#vditor-icon-upload"></use></svg>', click: () => emit('image') },
-        'table', 'code', 'inline-code', 'line', 'edit-mode'],
+        'table', 'code', 'inline-code', 'line', 'edit-mode'].map(item => {
+        // The host clips overflow above the toolbar; keep native tips below it.
+        if (typeof item !== 'string') return { ...item, tipPosition: 's' }
+        if (item === '|') return item
+        return { name: item, tipPosition: item === 'undo' || item === 'redo' ? 'se' : 's' }
+      }),
       toolbarConfig: { pin: true }, counter: { enable: false },
       hint: { emoji: {}, emojiPath: '/vendor/vditor/dist/images/emoji' },
       preview: { actions: [], delay: 100, maxWidth: 960, mode: props.preview ? 'both' : 'editor',
@@ -184,7 +223,7 @@ async function initialize() {
   finally { loading = false }
 }
 watch(() => props.modelValue, value => { if (value !== source) setMarkdown(value) })
-watch(() => props.noteId, () => setMarkdown(props.modelValue, true))
+watch(() => props.noteId, () => { noteRevision += 1; setMarkdown(props.modelValue, true) })
 watch(() => props.mode, setMode)
 watch(() => props.preview, value => port.setPreview(value))
 onMounted(() => {
@@ -210,7 +249,7 @@ onBeforeUnmount(() => {
 defineExpose({ ...port })
 </script>
 <template>
-  <div class="vditor-editor" :class="{ 'vditor-split': mode === 'markdown' && preview, 'vditor-vertical': vertical }" :style="{ '--source-ratio': `${splitRatio}%`, '--source-factor': splitRatio / 100, '--native-toolbar-height': `${toolbarHeight}px` }" @scroll.capture="scrollChanged" @keyup="selectionChanged" @mouseup="selectionChanged">
+  <div class="vditor-editor" :class="{ 'vditor-split': mode === 'markdown' && preview, 'vditor-vertical': vertical }" :style="{ '--source-ratio': `${splitRatio}%`, '--source-factor': splitRatio / 100, '--native-toolbar-height': `${toolbarHeight}px` }" @paste.capture="pasteImages" @scroll.capture="scrollChanged" @keyup="selectionChanged" @mouseup="selectionChanged">
     <div v-if="error" class="markdown-parse-error" role="alert">{{ error }}<button type="button" @click="initialize">重试</button></div>
     <div class="vditor-frame">
       <div ref="host" class="tiny-vditor"></div>

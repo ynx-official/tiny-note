@@ -141,7 +141,7 @@ export async function apiFetch(path: string, init: RequestInit = {}): Promise<Re
 export async function apiRequest<T>(path: string, options: { method?: string; body?: unknown; signal?: AbortSignal } = {}): Promise<T> {
   return rawRequest<T>(path, {
     method: options.method || (options.body === undefined ? 'GET' : 'POST'),
-    body: options.body === undefined ? undefined : JSON.stringify(options.body),
+    body: options.body === undefined ? undefined : options.body instanceof FormData ? options.body : JSON.stringify(options.body),
     signal: options.signal
   })
 }
