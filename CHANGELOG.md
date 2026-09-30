@@ -2,6 +2,17 @@
 
 本文件记录 Tiny Note 各版本面向用户的主要变化，版本号遵循 Semantic Versioning。完整的升级说明统一维护在 [`docs/upgrade/`](docs/upgrade/README.md)，Release Notes 从对应版本详情自动生成。
 
+## [0.1.20] - 2026-09-30
+
+### 新增与改进
+
+- 将笔记编辑器统一迁移到 Vditor，改进即时编辑、Markdown 模式、工具栏和主题体验。
+- 支持粘贴图片上传并优化图片处理、Mermaid 图表和 AI 选区交互。
+- 简化笔记工作区结构，独立展示笔记名称、保存状态和文档操作。
+- 补充编辑器资源、架构说明和交互验证资料。
+
+[0.1.20]: docs/upgrade/tiny-note-v0.1.20/README.md
+
 ## [0.1.19] - 2026-09-29
 
 ### 新增与改进

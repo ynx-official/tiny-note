@@ -1,9 +1,10 @@
 # Tiny Note 版本详情
 
-当前代码版本为 [`tiny-note-v0.1.19`](tiny-note-v0.1.19/README.md)。
+当前代码版本为 [`tiny-note-v0.1.20`](tiny-note-v0.1.20/README.md)。
 
 | 版本 | 发布日期 | 摘要 |
 | --- | --- | --- |
+| [tiny-note-v0.1.20](tiny-note-v0.1.20/README.md) | 2026-09-30 | 统一迁移 Vditor 编辑器，支持粘贴图片上传并优化笔记工作区。 |
 | [tiny-note-v0.1.19](tiny-note-v0.1.19/README.md) | 2026-09-29 | 新增同步设置、远端正文刷新和自动保存状态反馈。 |
 | [tiny-note-v0.1.18](tiny-note-v0.1.18/README.md) | 2026-09-21 | 优化笔记工作区和编辑器体验，并改进聊天导航状态与托盘样式。 |
 | [tiny-note-v0.1.17](tiny-note-v0.1.17/README.md) | 2026-09-18 | 新增笔记本文件夹导入和图片交互预览，并改进任务与聊天会话体验。 |
